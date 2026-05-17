@@ -1,8 +1,9 @@
-import type { AppBridge } from "../shared/types";
+import type { AppBridge, TerminalBridge } from "../shared/types";
 
 declare global {
   interface Window {
     crm?: AppBridge;
+    terminal?: TerminalBridge;
   }
 }
 

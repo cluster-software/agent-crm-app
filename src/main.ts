@@ -1,7 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { IPty } from "node-pty";
+import * as nodePty from "node-pty";
 import type {
   CreateRecordPayload,
   ImportCsvPayload,
@@ -145,6 +148,122 @@ function getSdkClient() {
   return sdkClient;
 }
 
+type PtySession = {
+  proc: IPty;
+  cwd: string;
+  buffer: string;      // rolling history (~64 KB)
+  pending: string;     // current batch waiting to flush
+  flushTimer: NodeJS.Timeout | null;
+};
+
+const ptySessions = new Map<string, PtySession>();
+const MAX_BUFFER_BYTES = 64 * 1024;
+const FLUSH_INTERVAL_MS = 16;
+
+function defaultShell() {
+  if (process.platform === "win32") return process.env.ComSpec ?? "cmd.exe";
+  return process.env.SHELL ?? (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
+}
+
+function defaultShellArgs(): string[] {
+  if (process.platform === "win32") return [];
+  return ["-il"];
+}
+
+function defaultCwd() {
+  const home = os.homedir();
+  return home && home.length > 0 ? home : process.cwd();
+}
+
+function appendToBuffer(session: PtySession, data: string) {
+  session.buffer += data;
+  if (session.buffer.length > MAX_BUFFER_BYTES) {
+    session.buffer = session.buffer.slice(session.buffer.length - MAX_BUFFER_BYTES);
+  }
+}
+
+function flushPending(id: string, session: PtySession) {
+  if (session.flushTimer) {
+    clearTimeout(session.flushTimer);
+    session.flushTimer = null;
+  }
+  if (session.pending.length === 0) return;
+  const data = session.pending;
+  session.pending = "";
+  mainWindow?.webContents.send("pty:data", id, data);
+}
+
+function schedulePtyFlush(id: string, session: PtySession) {
+  if (session.flushTimer) return;
+  session.flushTimer = setTimeout(() => {
+    session.flushTimer = null;
+    if (session.pending.length === 0) return;
+    const data = session.pending;
+    session.pending = "";
+    mainWindow?.webContents.send("pty:data", id, data);
+  }, FLUSH_INTERVAL_MS);
+}
+
+function spawnPtySession(id: string, cols: number, rows: number, cwd: string): PtySession {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  env.TERM = "xterm-256color";
+  env.COLORTERM = "truecolor";
+  env.TERM_PROGRAM = "agent-crm";
+
+  const proc = nodePty.spawn(defaultShell(), defaultShellArgs(), {
+    name: "xterm-256color",
+    cols: Math.max(2, cols),
+    rows: Math.max(1, rows),
+    cwd: cwd && cwd.length > 0 ? cwd : defaultCwd(),
+    env
+  });
+
+  const session: PtySession = {
+    proc,
+    cwd,
+    buffer: "",
+    pending: "",
+    flushTimer: null
+  };
+
+  proc.onData((data) => {
+    appendToBuffer(session, data);
+    session.pending += data;
+    schedulePtyFlush(id, session);
+  });
+
+  proc.onExit(({ exitCode, signal }) => {
+    flushPending(id, session);
+    ptySessions.delete(id);
+    mainWindow?.webContents.send("pty:exit", id, { exitCode, signal });
+  });
+
+  ptySessions.set(id, session);
+  return session;
+}
+
+function killPtySession(id: string) {
+  const session = ptySessions.get(id);
+  if (!session) return;
+  if (session.flushTimer) {
+    clearTimeout(session.flushTimer);
+    session.flushTimer = null;
+  }
+  try {
+    session.proc.kill();
+  } catch {
+    // ignore — already gone
+  }
+  ptySessions.delete(id);
+}
+
+function killAllPtys() {
+  for (const id of [...ptySessions.keys()]) killPtySession(id);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -253,6 +372,48 @@ handle("query:run", (sql: string, params: unknown[] = []): Promise<QueryResult> 
   return getSdkClient().request("runQuery", sql, params);
 });
 
+handle("pty:subscribe", async (id: string, cols: number, rows: number, cwd?: string) => {
+  const resolvedCwd = cwd && cwd.length > 0 ? cwd : defaultCwd();
+  const existing = ptySessions.get(id);
+  if (existing && existing.cwd === resolvedCwd) {
+    // Reattach: flush any pending so the renderer sees a coherent state, return rolling buffer.
+    flushPending(id, existing);
+    try {
+      existing.proc.resize(Math.max(2, cols), Math.max(1, rows));
+    } catch {
+      // ignore
+    }
+    return existing.buffer;
+  }
+  if (existing) {
+    // Same session id with a different cwd — wipe and respawn fresh.
+    killPtySession(id);
+  }
+  spawnPtySession(id, cols, rows, resolvedCwd);
+  return "";
+});
+ipcMain.on("pty:input", (_event, id: string, data: string) => {
+  const session = ptySessions.get(id);
+  if (!session) return;
+  try {
+    session.proc.write(data);
+  } catch {
+    // ignore — child likely exiting
+  }
+});
+ipcMain.on("pty:resize", (_event, id: string, cols: number, rows: number) => {
+  const session = ptySessions.get(id);
+  if (!session) return;
+  try {
+    session.proc.resize(Math.max(2, cols), Math.max(1, rows));
+  } catch {
+    // EBADF / ENOTTY when child is gone — ignore
+  }
+});
+ipcMain.on("pty:kill", (_event, id: string) => {
+  killPtySession(id);
+});
+
 app.whenReady().then(createWindow).catch((error) => {
   console.error(error);
   app.quit();
@@ -271,5 +432,6 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  killAllPtys();
   void sdkClient?.dispose();
 });

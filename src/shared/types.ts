@@ -116,6 +116,17 @@ export type CreateRecordResult = {
   values_inserted: number;
 };
 
+export type TerminalExit = { exitCode: number; signal?: number };
+
+export type TerminalBridge = {
+  subscribe: (id: string, cols: number, rows: number, cwd?: string) => Promise<string>;
+  send: (id: string, data: string) => void;
+  resize: (id: string, cols: number, rows: number) => void;
+  kill: (id: string) => void;
+  onData: (id: string, handler: (data: string) => void) => () => void;
+  onExit: (id: string, handler: (info: TerminalExit) => void) => () => void;
+};
+
 export type AppBridge = {
   platform: string;
   openWorkspaceDialog: () => Promise<WorkspaceSummary | null>;
