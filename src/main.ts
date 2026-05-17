@@ -149,8 +149,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 980,
-    minWidth: 1100,
-    minHeight: 760,
+    minWidth: 640,
+    minHeight: 480,
     titleBarStyle: "hiddenInset",
     vibrancy: "sidebar",
     backgroundColor: "#11100f",
