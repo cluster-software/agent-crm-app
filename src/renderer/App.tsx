@@ -1,12 +1,16 @@
 import {
   Building2,
+  ChevronRight,
   Database,
   FileText,
   FilePlus2,
   FolderOpen,
+  Globe,
   Handshake,
   Loader2,
+  Mail,
   Newspaper,
+  Phone,
   Plus,
   Terminal,
   Users,
@@ -28,7 +32,7 @@ import {
   getCoreRowModel,
   useReactTable
 } from "@tanstack/react-table";
-import { api, isPreviewMode } from "./api";
+import { api } from "./api";
 import type {
   CreateRecordPayload,
   RecordPreview,
@@ -40,11 +44,27 @@ import {
   Avatar,
   Badge,
   CompanyMark,
+  GitHubIcon,
+  LinkedInIcon,
   MonoLabel,
-  StatusPill
+  XIcon
 } from "./primitives";
 
 const sdkObjectOrder = ["companies", "people", "deals", "posts", "transcripts"];
+const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
+
+type PersonTab = "overview" | "transcripts" | "posts";
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
+
+function isTerminalTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return target.closest(".terminal") !== null;
+}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
@@ -62,6 +82,16 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
+  const [personTab, setPersonTab] = useState<PersonTab>("overview");
+
+  useEffect(() => {
+    setDetailRecord(null);
+  }, [selectedObjectSlug]);
+
+  useEffect(() => {
+    setPersonTab("overview");
+  }, [detailRecord?.record_id]);
   const [terminalWidth, setTerminalWidth] = useState(() => {
     if (typeof window === "undefined") return 420;
     const stored = window.localStorage.getItem("terminalWidth");
@@ -90,6 +120,27 @@ export function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    function onEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditableTarget(event.target)) return;
+      if (isTerminalTarget(event.target)) return;
+
+      if (detailRecord && personTab !== "overview") {
+        event.preventDefault();
+        setPersonTab("overview");
+        return;
+      }
+      if (detailRecord) {
+        event.preventDefault();
+        setDetailRecord(null);
+      }
+    }
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [detailRecord, personTab]);
 
   const refreshWorkspace = useCallback(async () => {
     const summary = await api.getWorkspace();
@@ -131,22 +182,21 @@ export function App() {
     }
   }
 
-  const totalRecords = workspace
-    ? Object.values(workspace.counts).reduce((sum, value) => sum + value, 0)
-    : 0;
   const workspaceLabel = workspace?.filename ?? "No workspace";
 
   return (
     <div className="app-shell" data-sidebar-open={sidebarOpen}>
       <aside className="sidebar" hidden={!sidebarOpen}>
         <div className="traffic-space" />
-        <div className="workspace-switcher" title={workspace?.path ?? ""}>
-          <span className="workspace-label">{workspaceLabel}</span>
+        <div className="workspace-switcher">
+          <span className="workspace-label">Agent CRM</span>
         </div>
 
         <div className="sidebar-section">
           {schemaObjects.length > 0 ? (
-            schemaObjects.map((object) => {
+            schemaObjects
+              .filter((object) => SIDEBAR_VISIBLE_OBJECTS.has(object.object_slug))
+              .map((object) => {
               const Icon = iconForObject(object.object_slug);
               const active = selectedObject?.object_slug === object.object_slug;
               const count = workspace?.counts[object.object_slug] ?? 0;
@@ -182,13 +232,6 @@ export function App() {
             <div className="sidebar-footer__title">
               {workspace ? workspace.filename : "agent-crm"}
             </div>
-            <div className="sidebar-footer__sub">
-              {workspace
-                ? `${formatNumber(totalRecords)} records · ${schemaObjects.length} objects`
-                : isPreviewMode
-                  ? "browser preview"
-                  : "not connected"}
-            </div>
           </div>
         </div>
       </aside>
@@ -196,13 +239,31 @@ export function App() {
       <main className="main">
         <header className="toolbar">
           <div className="breadcrumb">
-            <span className="breadcrumb__current">
-              {selectedObject?.plural_name ?? workspaceLabel}
-            </span>
-            {workspace && selectedObject && (
-              <Badge style={{ marginLeft: 4 }}>
-                {formatNumber(workspace.counts[selectedObject.object_slug] ?? 0)}
-              </Badge>
+            {detailRecord && selectedObject ? (
+              <>
+                <button
+                  type="button"
+                  className="breadcrumb__link"
+                  onClick={() => setDetailRecord(null)}
+                >
+                  {selectedObject.plural_name}
+                </button>
+                <span className="breadcrumb__sep">
+                  <ChevronRight size={11} className="lucide" />
+                </span>
+                <span className="breadcrumb__current">{detailRecord.label}</span>
+              </>
+            ) : (
+              <>
+                <span className="breadcrumb__current">
+                  {selectedObject?.plural_name ?? workspaceLabel}
+                </span>
+                {workspace && selectedObject && (
+                  <Badge style={{ marginLeft: 4 }}>
+                    {formatNumber(workspace.counts[selectedObject.object_slug] ?? 0)}
+                  </Badge>
+                )}
+              </>
             )}
           </div>
           <div className="toolbar__spacer" />
@@ -261,10 +322,15 @@ export function App() {
                 onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
                 onCreate={() => runWorkspaceAction(api.createWorkspaceDialog)}
               />
+            ) : detailRecord && selectedObject?.object_slug === "people" ? (
+              <PersonDetail record={detailRecord} tab={personTab} onTabChange={setPersonTab} />
             ) : selectedObject ? (
               <RecordsView
                 object={selectedObject}
                 onChanged={refreshWorkspace}
+                onRowClick={
+                  selectedObject.object_slug === "people" ? setDetailRecord : undefined
+                }
                 setError={setError}
               />
             ) : null}
@@ -279,18 +345,6 @@ export function App() {
           />
         </div>
 
-        {workspace && (
-          <footer className="status-bar">
-            <StatusPill state="ok" label="workspace connected" />
-            <span className="status-bar__sep" />
-            <span>{formatNumber(totalRecords)} records</span>
-            <span className="status-bar__sep" />
-            <span>{schemaObjects.length} objects</span>
-            <span className="status-bar__cli">
-              cli ▸ agent-crm open {workspace.filename}
-            </span>
-          </footer>
-        )}
       </main>
     </div>
   );
@@ -354,10 +408,12 @@ function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: ()
 function RecordsView({
   object,
   onChanged,
+  onRowClick,
   setError
 }: {
   object: SchemaObject;
   onChanged: () => Promise<WorkspaceSummary | null>;
+  onRowClick?: (record: RecordPreview) => void;
   setError: (error: string | null) => void;
 }) {
   const [records, setRecords] = useState<RecordPreview[]>([]);
@@ -407,6 +463,7 @@ function RecordsView({
           object={object}
           records={records}
           valueColumns={valueColumns}
+          onRowClick={onRowClick}
         />
       </div>
 
@@ -421,7 +478,22 @@ function RecordsView({
   );
 }
 
+const COLUMNS_BY_OBJECT: Record<string, Array<[string, string]>> = {
+  companies: [
+    ["linkedin_url", "LinkedIn"],
+    ["twitter_url", "X"],
+    ["domains", "Domain"]
+  ],
+  people: [
+    ["linkedin_url", "LinkedIn"],
+    ["twitter_url", "X"],
+    ["email_addresses", "Email"]
+  ]
+};
+
 function pickValueColumns(object: SchemaObject, records: RecordPreview[]) {
+  const override = COLUMNS_BY_OBJECT[object.object_slug];
+  if (override) return override;
   const seen = new Map<string, string>();
   for (const record of records) {
     for (const value of record.values) {
@@ -457,11 +529,15 @@ function useRecordColumns(object: SchemaObject, valueColumns: Array<[string, str
         header: object.singular_name,
         cell: (info) => {
           const record = info.row.original;
+          const showSubtitle =
+            !COLUMNS_BY_OBJECT[object.object_slug] &&
+            record.subtitle &&
+            record.subtitle !== object.singular_name;
           return (
             <span className="cell-identity">
               <IdentityMark object={object} name={record.label} />
               <span className="cell-identity__name">{record.label}</span>
-              {record.subtitle && (
+              {showSubtitle && (
                 <span className="cell-identity__domain">{record.subtitle}</span>
               )}
             </span>
@@ -488,11 +564,13 @@ function useRecordColumns(object: SchemaObject, valueColumns: Array<[string, str
 function RecordsTable({
   object,
   records,
-  valueColumns
+  valueColumns,
+  onRowClick
 }: {
   object: SchemaObject;
   records: RecordPreview[];
   valueColumns: Array<[string, string]>;
+  onRowClick?: (record: RecordPreview) => void;
 }) {
   const columns = useRecordColumns(object, valueColumns);
   const table = useReactTable({
@@ -533,6 +611,7 @@ function RecordsTable({
               className="table__row"
               data-touched={index === 0 ? "true" : undefined}
               style={gridStyle}
+              onClick={onRowClick ? () => onRowClick(row.original) : undefined}
             >
               {row.getVisibleCells().map((cell) => (
                 <span key={cell.id}>
@@ -961,4 +1040,366 @@ function TerminalPane({
       />
     </aside>
   );
+}
+
+type RelatedRecord = {
+  id: string;
+  attrs: Record<string, unknown>;
+};
+
+async function fetchAssociated(
+  personRecordId: string,
+  childObject: "transcripts" | "posts",
+  inverseAttribute: string
+): Promise<RelatedRecord[]> {
+  const result = await api.runQuery(
+    `SELECT v.ref_record_id AS rec_id, tv.attribute_slug AS attr, tv.value_json AS val
+       FROM acrm_value v
+       LEFT JOIN acrm_value tv
+         ON tv.object_slug = $2
+        AND tv.record_id = v.ref_record_id
+        AND tv.active_until IS NULL
+      WHERE v.object_slug = 'people'
+        AND v.record_id = $1
+        AND v.attribute_slug = $3
+        AND v.ref_object = $2
+        AND v.active_until IS NULL`,
+    [personRecordId, childObject, inverseAttribute]
+  );
+
+  const map = new Map<string, RelatedRecord>();
+  for (const row of result.rows) {
+    const id = row.rec_id == null ? "" : String(row.rec_id);
+    if (!id) continue;
+    let entry = map.get(id);
+    if (!entry) {
+      entry = { id, attrs: {} };
+      map.set(id, entry);
+    }
+    if (row.attr != null) {
+      entry.attrs[String(row.attr)] = parseValueJson(row.val);
+    }
+  }
+  return [...map.values()];
+}
+
+function parseValueJson(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function getScalar(attrs: Record<string, unknown>, key: string): string {
+  const value = attrs[key];
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const candidate =
+      obj.value ?? obj.title ?? obj.timestamp ?? obj.date ?? obj.text ?? obj.url;
+    if (candidate != null) return String(candidate);
+  }
+  return "";
+}
+
+function formatDateDisplay(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function formatDuration(value: unknown): string {
+  const raw = typeof value === "object" && value !== null
+    ? (value as { value?: unknown }).value
+    : value;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const mins = Math.round(n / 60);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function transcriptPrimary(item: RelatedRecord): string {
+  return (
+    getScalar(item.attrs, "title") ||
+    getScalar(item.attrs, "source_id") ||
+    `Transcript ${item.id.slice(0, 8)}`
+  );
+}
+
+function transcriptSecondary(item: RelatedRecord): string {
+  const parts: string[] = [];
+  const source = getScalar(item.attrs, "source");
+  if (source) parts.push(source);
+  const started = getScalar(item.attrs, "started_at");
+  if (started) parts.push(formatDateDisplay(started));
+  const dur = formatDuration(item.attrs.duration_seconds);
+  if (dur) parts.push(dur);
+  return parts.join(" · ");
+}
+
+function postPrimary(item: RelatedRecord): string {
+  const content = getScalar(item.attrs, "content");
+  if (content) {
+    const trimmed = content.trim();
+    return trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed;
+  }
+  return getScalar(item.attrs, "url") || `Post ${item.id.slice(0, 8)}`;
+}
+
+function postSecondary(item: RelatedRecord): string {
+  const parts: string[] = [];
+  const platform = getScalar(item.attrs, "platform");
+  if (platform) parts.push(platform);
+  const postedAt = getScalar(item.attrs, "posted_at");
+  if (postedAt) parts.push(formatDateDisplay(postedAt));
+  return parts.join(" · ");
+}
+
+function PersonDetail({
+  record,
+  tab,
+  onTabChange
+}: {
+  record: RecordPreview;
+  tab: PersonTab;
+  onTabChange: (tab: PersonTab) => void;
+}) {
+  const meta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : null;
+  const contactRows = buildContactRows(record);
+
+  const [transcripts, setTranscripts] = useState<RelatedRecord[]>([]);
+  const [posts, setPosts] = useState<RelatedRecord[]>([]);
+  const [loadingRelated, setLoadingRelated] = useState(true);
+  const [relatedError, setRelatedError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingRelated(true);
+    setRelatedError(null);
+    Promise.all([
+      fetchAssociated(record.record_id, "transcripts", "associated_transcripts"),
+      fetchAssociated(record.record_id, "posts", "associated_posts")
+    ])
+      .then(([t, p]) => {
+        if (cancelled) return;
+        setTranscripts(
+          [...t].sort((a, b) =>
+            getScalar(b.attrs, "started_at").localeCompare(getScalar(a.attrs, "started_at"))
+          )
+        );
+        setPosts(
+          [...p].sort((a, b) =>
+            getScalar(b.attrs, "posted_at").localeCompare(getScalar(a.attrs, "posted_at"))
+          )
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) setRelatedError(statusFromError(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRelated(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record.record_id]);
+
+  return (
+    <div className="detail">
+      <header className="detail__header">
+        <h1 className="detail__title display">{record.label}</h1>
+        {meta && <div className="detail__meta">{meta}</div>}
+      </header>
+
+      <nav className="detail__tabs tabs">
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "overview"}
+          onClick={() => onTabChange("overview")}
+        >
+          Overview
+        </button>
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "transcripts"}
+          onClick={() => onTabChange("transcripts")}
+        >
+          Transcripts <span className="tab__count">{transcripts.length}</span>
+        </button>
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "posts"}
+          onClick={() => onTabChange("posts")}
+        >
+          Posts <span className="tab__count">{posts.length}</span>
+        </button>
+      </nav>
+
+      {tab === "overview" ? (
+        <div className="detail__body">
+          <section className="detail__activity">
+            <MonoLabel>Recent activity</MonoLabel>
+            <div className="empty-inline">
+              <span>no activity yet · agent runs and transcripts will appear here</span>
+            </div>
+          </section>
+
+          <aside className="detail__aside">
+            <MonoLabel>Contact</MonoLabel>
+            {contactRows.length === 0 ? (
+              <div className="empty-inline">
+                <span>no contact info on file</span>
+              </div>
+            ) : (
+              <div className="detail__contact">
+                {contactRows.map((row, index) => (
+                  <div key={index} className="detail__contact-row">
+                    <row.Icon size={13} className="lucide" />
+                    <span className="mono">{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </aside>
+        </div>
+      ) : (
+        <section className="detail__tab-panel">
+          {relatedError ? (
+            <div className="empty-inline"><span>{relatedError}</span></div>
+          ) : loadingRelated ? (
+            <div className="empty-inline"><span>loading…</span></div>
+          ) : tab === "transcripts" ? (
+            <RelatedList
+              items={transcripts}
+              empty="no transcripts linked to this person yet"
+              renderPrimary={transcriptPrimary}
+              renderSecondary={transcriptSecondary}
+            />
+          ) : (
+            <RelatedList
+              items={posts}
+              empty="no posts linked to this person yet"
+              renderPrimary={postPrimary}
+              renderSecondary={postSecondary}
+            />
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function RelatedList({
+  items,
+  empty,
+  renderPrimary,
+  renderSecondary
+}: {
+  items: RelatedRecord[];
+  empty: string;
+  renderPrimary: (item: RelatedRecord) => string;
+  renderSecondary: (item: RelatedRecord) => string;
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="empty-inline">
+        <span>{empty}</span>
+      </div>
+    );
+  }
+  return (
+    <ul className="related-list">
+      {items.map((item) => {
+        const secondary = renderSecondary(item);
+        return (
+          <li key={item.id} className="related-list__item">
+            <div className="related-list__primary">{renderPrimary(item)}</div>
+            {secondary && <div className="related-list__secondary">{secondary}</div>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+type ContactRow = {
+  Icon: ComponentType<{ size?: number; className?: string }>;
+  value: string;
+};
+
+function buildContactRows(record: RecordPreview): ContactRow[] {
+  const rows: ContactRow[] = [];
+  const seen = new Set<string>();
+  const push = (Icon: ContactRow["Icon"], value: string) => {
+    const key = `${Icon.name}:${value}`;
+    if (!value || seen.has(key)) return;
+    seen.add(key);
+    rows.push({ Icon, value });
+  };
+
+  for (const value of record.values) {
+    const display = value.display?.trim();
+    if (!display) continue;
+    switch (value.attribute_slug) {
+      case "email_addresses":
+      case "email":
+        for (const item of display.split(",").map((s) => s.trim()).filter(Boolean)) {
+          push(Mail, item);
+        }
+        break;
+      case "phone":
+      case "phone_number":
+      case "phone_numbers":
+        for (const item of display.split(",").map((s) => s.trim()).filter(Boolean)) {
+          push(Phone, item);
+        }
+        break;
+      case "linkedin_url":
+        push(LinkedInIcon, stripUrl(display));
+        break;
+      case "twitter_url":
+      case "x_url":
+        push(XIcon, stripUrl(display));
+        break;
+      case "github_url":
+      case "github":
+        push(GitHubIcon, stripUrl(display));
+        break;
+      case "website":
+      case "url":
+      case "domain":
+      case "domains":
+        push(Globe, stripUrl(display));
+        break;
+      default:
+        if (/github\.com/i.test(display)) {
+          push(GitHubIcon, stripUrl(display));
+        } else if (/linkedin\.com/i.test(display)) {
+          push(LinkedInIcon, stripUrl(display));
+        } else if (/(?:^|\W)(?:x\.com|twitter\.com)/i.test(display)) {
+          push(XIcon, stripUrl(display));
+        }
+        break;
+    }
+  }
+  return rows;
+}
+
+function stripUrl(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
