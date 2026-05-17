@@ -1,62 +1,35 @@
 import {
-  Archive,
-  Braces,
   Building2,
-  ChevronDown,
-  Circle,
-  Columns3,
   Database,
   FileText,
-  FileInput,
   FilePlus2,
   FolderOpen,
   Handshake,
-  Layers3,
-  ListPlus,
   Loader2,
   Newspaper,
-  Play,
   Plus,
-  Search,
-  Send,
-  Table2,
-  Upload,
   Users,
-  Waypoints,
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import type { ComponentType, FormEvent } from "react";
 import { api, isPreviewMode } from "./api";
 import type {
   CreateRecordPayload,
-  ImportCsvResult,
-  QueryResult,
   RecordPreview,
-  TranscriptImportResult,
-  TranscriptPayload,
+  RecordValue,
+  SchemaObject,
   WorkspaceSummary
 } from "../shared/types";
+import {
+  Avatar,
+  Badge,
+  CompanyMark,
+  MonoLabel,
+  StatusPill
+} from "./primitives";
 
-type ImportMode = "csv" | "transcript";
-
-type SchemaObject = WorkspaceSummary["objects"][number];
-
-const sdkObjectOrder = [
-  "companies",
-  "people",
-  "deals",
-  "posts",
-  "transcripts"
-];
-
-const defaultQuery = `SELECT object_slug, COUNT(*) AS records
-FROM acrm_record
-GROUP BY object_slug
-ORDER BY object_slug;`;
-
-const defaultCsv = `email,first_name,last_name,company,domain,job_title,deal_name,deal_stage
-maya@lumin.ai,Maya,Chen,Lumin AI,lumin.ai,VP Sales,Expansion,In Progress`;
+const sdkObjectOrder = ["companies", "people", "deals", "posts", "transcripts"];
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
@@ -101,7 +74,6 @@ export function App() {
   }, [schemaObjects, selectedObjectSlug, workspace]);
 
   async function runWorkspaceAction(action: () => Promise<WorkspaceSummary | null>) {
-    setLoading("Opening workspace");
     setError(null);
     try {
       const summary = await action();
@@ -111,27 +83,23 @@ export function App() {
       }
     } catch (err) {
       setError(statusFromError(err));
-    } finally {
-      setLoading("");
     }
   }
+
+  const totalRecords = workspace
+    ? Object.values(workspace.counts).reduce((sum, value) => sum + value, 0)
+    : 0;
+  const workspaceLabel = workspace?.filename ?? "No workspace";
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="traffic-space" />
-        <div className="brand">
-          <div className="brand-mark">
-            <Database size={16} />
-          </div>
-          <div>
-            <div className="brand-title">Agent CRM</div>
-            <div className="brand-subtitle">SDK Console</div>
-          </div>
+        <div className="workspace-switcher" title={workspace?.path ?? ""}>
+          <span className="workspace-label">{workspaceLabel}</span>
         </div>
 
-        <nav className="nav-list">
-          <div className="sidebar-section-label">Schema</div>
+        <div className="sidebar-section">
           {schemaObjects.length > 0 ? (
             schemaObjects.map((object) => {
               const Icon = iconForObject(object.object_slug);
@@ -139,96 +107,123 @@ export function App() {
               const count = workspace?.counts[object.object_slug] ?? 0;
               return (
                 <button
-                  className={`nav-item object-nav-item ${active ? "active" : ""}`}
+                  type="button"
+                  className="nav-item"
+                  aria-current={active}
                   key={object.object_slug}
                   onClick={() => setSelectedObjectSlug(object.object_slug)}
                 >
-                  <Icon size={15} />
-                  <span className="nav-object-copy">
-                    <span className="nav-object-title">{object.plural_name}</span>
-                    <span className="nav-object-slug">{object.object_slug}</span>
+                  <span className="nav-item__icon">
+                    <Icon size={14} className="lucide" />
                   </span>
-                  <span className="nav-count">{formatNumber(count)}</span>
+                  <span className="nav-item__label">{object.plural_name}</span>
+                  <span className="nav-item__count">{formatNumber(count)}</span>
                 </button>
               );
             })
           ) : (
-            <div className="sidebar-empty">Open a workspace to load SDK objects.</div>
+            <div className="empty-inline">Open a workspace to load SDK objects.</div>
           )}
-        </nav>
+        </div>
+
+        <div className="sidebar-spacer" />
 
         <div className="sidebar-footer">
-          <div className="workspace-chip">
-            <Circle size={8} className={workspace ? "online" : "idle"} fill="currentColor" />
-            <span>{workspace ? workspace.filename : "No workspace"}</span>
+          <span
+            className="sidebar-footer__dot"
+            data-state={workspace ? "live" : "idle"}
+          />
+          <div className="sidebar-footer__body">
+            <div className="sidebar-footer__title">
+              {workspace ? workspace.filename : "agent-crm"}
+            </div>
+            <div className="sidebar-footer__sub">
+              {workspace
+                ? `${formatNumber(totalRecords)} records · ${schemaObjects.length} objects`
+                : isPreviewMode
+                  ? "browser preview"
+                  : "not connected"}
+            </div>
           </div>
-          {isPreviewMode && <div className="preview-badge">Browser preview</div>}
         </div>
       </aside>
 
-      <main className="workspace">
-        <header className="topbar">
-          <div className="location">
-            <span className="crumb">Schema</span>
-            <ChevronDown size={14} />
-            <strong>{selectedObject?.plural_name ?? workspace?.filename ?? "Not connected"}</strong>
+      <main className="main">
+        <header className="toolbar">
+          <div className="breadcrumb">
+            <span className="breadcrumb__current">
+              {selectedObject?.plural_name ?? workspaceLabel}
+            </span>
+            {workspace && selectedObject && (
+              <Badge style={{ marginLeft: 4 }}>
+                {formatNumber(workspace.counts[selectedObject.object_slug] ?? 0)}
+              </Badge>
+            )}
           </div>
-          <div className="toolbar">
+          <div className="toolbar__spacer" />
+          <div className="toolbar__actions">
             <button
-              className="icon-button"
+              className="icon-btn"
+              type="button"
               title="Open workspace"
+              aria-label="Open workspace"
               onClick={() => runWorkspaceAction(api.openWorkspaceDialog)}
             >
-              <FolderOpen size={15} />
-              <span>Open</span>
+              <FolderOpen size={14} className="lucide" />
             </button>
             <button
-              className="primary-button"
+              className="icon-btn"
+              type="button"
               title="Create workspace"
+              aria-label="Create workspace"
               onClick={() => runWorkspaceAction(api.createWorkspaceDialog)}
             >
-              <FilePlus2 size={15} />
-              <span>Create</span>
+              <FilePlus2 size={14} className="lucide" />
             </button>
           </div>
         </header>
 
         {error && (
-          <div className="error-strip">
+          <div className="strip strip--error">
             <span>{error}</span>
-            <button onClick={() => setError(null)} title="Dismiss">
-              <X size={14} />
+            <button className="strip__close" type="button" onClick={() => setError(null)}>
+              <X size={14} className="lucide" />
             </button>
           </div>
         )}
 
         {loading && (
-          <div className="loading-strip">
-            <Loader2 size={14} className="spin" />
+          <div className="strip strip--loading">
+            <Loader2 size={14} className="lucide spin" />
             <span>{loading}</span>
           </div>
         )}
 
-        <section className="content">
-          {!workspace ? (
-            <EmptyWorkspace
-              onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
-              onCreate={() => runWorkspaceAction(api.createWorkspaceDialog)}
-            />
-          ) : selectedObject ? (
-            <RecordsView
-              workspace={workspace}
-              objectSlug={selectedObject.object_slug}
-              onChanged={refreshWorkspace}
-              setError={setError}
-            />
-          ) : (
-            <EmptyWorkspace
-              onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
-              onCreate={() => runWorkspaceAction(api.createWorkspaceDialog)}
-            />
-          )}
-        </section>
+        {!workspace ? (
+          <EmptyWorkspace
+            onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
+            onCreate={() => runWorkspaceAction(api.createWorkspaceDialog)}
+          />
+        ) : selectedObject ? (
+          <RecordsView
+            object={selectedObject}
+            onChanged={refreshWorkspace}
+            setError={setError}
+          />
+        ) : null}
+
+        {workspace && (
+          <footer className="status-bar">
+            <StatusPill state="ok" label="workspace connected" />
+            <span className="status-bar__sep" />
+            <span>{formatNumber(totalRecords)} records</span>
+            <span className="status-bar__sep" />
+            <span>{schemaObjects.length} objects</span>
+            <span className="status-bar__cli">
+              cli ▸ agent-crm open {workspace.filename}
+            </span>
+          </footer>
+        )}
       </main>
     </div>
   );
@@ -248,7 +243,7 @@ function defaultObjectSlug(objects: SchemaObject[]) {
   return objects[0]?.object_slug ?? "companies";
 }
 
-function iconForObject(objectSlug: string) {
+function iconForObject(objectSlug: string): ComponentType<{ size?: number; className?: string }> {
   switch (objectSlug) {
     case "companies":
       return Building2;
@@ -268,18 +263,20 @@ function iconForObject(objectSlug: string) {
 function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: () => void }) {
   return (
     <div className="empty-state">
-      <div className="empty-icon">
-        <Database size={30} />
+      <div className="empty-state__mark">
+        <Database size={20} className="lucide" />
       </div>
-      <h1>Connect an Agent CRM workspace</h1>
-      <p>Open an existing `.acrm` file or create a fresh workspace seeded by the SDK.</p>
-      <div className="empty-actions">
-        <button className="primary-button" onClick={onCreate}>
-          <FilePlus2 size={15} />
+      <h1 className="empty-state__title">Connect a workspace</h1>
+      <p className="empty-state__sub">
+        Open an existing <span className="mono">.acrm</span> file or create a new workspace seeded by the SDK.
+      </p>
+      <div className="empty-state__actions">
+        <button className="btn btn--primary" type="button" onClick={onCreate}>
+          <FilePlus2 size={14} className="lucide" />
           <span>Create workspace</span>
         </button>
-        <button className="icon-button" onClick={onOpen}>
-          <FolderOpen size={15} />
+        <button className="btn" type="button" onClick={onOpen}>
+          <FolderOpen size={14} className="lucide" />
           <span>Open workspace</span>
         </button>
       </div>
@@ -287,103 +284,25 @@ function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: ()
   );
 }
 
-function Overview({ workspace }: { workspace: WorkspaceSummary }) {
-  const totalRecords = Object.values(workspace.counts).reduce((sum, value) => sum + value, 0);
-
-  return (
-    <div className="view-stack">
-      <div className="page-heading">
-        <div>
-          <h1>Overview</h1>
-          <p>{workspace.path}</p>
-        </div>
-        <div className="summary-pill">
-          <Layers3 size={14} />
-          <span>{workspace.objects.length} objects</span>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric label="Records" value={formatNumber(totalRecords)} detail="Across all objects" />
-        <Metric label="Active values" value={formatNumber(workspace.activeValues)} detail="Current EAV values" />
-        <Metric label="Schema objects" value={formatNumber(workspace.objects.length)} detail="SDK registered" />
-        <Metric label="Largest object" value={largestObjectLabel(workspace)} detail="By record count" />
-      </div>
-
-      <div className="split-layout">
-        <section className="panel">
-          <div className="panel-heading">
-            <h2>Object Counts</h2>
-          </div>
-          <div className="object-list">
-            {workspace.objects.map((object) => (
-              <div className="object-row" key={object.object_slug}>
-                <div>
-                  <strong>{object.plural_name}</strong>
-                  <span>{object.object_slug}</span>
-                </div>
-                <b>{formatNumber(workspace.counts[object.object_slug] ?? 0)}</b>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h2>Recent Records</h2>
-          </div>
-          <RecordList records={workspace.recent} compact />
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function largestObjectLabel(workspace: WorkspaceSummary) {
-  const [slug, count] = Object.entries(workspace.counts).sort((a, b) => b[1] - a[1])[0] ?? ["none", 0];
-  if (!count) return "None";
-  const object = workspace.objects.find((item) => item.object_slug === slug);
-  return object?.plural_name ?? slug;
-}
-
-function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
 function RecordsView({
-  workspace,
-  objectSlug,
+  object,
   onChanged,
   setError
 }: {
-  workspace: WorkspaceSummary;
-  objectSlug: string;
+  object: SchemaObject;
   onChanged: () => Promise<WorkspaceSummary | null>;
   setError: (error: string | null) => void;
 }) {
   const [records, setRecords] = useState<RecordPreview[]>([]);
-  const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
 
-  const object = workspace.objects.find((item) => item.object_slug === objectSlug) ?? workspace.objects[0];
-
   const loadRecords = useCallback(async () => {
-    if (!objectSlug) return;
-    setLoading(true);
     try {
-      setRecords(await api.listRecords(objectSlug));
+      setRecords(await api.listRecords(object.object_slug));
     } catch (err) {
       setError(statusFromError(err));
-    } finally {
-      setLoading(false);
     }
-  }, [objectSlug, setError]);
+  }, [object.object_slug, setError]);
 
   useEffect(() => {
     void loadRecords();
@@ -400,79 +319,169 @@ function RecordsView({
     }
   }
 
+  const valueColumns = pickValueColumns(object, records);
+
   return (
-    <div className="view-stack">
-      <div className="page-heading">
-        <div>
-          <h1>{object?.plural_name ?? "Records"}</h1>
-          <p>{object?.singular_name ?? "Object"} records from the SDK schema.</p>
-        </div>
-        <button className="primary-button" onClick={() => setShowCreate(true)}>
-          <Plus size={15} />
-          <span>New record</span>
+    <>
+      <div className="filter-bar">
+        <div style={{ flex: 1 }} />
+        <button
+          className="btn btn--sm btn--primary"
+          type="button"
+          onClick={() => setShowCreate(true)}
+        >
+          <Plus size={13} className="lucide" />
+          <span>New</span>
         </button>
       </div>
 
-      <div className="records-toolbar">
-        <div className="object-context">
-          <Columns3 size={14} />
-          <span>{object?.object_slug ?? objectSlug}</span>
-          <b>{object?.attributes.length ?? 0} attributes</b>
-        </div>
-        <div className="search-shell">
-          <Search size={14} />
-          <span>{formatNumber(workspace.counts[objectSlug] ?? 0)} records</span>
-        </div>
+      <div className="table">
+        <RecordsTable
+          object={object}
+          records={records}
+          valueColumns={valueColumns}
+        />
       </div>
 
-      <section className="panel">
-        <div className="panel-heading">
-          <h2>{object?.plural_name ?? objectSlug}</h2>
-          {loading && <Loader2 size={14} className="spin" />}
-        </div>
-        <RecordList records={records} />
-      </section>
-
-      {showCreate && object && (
+      {showCreate && (
         <CreateRecordModal
           object={object}
           onClose={() => setShowCreate(false)}
           onSubmit={handleCreate}
         />
       )}
-    </div>
+    </>
   );
 }
 
-function RecordList({ records, compact = false }: { records: RecordPreview[]; compact?: boolean }) {
+function pickValueColumns(object: SchemaObject, records: RecordPreview[]) {
+  const seen = new Map<string, string>();
+  for (const record of records) {
+    for (const value of record.values) {
+      if (!seen.has(value.attribute_slug)) {
+        seen.set(value.attribute_slug, value.title);
+      }
+    }
+  }
+  for (const attribute of object.attributes) {
+    if (!seen.has(attribute.attribute_slug)) {
+      seen.set(attribute.attribute_slug, attribute.title);
+    }
+  }
+  const skip = new Set(["name", "primary_email", "full_name", "title"]);
+  return Array.from(seen.entries())
+    .filter(([slug]) => !skip.has(slug))
+    .slice(0, 3);
+}
+
+function RecordsTable({
+  object,
+  records,
+  valueColumns
+}: {
+  object: SchemaObject;
+  records: RecordPreview[];
+  valueColumns: Array<[string, string]>;
+}) {
+  const columnTemplate = `28px minmax(220px, 1.6fr) ${valueColumns
+    .map(() => "minmax(140px, 1fr)")
+    .join(" ")}`;
+
   if (records.length === 0) {
     return (
-      <div className="empty-inline">
-        <Archive size={17} />
-        <span>No records yet</span>
-      </div>
+      <>
+        <div
+          className="table__head"
+          style={{ ["--columns" as string]: columnTemplate }}
+        >
+          <span />
+          <span>{object.singular_name}</span>
+          {valueColumns.map(([slug, title]) => (
+            <span key={slug}>{title}</span>
+          ))}
+        </div>
+        <div className="table__body">
+          <div className="empty-inline">
+            <span>no records yet · run an import or create one</span>
+          </div>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className={`record-list ${compact ? "compact" : ""}`}>
-      {records.map((record) => (
-        <article className="record-row" key={`${record.object_slug}:${record.record_id}`}>
-          <div className="record-main">
-            <div className="record-title">{record.label}</div>
-            <div className="record-subtitle">{record.subtitle}</div>
-          </div>
-          <div className="record-values">
-            {record.values.slice(0, compact ? 2 : 4).map((value) => (
-              <span key={value.attribute_slug}>
-                <b>{value.title}</b>
-                {value.display}
-              </span>
+    <>
+      <div
+        className="table__head"
+        style={{ ["--columns" as string]: columnTemplate }}
+      >
+        <span />
+        <span>{object.singular_name}</span>
+        {valueColumns.map(([slug, title]) => (
+          <span key={slug}>{title}</span>
+        ))}
+      </div>
+      <div className="table__body">
+        {records.map((record, index) => (
+          <div
+            key={`${record.object_slug}:${record.record_id}`}
+            className="table__row"
+            data-touched={index === 0 ? "true" : undefined}
+            style={{ ["--columns" as string]: columnTemplate }}
+          >
+            <span className="cell-check" />
+            <span className="cell-identity">
+              <IdentityMark object={object} name={record.label} />
+              <span className="cell-identity__name">{record.label}</span>
+              {record.subtitle && (
+                <span className="cell-identity__domain">{record.subtitle}</span>
+              )}
+            </span>
+            {valueColumns.map(([slug]) => (
+              <ValueCell
+                key={slug}
+                value={record.values.find((value) => value.attribute_slug === slug)}
+              />
             ))}
           </div>
-        </article>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function IdentityMark({ object, name }: { object: SchemaObject; name: string }) {
+  if (object.object_slug === "people") return <Avatar name={name} size={20} />;
+  if (object.object_slug === "companies") return <CompanyMark name={name} size={20} />;
+  return <CompanyMark name={`${object.singular_name} ${name}`} size={20} />;
+}
+
+function ValueCell({ value }: { value?: RecordValue }) {
+  if (!value || !value.display) return <span className="table__cell--muted">—</span>;
+  if (looksLikeStage(value)) return <Badge kind={stageKind(value.display)} dot>{value.display}</Badge>;
+  if (looksMono(value)) return <span className="table__cell--mono">{value.display}</span>;
+  return <span className="table__cell--muted">{value.display}</span>;
+}
+
+function looksLikeStage(value: RecordValue) {
+  return value.type === "status" || value.attribute_slug === "stage";
+}
+
+function stageKind(display: string): "success" | "warning" | "danger" | "accent" | "neutral" {
+  const v = display.toLowerCase();
+  if (["live", "expansion", "won", "active"].some((s) => v.includes(s))) return "success";
+  if (["eval", "queued", "in progress", "trial"].some((s) => v.includes(s))) return "warning";
+  if (["churn", "lost", "error"].some((s) => v.includes(s))) return "danger";
+  return "neutral";
+}
+
+function looksMono(value: RecordValue) {
+  return (
+    value.type === "url" ||
+    value.type === "domain" ||
+    value.attribute_slug.endsWith("_id") ||
+    value.attribute_slug === "linkedin_url" ||
+    value.attribute_slug === "domains"
   );
 }
 
@@ -507,34 +516,38 @@ function CreateRecordModal({
   }
 
   return (
-    <div className="modal-backdrop">
-      <form className="modal" onSubmit={submit}>
-        <div className="modal-heading">
-          <div>
-            <h2>New {object.singular_name}</h2>
-            <p>Use SDK field syntax: attribute=value.</p>
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
+        <div className="modal__head">
+          <div className="page-heading__meta">
+            <h2>New {object.singular_name.toLowerCase()}</h2>
+            <p>Use SDK field syntax: <span className="mono">attribute=value</span>, one per line.</p>
           </div>
-          <button type="button" className="ghost-icon" onClick={onClose} title="Close">
-            <X size={16} />
+          <button className="icon-btn" type="button" onClick={onClose}>
+            <X size={14} className="lucide" />
           </button>
         </div>
-        <textarea
-          className="code-input"
-          value={fields}
-          onChange={(event) => setFields(event.target.value)}
-          spellCheck={false}
-        />
-        <div className="attribute-hints">
-          {object.attributes.map((attribute) => (
-            <span key={attribute.attribute_slug}>{attribute.attribute_slug}</span>
-          ))}
+        <div className="modal__body">
+          <textarea
+            className="textarea"
+            rows={6}
+            value={fields}
+            onChange={(event) => setFields(event.target.value)}
+            spellCheck={false}
+          />
+          <MonoLabel>Attributes</MonoLabel>
+          <div className="attribute-hints">
+            {object.attributes.map((attribute) => (
+              <Badge key={attribute.attribute_slug}>{attribute.attribute_slug}</Badge>
+            ))}
+          </div>
         </div>
-        <div className="modal-actions">
-          <button type="button" className="icon-button" onClick={onClose}>
+        <div className="modal__actions">
+          <button className="btn" type="button" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="primary-button" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <ListPlus size={15} />}
+          <button className="btn btn--primary" type="submit" disabled={busy}>
+            {busy ? <Loader2 size={13} className="lucide spin" /> : <Plus size={13} className="lucide" />}
             <span>Create</span>
           </button>
         </div>
@@ -543,299 +556,3 @@ function CreateRecordModal({
   );
 }
 
-function ImportView({
-  workspace,
-  onChanged,
-  setError
-}: {
-  workspace: WorkspaceSummary;
-  onChanged: () => Promise<WorkspaceSummary | null>;
-  setError: (error: string | null) => void;
-}) {
-  const [mode, setMode] = useState<ImportMode>("csv");
-  const [csvText, setCsvText] = useState(defaultCsv);
-  const [source, setSource] = useState("electron");
-  const [transcript, setTranscript] = useState<TranscriptPayload>({
-    source: "manual",
-    source_id: `manual-${Date.now()}`,
-    title: "Discovery call",
-    participants: [{ email: "maya@lumin.ai" }],
-    summary: "",
-    content: ""
-  });
-  const [busy, setBusy] = useState(false);
-  const [csvResult, setCsvResult] = useState<ImportCsvResult | null>(null);
-  const [transcriptResult, setTranscriptResult] = useState<TranscriptImportResult | null>(null);
-
-  async function runImport() {
-    setBusy(true);
-    setError(null);
-    try {
-      if (mode === "csv") {
-        setCsvResult(await api.importCsv({ csvText, source }));
-      } else {
-        setTranscriptResult(await api.importTranscript(transcript));
-      }
-      await onChanged();
-    } catch (err) {
-      setError(statusFromError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="view-stack">
-      <div className="page-heading">
-        <div>
-          <h1>Import</h1>
-          <p>Write into {workspace.filename} through SDK import operations.</p>
-        </div>
-        <div className="segmented">
-          <button className={mode === "csv" ? "active" : ""} onClick={() => setMode("csv")}>
-            CSV
-          </button>
-          <button className={mode === "transcript" ? "active" : ""} onClick={() => setMode("transcript")}>
-            Transcript
-          </button>
-        </div>
-      </div>
-
-      {mode === "csv" ? (
-        <section className="panel import-panel">
-          <div className="form-grid">
-            <label>
-              <span>Source</span>
-              <input value={source} onChange={(event) => setSource(event.target.value)} />
-            </label>
-          </div>
-          <textarea
-            className="code-input large"
-            value={csvText}
-            onChange={(event) => setCsvText(event.target.value)}
-            spellCheck={false}
-          />
-          <div className="form-actions">
-            <button className="primary-button" onClick={runImport} disabled={busy}>
-              {busy ? <Loader2 size={15} className="spin" /> : <Upload size={15} />}
-              <span>Import CSV</span>
-            </button>
-          </div>
-          {csvResult && (
-            <ResultStrip
-              items={[
-                ["Rows", csvResult.stats.rows],
-                ["People", csvResult.stats.people_created],
-                ["Companies", csvResult.stats.companies_created],
-                ["Deals", csvResult.stats.deals_created]
-              ]}
-            />
-          )}
-        </section>
-      ) : (
-        <section className="panel import-panel">
-          <div className="form-grid two">
-            <label>
-              <span>Source</span>
-              <input
-                value={transcript.source}
-                onChange={(event) => setTranscript({ ...transcript, source: event.target.value })}
-              />
-            </label>
-            <label>
-              <span>Source ID</span>
-              <input
-                value={transcript.source_id}
-                onChange={(event) => setTranscript({ ...transcript, source_id: event.target.value })}
-              />
-            </label>
-            <label>
-              <span>Title</span>
-              <input
-                value={transcript.title ?? ""}
-                onChange={(event) => setTranscript({ ...transcript, title: event.target.value })}
-              />
-            </label>
-            <label>
-              <span>Participants</span>
-              <input
-                value={transcript.participants.map((item) => item.email ?? item.linkedin_url ?? item.twitter_url ?? "").join(", ")}
-                onChange={(event) =>
-                  setTranscript({
-                    ...transcript,
-                    participants: event.target.value
-                      .split(",")
-                      .map((item) => item.trim())
-                      .filter(Boolean)
-                      .map((item) => (item.includes("@") ? { email: item } : { linkedin_url: item }))
-                  })
-                }
-              />
-            </label>
-          </div>
-          <textarea
-            className="code-input large"
-            placeholder="Transcript content"
-            value={transcript.content ?? ""}
-            onChange={(event) => setTranscript({ ...transcript, content: event.target.value })}
-          />
-          <textarea
-            className="code-input"
-            placeholder="Summary"
-            value={transcript.summary ?? ""}
-            onChange={(event) => setTranscript({ ...transcript, summary: event.target.value })}
-          />
-          <div className="form-actions">
-            <button className="primary-button" onClick={runImport} disabled={busy}>
-              {busy ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
-              <span>Import transcript</span>
-            </button>
-          </div>
-          {transcriptResult && (
-            <ResultStrip
-              items={[
-                ["Created", transcriptResult.created ? "Yes" : "No"],
-                ["Resolved", transcriptResult.participants.resolved.length],
-                ["Unresolved", transcriptResult.participants.unresolved.length]
-              ]}
-            />
-          )}
-        </section>
-      )}
-    </div>
-  );
-}
-
-function ResultStrip({ items }: { items: Array<[string, string | number]> }) {
-  return (
-    <div className="result-strip">
-      {items.map(([label, value]) => (
-        <div key={label}>
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function QueryView({ setError }: { setError: (error: string | null) => void }) {
-  const [sql, setSql] = useState(defaultQuery);
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function runQuery() {
-    setBusy(true);
-    setError(null);
-    try {
-      setResult(await api.runQuery(sql));
-    } catch (err) {
-      setError(statusFromError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const columns = useMemo(() => {
-    if (!result?.rows.length) return [];
-    return Object.keys(result.rows[0]);
-  }, [result]);
-
-  return (
-    <div className="view-stack">
-      <div className="page-heading">
-        <div>
-          <h1>Query</h1>
-          <p>Run SQL directly against the workspace through `query()`.</p>
-        </div>
-        <button className="primary-button" onClick={runQuery} disabled={busy}>
-          {busy ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
-          <span>Run</span>
-        </button>
-      </div>
-
-      <section className="panel query-panel">
-        <textarea
-          className="code-input query"
-          value={sql}
-          onChange={(event) => setSql(event.target.value)}
-          spellCheck={false}
-        />
-        <div className="query-meta">
-          <span>{result ? `${result.rows.length} rows` : "Ready"}</span>
-          <span>{result ? `${result.rowsAffected} rows affected` : "Read and write queries use SDK execution"}</span>
-        </div>
-        {result && (
-          <div className="table-shell">
-            <table>
-              <thead>
-                <tr>
-                  {columns.map((column) => (
-                    <th key={column}>{column}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, index) => (
-                  <tr key={index}>
-                    {columns.map((column) => (
-                      <td key={column}>{formatCell(row[column])}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function formatCell(value: unknown) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
-function SchemaView({ workspace }: { workspace: WorkspaceSummary }) {
-  return (
-    <div className="view-stack">
-      <div className="page-heading">
-        <div>
-          <h1>Schema</h1>
-          <p>Default and custom objects registered in this workspace.</p>
-        </div>
-      </div>
-
-      <div className="schema-grid">
-        {workspace.objects.map((object) => (
-          <section className="schema-object" key={object.object_slug}>
-            <div className="schema-object-heading">
-              <div>
-                <h2>{object.plural_name}</h2>
-                <span>{object.object_slug}</span>
-              </div>
-              <strong>{object.attributes.length}</strong>
-            </div>
-            <div className="attribute-list">
-              {object.attributes.map((attribute) => (
-                <div className="attribute-row" key={attribute.attribute_slug}>
-                  <div>
-                    <strong>{attribute.title}</strong>
-                    <span>{attribute.attribute_slug}</span>
-                  </div>
-                  <div className="attribute-tags">
-                    <em>{attribute.attribute_type}</em>
-                    {attribute.is_unique && <em>unique</em>}
-                    {attribute.is_multivalued && <em>multi</em>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-    </div>
-  );
-}
