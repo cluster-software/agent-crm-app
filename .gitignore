@@ -1,0 +1,7 @@
+.codex/config.toml
+node_modules/
+dist/
+.firecrawl/
+*.log
+*.tgz
+.DS_Store

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "outDir": "dist/electron",
+    "rootDir": "src",
+    "sourceMap": true,
+    "types": ["node", "electron"]
+  },
+  "include": ["src/main.ts", "src/preload.ts", "src/sdk-service.ts", "src/shared/**/*.ts"]
+}
