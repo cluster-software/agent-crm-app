@@ -180,6 +180,28 @@ async function inflateRecords(
     grouped.set(key, list);
   }
 
+  // Resolve any record references in the loaded values (e.g. people.company ->
+  // a companies record) to the target record's primary label, then patch each
+  // affected value's `display` so the renderer shows the label instead of an
+  // empty string or a raw UUID.
+  const refKeys = new Set<string>();
+  for (const list of grouped.values()) {
+    for (const value of list) {
+      for (const raw of value.values) {
+        if (isRecordRef(raw)) refKeys.add(`${raw.target_object}:${raw.target_record_id}`);
+      }
+    }
+  }
+  const refLabels = await resolveReferenceLabels(current, refKeys);
+  for (const list of grouped.values()) {
+    for (const value of list) {
+      const hasRef = value.values.some(isRecordRef);
+      if (!hasRef) continue;
+      const parts = value.values.map((raw) => resolveDisplay(raw, refLabels)).filter(Boolean);
+      value.display = parts.join(", ");
+    }
+  }
+
   return records.map((record) => {
     const list = grouped.get(`${record.object_slug}:${record.record_id}`) ?? [];
     const object = schemaByObject.get(record.object_slug);
@@ -216,6 +238,10 @@ function displayValue(value: unknown): string {
   }
   if (typeof value === "object") {
     const item = value as Record<string, unknown>;
+    // Record references (e.g. people.company → a company record) don't carry a
+    // human-readable label; resolving the target's primary label is the caller's
+    // job. Return empty so this value gets filtered out of joined subtitles.
+    if ("target_record_id" in item) return "";
     const candidates = [
       item.full_name,
       item.value,
@@ -225,20 +251,94 @@ function displayValue(value: unknown): string {
       item.root_domain,
       item.date,
       item.timestamp,
-      item.currency_value,
-      item.target_record_id
+      item.currency_value
     ];
     const found = candidates.find((candidate) => candidate !== undefined && candidate !== null && String(candidate).length > 0);
     if (found !== undefined) {
       return String(found);
     }
-    return JSON.stringify(value);
+    return "";
   }
   return String(value);
 }
 
 function findDisplay(values: RecordValue[], attr: string) {
   return values.find((value) => value.attribute_slug === attr)?.display ?? "";
+}
+
+type RecordRef = { target_object: string; target_record_id: string };
+
+function isRecordRef(value: unknown): value is RecordRef {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.target_record_id === "string" && typeof item.target_object === "string";
+}
+
+function resolveDisplay(value: unknown, refLabels: Map<string, string>): string {
+  if (Array.isArray(value)) {
+    return value.map((v) => resolveDisplay(v, refLabels)).filter(Boolean).join(", ");
+  }
+  if (isRecordRef(value)) {
+    return refLabels.get(`${value.target_object}:${value.target_record_id}`) ?? "";
+  }
+  return displayValue(value);
+}
+
+async function resolveReferenceLabels(
+  current: Workspace,
+  refKeys: Set<string>
+): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  if (refKeys.size === 0) return labels;
+
+  const pairs = Array.from(refKeys, (key) => {
+    const idx = key.indexOf(":");
+    return { object_slug: key.slice(0, idx), record_id: key.slice(idx + 1) };
+  });
+
+  const where = pairs
+    .map((_, i) => `(v.object_slug = $${i * 2 + 1} AND v.record_id = $${i * 2 + 2})`)
+    .join(" OR ");
+  const params = pairs.flatMap((p) => [p.object_slug, p.record_id]);
+
+  const valueRows = await query(
+    current,
+    `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json
+       FROM acrm_value v
+      WHERE v.active_until IS NULL
+        AND (${where})`,
+    params
+  );
+
+  const grouped = new Map<string, RecordValue[]>();
+  for (const row of valueRows.rows) {
+    const key = `${row.object_slug}:${row.record_id}`;
+    const parsed = parseValue(row.value_json);
+    const list = grouped.get(key) ?? [];
+    const slug = String(row.attribute_slug);
+    const existing = list.find((item) => item.attribute_slug === slug);
+    if (existing) {
+      existing.values.push(parsed);
+      existing.display = existing.values.map(displayValue).filter(Boolean).join(", ");
+    } else {
+      list.push({
+        attribute_slug: slug,
+        title: slug,
+        type: "",
+        display: displayValue(parsed),
+        raw: parsed,
+        values: [parsed]
+      });
+    }
+    grouped.set(key, list);
+  }
+
+  for (const { object_slug, record_id } of pairs) {
+    const key = `${object_slug}:${record_id}`;
+    const list = grouped.get(key) ?? [];
+    labels.set(key, primaryLabel(object_slug, record_id, list));
+  }
+  return labels;
 }
 
 function primaryLabel(objectSlug: string, recordId: string, values: RecordValue[]) {
@@ -257,7 +357,7 @@ function primaryLabel(objectSlug: string, recordId: string, values: RecordValue[
 
 function secondaryLabel(objectSlug: string, object: SchemaObject | undefined, values: RecordValue[]) {
   const byObject: Record<string, string[]> = {
-    people: ["job_title", "company", "twitter_url"],
+    people: ["job_title", "company"],
     companies: ["description", "domains"],
     deals: ["value", "close_date", "next_step"],
     posts: ["platform", "posted_at", "author"],
