@@ -1,6 +1,7 @@
 .codex/config.toml
 node_modules/
 dist/
+release/
 .firecrawl/
 *.log
 *.tgz
