@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.3.1-295b305...v0.4.0-295b305) (2026-05-18)
+
+
+### Features
+
+* sign and notarize macOS DMGs in release workflow ([8700df4](https://github.com/cluster-software/agent-crm-app/commit/8700df4659434360317ff9a85c07287f02c35eec))
+* sign and notarize macOS DMGs in release workflow ([96817be](https://github.com/cluster-software/agent-crm-app/commit/96817bec8c5f325f8456dabb46894a5deb2b549a))
+
 ## [0.3.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.3.0-295b305...v0.3.1-295b305) (2026-05-18)
 
 
