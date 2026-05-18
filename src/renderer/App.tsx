@@ -11,7 +11,6 @@ import {
   Mail,
   Newspaper,
   Phone,
-  Plus,
   Terminal,
   Users,
   X
@@ -19,7 +18,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ComponentType,
-  FormEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode
 } from "react";
@@ -34,7 +32,6 @@ import {
 } from "@tanstack/react-table";
 import { api } from "./api";
 import type {
-  CreateRecordPayload,
   RecordPreview,
   RecordValue,
   SchemaObject,
@@ -353,7 +350,6 @@ export function App() {
             ) : selectedObject ? (
               <RecordsView
                 object={selectedObject}
-                onChanged={refreshWorkspace}
                 dataVersion={dataVersion}
                 onRowClick={
                   selectedObject.object_slug === "people" ? setDetailRecord : undefined
@@ -434,19 +430,16 @@ function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: ()
 
 function RecordsView({
   object,
-  onChanged,
   dataVersion,
   onRowClick,
   setError
 }: {
   object: SchemaObject;
-  onChanged: () => Promise<WorkspaceSummary | null>;
   dataVersion: number;
   onRowClick?: (record: RecordPreview) => void;
   setError: (error: string | null) => void;
 }) {
   const [records, setRecords] = useState<RecordPreview[]>([]);
-  const [showCreate, setShowCreate] = useState(false);
 
   const loadRecords = useCallback(async () => {
     try {
@@ -460,50 +453,17 @@ function RecordsView({
     void loadRecords();
   }, [loadRecords, dataVersion]);
 
-  async function handleCreate(payload: CreateRecordPayload) {
-    try {
-      await api.createRecord(payload);
-      await onChanged();
-      await loadRecords();
-      setShowCreate(false);
-    } catch (err) {
-      setError(statusFromError(err));
-    }
-  }
-
   const valueColumns = pickValueColumns(object, records);
 
   return (
-    <>
-      <div className="filter-bar">
-        <div style={{ flex: 1 }} />
-        <button
-          className="btn btn--sm btn--primary"
-          type="button"
-          onClick={() => setShowCreate(true)}
-        >
-          <Plus size={13} className="lucide" />
-          <span>New</span>
-        </button>
-      </div>
-
-      <div className="table">
-        <RecordsTable
-          object={object}
-          records={records}
-          valueColumns={valueColumns}
-          onRowClick={onRowClick}
-        />
-      </div>
-
-      {showCreate && (
-        <CreateRecordModal
-          object={object}
-          onClose={() => setShowCreate(false)}
-          onSubmit={handleCreate}
-        />
-      )}
-    </>
+    <div className="table">
+      <RecordsTable
+        object={object}
+        records={records}
+        valueColumns={valueColumns}
+        onRowClick={onRowClick}
+      />
+    </div>
   );
 }
 
@@ -687,77 +647,6 @@ function looksMono(value: RecordValue) {
     value.attribute_slug.endsWith("_id") ||
     value.attribute_slug === "linkedin_url" ||
     value.attribute_slug === "domains"
-  );
-}
-
-function CreateRecordModal({
-  object,
-  onClose,
-  onSubmit
-}: {
-  object: SchemaObject;
-  onClose: () => void;
-  onSubmit: (payload: CreateRecordPayload) => Promise<void>;
-}) {
-  const starter = object.attributes
-    .slice(0, 4)
-    .map((attribute) => `${attribute.attribute_slug}=`)
-    .join("\n");
-  const [fields, setFields] = useState(starter);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    await onSubmit({
-      object_slug: object.object_slug,
-      fields: fields
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-      source: "electron"
-    });
-    setBusy(false);
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
-        <div className="modal__head">
-          <div className="page-heading__meta">
-            <h2>New {object.singular_name.toLowerCase()}</h2>
-            <p>Use SDK field syntax: <span className="mono">attribute=value</span>, one per line.</p>
-          </div>
-          <button className="icon-btn" type="button" onClick={onClose}>
-            <X size={14} className="lucide" />
-          </button>
-        </div>
-        <div className="modal__body">
-          <textarea
-            className="textarea"
-            rows={6}
-            value={fields}
-            onChange={(event) => setFields(event.target.value)}
-            spellCheck={false}
-          />
-          <MonoLabel>Attributes</MonoLabel>
-          <div className="attribute-hints">
-            {object.attributes.map((attribute) => (
-              <Badge key={attribute.attribute_slug}>{attribute.attribute_slug}</Badge>
-            ))}
-          </div>
-        </div>
-        <div className="modal__actions">
-          <button className="btn" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn btn--primary" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={13} className="lucide spin" /> : <Plus size={13} className="lucide" />}
-            <span>Create</span>
-          </button>
-        </div>
-      </form>
-    </div>
   );
 }
 
