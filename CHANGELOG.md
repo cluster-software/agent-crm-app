@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.2.0-295b305...v0.3.0-295b305) (2026-05-18)
+
+
+### Features
+
+* auto-refresh records when .acrm changes externally ([06bfbd0](https://github.com/cluster-software/agent-crm-app/commit/06bfbd0b88a727463ab41924248e4b3f0a507e56))
+* auto-refresh records when .acrm changes externally ([9425b27](https://github.com/cluster-software/agent-crm-app/commit/9425b2727fd268453eb33febddc194df0b5912b0))
+
 ## [0.2.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.1.0-295b305...v0.2.0-295b305) (2026-05-18)
 
 
