@@ -37,7 +37,12 @@ const bridge: AppBridge = {
   importCsv: (payload: ImportCsvPayload) => invoke("import:csv", payload),
   importTranscript: (payload: TranscriptPayload) => invoke("import:transcript", payload),
   createRecord: (payload: CreateRecordPayload) => invoke("records:create", payload),
-  runQuery: (sql: string, params?: unknown[]) => invoke("query:run", sql, params)
+  runQuery: (sql: string, params?: unknown[]) => invoke("query:run", sql, params),
+  onWorkspaceChanged: (handler: () => void) => {
+    const listener = () => handler();
+    ipcRenderer.on("workspace:changed", listener);
+    return () => ipcRenderer.off("workspace:changed", listener);
+  }
 };
 
 const terminal = {

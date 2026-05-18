@@ -14,12 +14,16 @@ import type {
   TranscriptPayload,
   WorkspaceSummary
 } from "./shared/types.js";
+import { createWorkspaceWatcher } from "./workspace-watcher.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
 let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
+const workspaceWatcher = createWorkspaceWatcher(() => {
+  mainWindow?.webContents.send("workspace:changed");
+});
 
 type RpcResponse<T> =
   | { id: number; result: T }
@@ -322,6 +326,12 @@ function handle<TArgs extends unknown[], TResult>(
   });
 }
 
+async function openAndWatch(filePath: string): Promise<WorkspaceSummary> {
+  const summary = await getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath);
+  if (summary?.path) workspaceWatcher.start(summary.path);
+  return summary;
+}
+
 handle("workspace:open-dialog", async () => {
   const result = await dialog.showOpenDialog({
     title: "Open Agent CRM workspace",
@@ -331,7 +341,7 @@ handle("workspace:open-dialog", async () => {
   if (result.canceled || result.filePaths.length === 0) {
     return null;
   }
-  return getSdkClient().request<WorkspaceSummary>("openWorkspace", result.filePaths[0]);
+  return openAndWatch(result.filePaths[0]);
 });
 
 handle("workspace:create-dialog", async () => {
@@ -344,13 +354,16 @@ handle("workspace:create-dialog", async () => {
     return null;
   }
   const filePath = result.filePath.endsWith(".acrm") ? result.filePath : `${result.filePath}.acrm`;
-  return getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath);
+  const summary = await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath);
+  if (summary?.path) workspaceWatcher.start(summary.path);
+  return summary;
 });
 
 handle("workspace:open-path", (filePath: string) => {
-  return getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath);
+  return openAndWatch(filePath);
 });
 handle("workspace:close", async () => {
+  workspaceWatcher.stop();
   await getSdkClient().request<void>("closeWorkspace");
 });
 handle("workspace:get", () => {
@@ -432,6 +445,7 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  workspaceWatcher.stop();
   killAllPtys();
   void sdkClient?.dispose();
 });
