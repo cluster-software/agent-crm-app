@@ -26,7 +26,13 @@
       "package.json"
     ],
     "asarUnpack": [
-      "**/node_modules/node-pty/**/*"
+      "**/node_modules/node-pty/**/*",
+      "dist/electron/sdk-service.js",
+      "**/node_modules/@agent-crm/**/*",
+      "**/node_modules/@lix-js/**/*",
+      "**/node_modules/better-sqlite3/**/*",
+      "**/node_modules/bindings/**/*",
+      "**/node_modules/file-uri-to-path/**/*"
     ],
     "mac": {
       "category": "public.app-category.productivity",
