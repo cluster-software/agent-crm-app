@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.4.0-295b305...v0.5.0-295b305) (2026-05-18)
+
+
+### Features
+
+* auto-open terminal with Claude Code on launch ([471090a](https://github.com/cluster-software/agent-crm-app/commit/471090ac386cada7b35fc6747485613450bd84cc))
+* auto-open terminal with Claude Code on launch ([9653f5e](https://github.com/cluster-software/agent-crm-app/commit/9653f5e2223ac674d1be005c7011253735490237))
+
 ## [0.4.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.3.1-295b305...v0.4.0-295b305) (2026-05-18)
 
 
