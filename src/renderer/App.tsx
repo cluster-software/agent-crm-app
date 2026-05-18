@@ -142,6 +142,8 @@ export function App() {
     return () => window.removeEventListener("keydown", onEscape);
   }, [detailRecord, personTab]);
 
+  const [dataVersion, setDataVersion] = useState(0);
+
   const refreshWorkspace = useCallback(async () => {
     const summary = await api.getWorkspace();
     setWorkspace(summary);
@@ -152,6 +154,30 @@ export function App() {
     refreshWorkspace()
       .catch((err) => setError(statusFromError(err)))
       .finally(() => setLoading(""));
+  }, [refreshWorkspace]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const trigger = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        refreshWorkspace().catch((err) => setError(statusFromError(err)));
+        setDataVersion((v) => v + 1);
+      }, 150);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") trigger();
+    };
+    const unsubscribeWorkspace = api.onWorkspaceChanged(trigger);
+    window.addEventListener("focus", trigger);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribeWorkspace();
+      window.removeEventListener("focus", trigger);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refreshWorkspace]);
 
   const schemaObjects = useMemo(
@@ -328,6 +354,7 @@ export function App() {
               <RecordsView
                 object={selectedObject}
                 onChanged={refreshWorkspace}
+                dataVersion={dataVersion}
                 onRowClick={
                   selectedObject.object_slug === "people" ? setDetailRecord : undefined
                 }
@@ -408,11 +435,13 @@ function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: ()
 function RecordsView({
   object,
   onChanged,
+  dataVersion,
   onRowClick,
   setError
 }: {
   object: SchemaObject;
   onChanged: () => Promise<WorkspaceSummary | null>;
+  dataVersion: number;
   onRowClick?: (record: RecordPreview) => void;
   setError: (error: string | null) => void;
 }) {
@@ -429,7 +458,7 @@ function RecordsView({
 
   useEffect(() => {
     void loadRecords();
-  }, [loadRecords]);
+  }, [loadRecords, dataVersion]);
 
   async function handleCreate(payload: CreateRecordPayload) {
     try {

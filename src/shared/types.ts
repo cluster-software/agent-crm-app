@@ -139,4 +139,5 @@ export type AppBridge = {
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;
   runQuery: (sql: string, params?: unknown[]) => Promise<QueryResult>;
+  onWorkspaceChanged: (handler: () => void) => () => void;
 };

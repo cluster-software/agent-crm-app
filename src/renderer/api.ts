@@ -343,7 +343,8 @@ const browserPreview: AppBridge = {
       { object_slug: "companies", count: 18 }
     ],
     rowsAffected: 0
-  })
+  }),
+  onWorkspaceChanged: () => () => undefined
 };
 
 export const api = window.crm ?? browserPreview;
