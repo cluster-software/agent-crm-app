@@ -80,7 +80,7 @@ export function App() {
   const [selectedObjectSlug, setSelectedObjectSlug] = useState("companies");
   const [loading, setLoading] = useState("Loading workspace");
   const [error, setError] = useState<string | null>(null);
-  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
@@ -93,10 +93,10 @@ export function App() {
     setPersonTab("overview");
   }, [detailRecord?.record_id]);
   const [terminalWidth, setTerminalWidth] = useState(() => {
-    if (typeof window === "undefined") return 420;
+    if (typeof window === "undefined") return 720;
     const stored = window.localStorage.getItem("terminalWidth");
     const parsed = stored ? Number.parseInt(stored, 10) : NaN;
-    return Number.isFinite(parsed) && parsed >= 280 ? parsed : 420;
+    return Number.isFinite(parsed) && parsed >= 280 ? parsed : 720;
   });
 
   useEffect(() => {
@@ -364,7 +364,7 @@ export function App() {
           </div>
           <TerminalPane
             visible={terminalOpen}
-            cwd={workspace ? dirnameOf(workspace.path) : undefined}
+            cwd={workspace?.path}
             width={terminalWidth}
             onWidthChange={setTerminalWidth}
             onClose={() => setTerminalOpen(false)}
@@ -797,13 +797,6 @@ function makeXtermTheme() {
   };
 }
 
-function dirnameOf(filePath: string): string | undefined {
-  if (!filePath) return undefined;
-  const idx = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  if (idx <= 0) return undefined;
-  return filePath.slice(0, idx);
-}
-
 function sessionIdFor(cwd: string | undefined): string {
   return `pty:${cwd ?? "default"}`;
 }
@@ -842,9 +835,10 @@ function TerminalPane({
     sessionIdRef.current = sessionId;
 
     const term = new XTerm({
-      fontFamily: '"JetBrains Mono", ui-monospace, Menlo, monospace',
-      fontSize: 12.5,
-      lineHeight: 1.35,
+      fontFamily: "Menlo, Monaco, Consolas, monospace",
+      fontSize: 13,
+      lineHeight: 1.0,
+      letterSpacing: 0,
       cursorBlink: true,
       scrollback: 10_000,
       allowProposedApi: true,
@@ -950,6 +944,9 @@ function TerminalPane({
           if (backlog) term.write(backlog);
           if (safeFit()) {
             bridge.resize(sessionId, term.cols, term.rows);
+          }
+          if (!backlog) {
+            bridge.send(sessionId, "claude\n");
           }
           focusXterm();
         })

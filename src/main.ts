@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -184,6 +186,74 @@ function defaultShellArgs(): string[] {
 function defaultCwd() {
   const home = os.homedir();
   return home && home.length > 0 ? home : process.cwd();
+}
+
+const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
+
+function slugifyWorkspace(input: string): string {
+  const stripped = input.toLowerCase().replace(/\.acrm$/i, "");
+  const cleaned = stripped.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return (cleaned.slice(0, 40) || "workspace");
+}
+
+function shortHash(input: string): string {
+  return crypto.createHash("sha1").update(input).digest("hex").slice(0, 8);
+}
+
+// Resolves the cwd hint from the renderer (typically a `.acrm` file path) to
+// a managed directory under `~/agent-crm/`. Workspace names can collide, so
+// we suffix with a short hash of the full file path for uniqueness.
+function resolveManagedCwd(hint?: string): string {
+  if (!hint || hint.length === 0) {
+    return AGENT_CRM_ROOT;
+  }
+  const slug = slugifyWorkspace(path.basename(hint));
+  return path.join(AGENT_CRM_ROOT, `${slug}-${shortHash(hint)}`);
+}
+
+const claudeJsonPath = path.join(os.homedir(), ".claude.json");
+const trustLocks = new Map<string, Promise<void>>();
+
+// Mark `cwd` as trusted in `~/.claude.json` so Claude Code skips its first-run
+// "Do you trust this folder?" prompt. Best-effort: callers should swallow errors.
+async function ensureClaudeTrust(cwd: string): Promise<void> {
+  const existing = trustLocks.get(cwd);
+  if (existing) {
+    await existing;
+    return;
+  }
+  const task = (async () => {
+    let config: Record<string, unknown> = {};
+    try {
+      const text = await fs.readFile(claudeJsonPath, "utf8");
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        config = parsed as Record<string, unknown>;
+      }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== "ENOENT") throw err;
+    }
+    const projects = (config.projects ??= {}) as Record<string, Record<string, unknown>>;
+    const entry = (projects[cwd] ??= {});
+    if (
+      entry.hasTrustDialogAccepted === true &&
+      entry.hasCompletedProjectOnboarding === true
+    ) {
+      return;
+    }
+    entry.hasTrustDialogAccepted = true;
+    entry.hasCompletedProjectOnboarding = true;
+    const tmp = `${claudeJsonPath}.tmp-${process.pid}-${Date.now()}`;
+    await fs.writeFile(tmp, JSON.stringify(config, null, 2), "utf8");
+    await fs.rename(tmp, claudeJsonPath);
+  })();
+  trustLocks.set(cwd, task);
+  try {
+    await task;
+  } finally {
+    trustLocks.delete(cwd);
+  }
 }
 
 function appendToBuffer(session: PtySession, data: string) {
@@ -393,7 +463,13 @@ handle("query:run", (sql: string, params: unknown[] = []): Promise<QueryResult> 
 });
 
 handle("pty:subscribe", async (id: string, cols: number, rows: number, cwd?: string) => {
-  const resolvedCwd = cwd && cwd.length > 0 ? cwd : defaultCwd();
+  const resolvedCwd = resolveManagedCwd(cwd);
+  await fs.mkdir(resolvedCwd, { recursive: true });
+  try {
+    await ensureClaudeTrust(resolvedCwd);
+  } catch {
+    // best-effort — don't block PTY spawn if the trust write fails
+  }
   const existing = ptySessions.get(id);
   if (existing && existing.cwd === resolvedCwd) {
     // Reattach: flush any pending so the renderer sees a coherent state, return rolling buffer.
