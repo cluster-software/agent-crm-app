@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.3.0-295b305...v0.3.1-295b305) (2026-05-18)
+
+
+### Bug Fixes
+
+* run sidecar via Electron's bundled Node and unpack from asar ([038121b](https://github.com/cluster-software/agent-crm-app/commit/038121b41d77e2c1a92ab149b7a772ca703659ba))
+* run sidecar via Electron's bundled Node and unpack from asar ([28690f1](https://github.com/cluster-software/agent-crm-app/commit/28690f13a67dc73e953376ae548673995ec9d331))
+
 ## [0.3.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.2.0-295b305...v0.3.0-295b305) (2026-05-18)
 
 
