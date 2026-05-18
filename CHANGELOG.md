@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.5.0-295b305...v0.6.0-295b305) (2026-05-18)
+
+
+### Features
+
+* remove New record button and style scrollbars for dark theme ([f5425e9](https://github.com/cluster-software/agent-crm-app/commit/f5425e909f0f675ca29e28e27acf2d52734fc775))
+* remove New record button and theme scrollbars ([c4eba45](https://github.com/cluster-software/agent-crm-app/commit/c4eba45be5bd8a9393872aed6f246ef91225e965))
+
 ## [0.5.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.4.0-295b305...v0.5.0-295b305) (2026-05-18)
 
 
