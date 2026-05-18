@@ -74,13 +74,20 @@ class SdkServiceClient {
   private ensureStarted() {
     if (this.child) return;
 
-    const nodeBinary = process.env.SDK_NODE_BINARY ?? "node";
-    const scriptPath = path.join(__dirname, "sdk-service.js");
+    // In packaged builds the sidecar script (and the native modules it loads)
+    // live under app.asar.unpacked; spawn can't traverse into app.asar itself.
+    const scriptPath = path
+      .join(__dirname, "sdk-service.js")
+      .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+    // Run the sidecar via Electron's bundled Node (ELECTRON_RUN_AS_NODE) so we
+    // don't depend on the user having Node installed and there's no ABI drift.
+    const nodeBinary = process.env.SDK_NODE_BINARY ?? process.execPath;
     const child = spawn(nodeBinary, [scriptPath], {
-      cwd: app.getAppPath(),
+      cwd: path.dirname(scriptPath),
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
         FORCE_COLOR: "0"
       }
     });
