@@ -100,15 +100,10 @@ merges use the PR title as the commit message).
    `package.json` bump and `CHANGELOG.md` entries.
 3. When ready to ship, merge the Release PR.
 4. release-please tags `vX.Y.Z`, creates a GitHub Release, and the same
-   workflow builds unsigned arm64 + x64 DMGs and attaches them to the release.
+   workflow builds signed + notarized arm64 + x64 DMGs and attaches them to the
+   release.
 
 ### Rebuilding DMGs for an existing tag
 
 Use the workflow's `workflow_dispatch` trigger and pass the tag name (e.g.
 `v0.2.0`). DMGs will be rebuilt and re-attached to that release.
-
-### Unsigned DMG caveat
-
-The DMGs are unsigned and not notarized. First-time users will hit a Gatekeeper
-"damaged" warning. They need to either right-click → Open, or run
-`xattr -cr "/Applications/Agent CRM.app"`.

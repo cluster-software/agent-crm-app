@@ -305,7 +305,7 @@ const previewWorkspace: WorkspaceSummary = {
 const browserPreview: AppBridge = {
   platform: "browser",
   openWorkspaceDialog: async () => previewWorkspace,
-  createWorkspaceDialog: async () => previewWorkspace,
+  createWorkspace: async (_name: string) => previewWorkspace,
   openWorkspacePath: async () => previewWorkspace,
   closeWorkspace: async () => undefined,
   getWorkspace: async () => previewWorkspace,
@@ -344,7 +344,9 @@ const browserPreview: AppBridge = {
     ],
     rowsAffected: 0
   }),
-  onWorkspaceChanged: () => () => undefined
+  onWorkspaceChanged: () => () => undefined,
+  onUpdateStatus: () => () => undefined,
+  installUpdate: async () => undefined
 };
 
 export const api = window.crm ?? browserPreview;

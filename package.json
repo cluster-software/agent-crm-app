@@ -21,6 +21,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "cluster-software",
+        "repo": "agent-crm-app"
+      }
+    ],
     "files": [
       "dist/**/*",
       "package.json"
@@ -50,6 +57,13 @@
             "arm64",
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}"
@@ -60,6 +74,7 @@
     "@tanstack/react-table": "^8.21.3",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.3",
     "lucide-react": "^1.16.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.6",

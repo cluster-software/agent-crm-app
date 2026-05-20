@@ -127,10 +127,18 @@ export type TerminalBridge = {
   onExit: (id: string, handler: (info: TerminalExit) => void) => () => void;
 };
 
+export type UpdateStatus =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "available"; version: string }
+  | { state: "downloading"; version: string; percent: number }
+  | { state: "ready"; version: string }
+  | { state: "error"; message: string };
+
 export type AppBridge = {
   platform: string;
   openWorkspaceDialog: () => Promise<WorkspaceSummary | null>;
-  createWorkspaceDialog: () => Promise<WorkspaceSummary | null>;
+  createWorkspace: (name: string) => Promise<WorkspaceSummary | null>;
   openWorkspacePath: (filePath: string) => Promise<WorkspaceSummary>;
   closeWorkspace: () => Promise<void>;
   getWorkspace: () => Promise<WorkspaceSummary | null>;
@@ -140,4 +148,6 @@ export type AppBridge = {
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;
   runQuery: (sql: string, params?: unknown[]) => Promise<QueryResult>;
   onWorkspaceChanged: (handler: () => void) => () => void;
+  onUpdateStatus: (handler: (status: UpdateStatus) => void) => () => void;
+  installUpdate: () => Promise<void>;
 };

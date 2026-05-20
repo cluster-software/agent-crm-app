@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import electronUpdater from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,9 +14,12 @@ import type {
   RecordPreview,
   TranscriptImportResult,
   TranscriptPayload,
+  UpdateStatus,
   WorkspaceSummary
 } from "./shared/types.js";
 import { createWorkspaceWatcher } from "./workspace-watcher.js";
+
+const { autoUpdater } = electronUpdater;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -190,25 +193,42 @@ function defaultCwd() {
 
 const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
 
-function slugifyWorkspace(input: string): string {
-  const stripped = input.toLowerCase().replace(/\.acrm$/i, "");
-  const cleaned = stripped.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return (cleaned.slice(0, 40) || "workspace");
+function slugifyWorkspaceName(name: string): string {
+  const cleaned = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return cleaned;
 }
 
-function shortHash(input: string): string {
-  return crypto.createHash("sha1").update(input).digest("hex").slice(0, 8);
-}
-
-// Resolves the cwd hint from the renderer (typically a `.acrm` file path) to
-// a managed directory under `~/agent-crm/`. Workspace names can collide, so
-// we suffix with a short hash of the full file path for uniqueness.
-function resolveManagedCwd(hint?: string): string {
-  if (!hint || hint.length === 0) {
-    return AGENT_CRM_ROOT;
+// Allocate a fresh workspace directory under `~/agent-crm/` keyed off the
+// user's chosen name. The `.acrm` file and the Claude Code PTY share this
+// directory so they don't diverge. If `<slug>` is taken, append `-2`, `-3`,
+// etc. until we find a free one.
+async function allocateWorkspaceDir(slug: string): Promise<string> {
+  await fs.mkdir(AGENT_CRM_ROOT, { recursive: true });
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const candidate = attempt === 0 ? slug : `${slug}-${attempt + 1}`;
+    const dir = path.join(AGENT_CRM_ROOT, candidate);
+    try {
+      await fs.mkdir(dir);
+      return dir;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
   }
-  const slug = slugifyWorkspace(path.basename(hint));
-  return path.join(AGENT_CRM_ROOT, `${slug}-${shortHash(hint)}`);
+  throw new Error(`Could not allocate a directory for workspace "${slug}"`);
+}
+
+// The PTY runs in the folder that holds the `.acrm` so Claude Code sees the
+// same workspace as the Electron app. With no workspace open, fall back to
+// the managed root.
+function resolvePtyCwd(workspaceFile?: string): string {
+  if (workspaceFile && workspaceFile.length > 0) {
+    return path.dirname(workspaceFile);
+  }
+  return AGENT_CRM_ROOT;
 }
 
 const claudeJsonPath = path.join(os.homedir(), ".claude.json");
@@ -410,8 +430,10 @@ async function openAndWatch(filePath: string): Promise<WorkspaceSummary> {
 }
 
 handle("workspace:open-dialog", async () => {
+  await fs.mkdir(AGENT_CRM_ROOT, { recursive: true });
   const result = await dialog.showOpenDialog({
     title: "Open Agent CRM workspace",
+    defaultPath: AGENT_CRM_ROOT,
     properties: ["openFile"],
     filters: [{ name: "Agent CRM workspace", extensions: ["acrm"] }]
   });
@@ -421,16 +443,13 @@ handle("workspace:open-dialog", async () => {
   return openAndWatch(result.filePaths[0]);
 });
 
-handle("workspace:create-dialog", async () => {
-  const result = await dialog.showSaveDialog({
-    title: "Create Agent CRM workspace",
-    defaultPath: "workspace.acrm",
-    filters: [{ name: "Agent CRM workspace", extensions: ["acrm"] }]
-  });
-  if (result.canceled || !result.filePath) {
-    return null;
+handle("workspace:create", async (name: string) => {
+  const slug = slugifyWorkspaceName(name ?? "");
+  if (slug.length === 0) {
+    throw new Error("Workspace name must include at least one letter or number.");
   }
-  const filePath = result.filePath.endsWith(".acrm") ? result.filePath : `${result.filePath}.acrm`;
+  const dir = await allocateWorkspaceDir(slug);
+  const filePath = path.join(dir, `${slug}.acrm`);
   const summary = await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath);
   if (summary?.path) workspaceWatcher.start(summary.path);
   return summary;
@@ -463,7 +482,7 @@ handle("query:run", (sql: string, params: unknown[] = []): Promise<QueryResult> 
 });
 
 handle("pty:subscribe", async (id: string, cols: number, rows: number, cwd?: string) => {
-  const resolvedCwd = resolveManagedCwd(cwd);
+  const resolvedCwd = resolvePtyCwd(cwd);
   await fs.mkdir(resolvedCwd, { recursive: true });
   try {
     await ensureClaudeTrust(resolvedCwd);
@@ -510,10 +529,66 @@ ipcMain.on("pty:kill", (_event, id: string) => {
   killPtySession(id);
 });
 
-app.whenReady().then(createWindow).catch((error) => {
-  console.error(error);
-  app.quit();
+let latestUpdateStatus: UpdateStatus = { state: "idle" };
+
+function publishUpdateStatus(status: UpdateStatus) {
+  latestUpdateStatus = status;
+  mainWindow?.webContents.send("update:status", status);
+}
+
+function setupAutoUpdater() {
+  if (isDev) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  let pendingVersion = "";
+
+  autoUpdater.on("checking-for-update", () => {
+    publishUpdateStatus({ state: "checking" });
+  });
+  autoUpdater.on("update-available", (info) => {
+    pendingVersion = info.version;
+    publishUpdateStatus({ state: "available", version: info.version });
+  });
+  autoUpdater.on("update-not-available", () => {
+    publishUpdateStatus({ state: "idle" });
+  });
+  autoUpdater.on("download-progress", (progress) => {
+    publishUpdateStatus({
+      state: "downloading",
+      version: pendingVersion,
+      percent: Math.round(progress.percent)
+    });
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    publishUpdateStatus({ state: "ready", version: info.version });
+  });
+  autoUpdater.on("error", (error) => {
+    publishUpdateStatus({ state: "error", message: error?.message ?? String(error) });
+  });
+
+  void autoUpdater.checkForUpdates().catch(() => undefined);
+  setInterval(() => {
+    void autoUpdater.checkForUpdates().catch(() => undefined);
+  }, 30 * 60 * 1000);
+}
+
+ipcMain.handle("update:get-status", () => latestUpdateStatus);
+ipcMain.handle("update:install", () => {
+  if (latestUpdateStatus.state !== "ready") return;
+  autoUpdater.quitAndInstall();
 });
+
+app
+  .whenReady()
+  .then(() => {
+    createWindow();
+    setupAutoUpdater();
+  })
+  .catch((error) => {
+    console.error(error);
+    app.quit();
+  });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
