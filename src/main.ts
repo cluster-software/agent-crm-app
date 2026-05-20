@@ -12,6 +12,7 @@ import type {
   ImportCsvPayload,
   QueryResult,
   RecordPreview,
+  SignalRunRequest,
   TranscriptImportResult,
   TranscriptPayload,
   UpdateStatus,
@@ -479,6 +480,21 @@ handle("import:transcript", (payload: TranscriptPayload) => {
 });
 handle("query:run", (sql: string, params: unknown[] = []): Promise<QueryResult> => {
   return getSdkClient().request("runQuery", sql, params);
+});
+handle("signals:list", () => {
+  return getSdkClient().request("listSignals");
+});
+handle("signals:failures", () => {
+  return getSdkClient().request("listSignalFailures");
+});
+handle("signals:runs", () => {
+  return getSdkClient().request("listSignalRuns");
+});
+handle("signals:sync", () => {
+  return getSdkClient().request("syncSignals");
+});
+handle("signals:run", (request: SignalRunRequest = {}) => {
+  return getSdkClient().request("runSignals", request);
 });
 
 handle("pty:subscribe", async (id: string, cols: number, rows: number, cwd?: string) => {

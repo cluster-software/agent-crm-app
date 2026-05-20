@@ -3,6 +3,8 @@ import type {
   CreateRecordPayload,
   ImportCsvPayload,
   RecordPreview,
+  SignalDefinitionSummary,
+  SignalRunRequest,
   TranscriptPayload,
   WorkspaceSummary
 } from "../shared/types";
@@ -343,6 +345,24 @@ const browserPreview: AppBridge = {
       { object_slug: "companies", count: 18 }
     ],
     rowsAffected: 0
+  }),
+  listSignals: async (): Promise<SignalDefinitionSummary[]> => [],
+  listSignalFailures: async () => [],
+  listSignalRuns: async () => [],
+  syncSignals: async () => ({
+    definitions: 0,
+    attributes_created: 0,
+    attributes_updated: 0
+  }),
+  runSignals: async (_request?: SignalRunRequest) => ({
+    started: true,
+    job: {
+      id: "preview-signal-run",
+      record_ids: [],
+      signalSlugs: [],
+      log_path: "",
+      started_at: new Date(0).toISOString()
+    }
   }),
   onWorkspaceChanged: () => () => undefined,
   onUpdateStatus: () => () => undefined,

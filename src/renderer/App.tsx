@@ -8,13 +8,16 @@ import {
   FolderOpen,
   Globe,
   Handshake,
+  Info,
   Loader2,
   Mail,
   Newspaper,
   Phone,
+  Settings,
   Terminal,
   Users,
-  X
+  X,
+  Zap
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -37,6 +40,9 @@ import type {
   RecordPreview,
   RecordValue,
   SchemaObject,
+  SignalDefinitionSummary,
+  SignalRunFailureSummary,
+  SignalRunJob,
   UpdateStatus,
   WorkspaceSummary
 } from "../shared/types";
@@ -54,6 +60,7 @@ const sdkObjectOrder = ["companies", "people", "deals", "posts", "transcripts"];
 const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
 
 type PersonTab = "overview" | "transcripts" | "posts";
+type MainView = "records" | "settings";
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -78,6 +85,7 @@ function statusFromError(error: unknown) {
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [selectedObjectSlug, setSelectedObjectSlug] = useState("companies");
+  const [mainView, setMainView] = useState<MainView>("records");
   const [loading, setLoading] = useState("Loading workspace");
   const [error, setError] = useState<string | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(true);
@@ -93,7 +101,7 @@ export function App() {
 
   useEffect(() => {
     setDetailRecord(null);
-  }, [selectedObjectSlug]);
+  }, [mainView, selectedObjectSlug]);
 
   useEffect(() => {
     setPersonTab("overview");
@@ -208,6 +216,7 @@ export function App() {
       if (summary) {
         setWorkspace(summary);
         setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
+        setMainView("records");
       }
     } catch (err) {
       setError(statusFromError(err));
@@ -230,7 +239,7 @@ export function App() {
               .filter((object) => SIDEBAR_VISIBLE_OBJECTS.has(object.object_slug))
               .map((object) => {
               const Icon = iconForObject(object.object_slug);
-              const active = selectedObject?.object_slug === object.object_slug;
+              const active = mainView === "records" && selectedObject?.object_slug === object.object_slug;
               const count = workspace?.counts[object.object_slug] ?? 0;
               return (
                 <button
@@ -238,7 +247,10 @@ export function App() {
                   className="nav-item"
                   aria-current={active}
                   key={object.object_slug}
-                  onClick={() => setSelectedObjectSlug(object.object_slug)}
+                  onClick={() => {
+                    setSelectedObjectSlug(object.object_slug);
+                    setMainView("records");
+                  }}
                 >
                   <span className="nav-item__icon">
                     <Icon size={14} className="lucide" />
@@ -254,6 +266,18 @@ export function App() {
         </div>
 
         <div className="sidebar-spacer" />
+
+        <button
+          type="button"
+          className="nav-item nav-item--settings"
+          aria-current={mainView === "settings"}
+          onClick={() => setMainView("settings")}
+        >
+          <span className="nav-item__icon">
+            <Settings size={14} className="lucide" />
+          </span>
+          <span className="nav-item__label">Settings</span>
+        </button>
 
         <div className="sidebar-footer">
           <span
@@ -272,7 +296,9 @@ export function App() {
       <main className="main">
         <header className="toolbar">
           <div className="breadcrumb">
-            {detailRecord && selectedObject ? (
+            {mainView === "settings" ? (
+              <span className="breadcrumb__current">Settings</span>
+            ) : detailRecord && selectedObject ? (
               <>
                 <button
                   type="button"
@@ -355,15 +381,17 @@ export function App() {
                 onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
                 onCreate={() => setCreateOpen(true)}
               />
+            ) : mainView === "settings" ? (
+              <SettingsView dataVersion={dataVersion} setError={setError} />
             ) : detailRecord && selectedObject?.object_slug === "people" ? (
               <PersonDetail record={detailRecord} tab={personTab} onTabChange={setPersonTab} />
+            ) : detailRecord && selectedObject ? (
+              <RecordDetail object={selectedObject} record={detailRecord} />
             ) : selectedObject ? (
               <RecordsView
                 object={selectedObject}
                 dataVersion={dataVersion}
-                onRowClick={
-                  selectedObject.object_slug === "people" ? setDetailRecord : undefined
-                }
+                onRowClick={setDetailRecord}
                 setError={setError}
               />
             ) : null}
@@ -388,6 +416,7 @@ export function App() {
             if (summary) {
               setWorkspace(summary);
               setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
+              setMainView("records");
             }
           }}
         />
@@ -567,6 +596,96 @@ function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: ()
   );
 }
 
+function SettingsView({
+  dataVersion,
+  setError
+}: {
+  dataVersion: number;
+  setError: (error: string | null) => void;
+}) {
+  const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSignals(null);
+    api.listSignals()
+      .then((nextSignals) => {
+        if (!cancelled) setSignals(nextSignals);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSignals([]);
+          setError(statusFromError(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataVersion, setError]);
+
+  return (
+    <div className="detail settings-view">
+      <header className="detail__header">
+        <h1 className="detail__title display">Settings</h1>
+        <div className="detail__meta">
+          <span className="mono">signals/</span>
+        </div>
+      </header>
+
+      <nav className="detail__tabs tabs">
+        <button type="button" className="tab" aria-current="true">
+          Signals
+          {signals && <span className="tab__count">{signals.length}</span>}
+        </button>
+      </nav>
+
+      <section className="settings-panel">
+        {signals === null ? (
+          <div className="empty-inline">
+            <Loader2 size={14} className="lucide spin" />
+            <span>loading signals</span>
+          </div>
+        ) : signals.length === 0 ? (
+          <div className="empty-inline">
+            <span>no signal definitions in signals/</span>
+          </div>
+        ) : (
+          <div className="settings-signals">
+            {signals.map((signal) => (
+              <article className="settings-signal" key={signal.slug}>
+                <header className="settings-signal__header">
+                  <div className="settings-signal__title">
+                    <MonoLabel>{signal.object_slug}</MonoLabel>
+                    <h2>{signal.title}</h2>
+                    <span className="settings-signal__path mono">signals/{signal.slug}.md</span>
+                  </div>
+                  <Badge>{signal.outputs.length} fields</Badge>
+                </header>
+                <div className="settings-signal__outputs">
+                  {signal.outputs.map((output) => (
+                    <div className="settings-signal__output" key={output.key}>
+                      <div className="settings-signal__output-main">
+                        <span>{output.title}</span>
+                        <span className="settings-signal__attribute mono">{output.attribute}</span>
+                      </div>
+                      <span className="settings-signal__type">{output.type}</span>
+                      {output.options && output.options.length > 0 && (
+                        <span className="settings-signal__options">
+                          {output.options.map((option) => option.title).join(", ")}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function RecordsView({
   object,
   dataVersion,
@@ -579,10 +698,22 @@ function RecordsView({
   setError: (error: string | null) => void;
 }) {
   const [records, setRecords] = useState<RecordPreview[]>([]);
+  const [signals, setSignals] = useState<SignalDefinitionSummary[]>([]);
+  const [signalFailures, setSignalFailures] = useState<SignalRunFailureSummary[]>([]);
+  const [signalRuns, setSignalRuns] = useState<SignalRunJob[]>([]);
 
   const loadRecords = useCallback(async () => {
     try {
-      setRecords(await api.listRecords(object.object_slug));
+      const [nextRecords, nextSignals, nextSignalFailures, nextSignalRuns] = await Promise.all([
+        api.listRecords(object.object_slug),
+        api.listSignals(),
+        api.listSignalFailures(),
+        api.listSignalRuns()
+      ]);
+      setRecords(nextRecords);
+      setSignals(nextSignals);
+      setSignalFailures(nextSignalFailures);
+      setSignalRuns(nextSignalRuns);
     } catch (err) {
       setError(statusFromError(err));
     }
@@ -592,7 +723,57 @@ function RecordsView({
     void loadRecords();
   }, [loadRecords, dataVersion]);
 
-  const valueColumns = pickValueColumns(object, records);
+  const valueColumns = pickValueColumns(object, records, signals);
+  const failureBySignal = useMemo(
+    () => signalFailureMap(signalFailures, signals),
+    [signalFailures, signals],
+  );
+  const runningBySignal = useMemo(
+    () => signalRunningMap(signalRuns, signals),
+    [signalRuns, signals],
+  );
+  const [retryingSignals, setRetryingSignals] = useState<Set<string>>(() => new Set());
+  const retrySignal = useCallback(
+    async (failure: SignalRunFailureSummary) => {
+      const key = signalRunKey(failure);
+      if (retryingSignals.has(key)) return;
+      setRetryingSignals((current) => new Set(current).add(key));
+      try {
+        await api.runSignals({
+          mode: "missing",
+          signalSlugs: [failure.signal_slug],
+          object_slug: failure.object_slug,
+          record_ids: [failure.record_id],
+          concurrency: 1
+        });
+        await loadRecords();
+      } catch (err) {
+        setError(statusFromError(err));
+      } finally {
+        setRetryingSignals((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [loadRecords, retryingSignals, setError],
+  );
+  const hasRunningSignalCells = records.some((record) =>
+    valueColumns.some(
+      (column) =>
+        column.isSignal &&
+        runningBySignal.has(`${record.object_slug}:${record.record_id}:${column.slug}`),
+    ),
+  );
+
+  useEffect(() => {
+    if (!hasRunningSignalCells) return;
+    const timer = window.setInterval(() => {
+      void loadRecords();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [hasRunningSignalCells, loadRecords]);
 
   if (records.length === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
     return <RecordsEmptyState slug={object.object_slug} />;
@@ -604,6 +785,10 @@ function RecordsView({
         object={object}
         records={records}
         valueColumns={valueColumns}
+        failureBySignal={failureBySignal}
+        runningBySignal={runningBySignal}
+        retryingSignals={retryingSignals}
+        onRetrySignal={retrySignal}
         onRowClick={onRowClick}
       />
     </div>
@@ -738,9 +923,41 @@ const COLUMNS_BY_OBJECT: Record<string, Array<[string, string]>> = {
   ]
 };
 
-function pickValueColumns(object: SchemaObject, records: RecordPreview[]) {
+type ValueColumn = {
+  slug: string;
+  title: string;
+  isSignal: boolean;
+  signalSlug?: string;
+};
+
+function pickValueColumns(
+  object: SchemaObject,
+  records: RecordPreview[],
+  signals: SignalDefinitionSummary[],
+) {
+  const signalOutputs = signals
+    .filter((signal) => signal.object_slug === object.object_slug)
+    .flatMap((signal) => signal.outputs);
   const override = COLUMNS_BY_OBJECT[object.object_slug];
-  if (override) return override;
+  if (override) {
+    const seen = new Set(override.map(([slug]) => slug));
+    const columns: ValueColumn[] = override.map(([slug, title]) => ({
+      slug,
+      title,
+      isSignal: false
+    }));
+    for (const output of signalOutputs) {
+      if (seen.has(output.attribute)) continue;
+      columns.push({
+        slug: output.attribute,
+        title: output.title,
+        isSignal: true,
+        signalSlug: signals.find((signal) => signal.outputs.includes(output))?.slug
+      });
+      seen.add(output.attribute);
+    }
+    return columns;
+  }
   const seen = new Map<string, string>();
   for (const record of records) {
     for (const value of record.values) {
@@ -754,15 +971,112 @@ function pickValueColumns(object: SchemaObject, records: RecordPreview[]) {
       seen.set(attribute.attribute_slug, attribute.title);
     }
   }
+  for (const output of signalOutputs) {
+    if (!seen.has(output.attribute)) {
+      seen.set(output.attribute, output.title);
+    }
+  }
   const skip = new Set(["name", "primary_email", "full_name", "title"]);
+  const signalAttrs = new Set(signalOutputs.map((output) => output.attribute));
   return Array.from(seen.entries())
     .filter(([slug]) => !skip.has(slug))
-    .slice(0, 3);
+    .slice(0, 3)
+    .map(([slug, title]) => ({
+      slug,
+      title,
+      isSignal: signalAttrs.has(slug) || records.some((record) =>
+        record.values.some((value) => value.attribute_slug === slug && isSignalValue(value)),
+      ),
+      signalSlug: signalOutputs.find((output) => output.attribute === slug)
+        ? signals.find((signal) =>
+            signal.outputs.some((output) => output.attribute === slug),
+          )?.slug
+        : undefined
+    }));
+}
+
+function signalFailureMap(
+  failures: SignalRunFailureSummary[],
+  signals: SignalDefinitionSummary[],
+) {
+  const bySignal = new Map(signals.map((signal) => [signal.slug, signal]));
+  const out = new Map<string, SignalRunFailureSummary>();
+  for (const failure of failures) {
+    const signal = bySignal.get(failure.signal_slug);
+    if (!signal) continue;
+    for (const output of signal.outputs) {
+      out.set(`${failure.object_slug}:${failure.record_id}:${output.attribute}`, failure);
+    }
+  }
+  return out;
+}
+
+function signalRunningMap(
+  runs: SignalRunJob[],
+  signals: SignalDefinitionSummary[],
+) {
+  const out = new Set<string>();
+  for (const run of runs) {
+    if (run.record_ids.length === 0) continue;
+    const signalSlugs = run.signalSlugs.length ? new Set(run.signalSlugs) : null;
+    for (const signal of signals) {
+      if (run.object_slug && signal.object_slug !== run.object_slug) continue;
+      if (signalSlugs && !signalSlugs.has(signal.slug)) continue;
+      for (const recordId of run.record_ids) {
+        for (const output of signal.outputs) {
+          out.add(`${signal.object_slug}:${recordId}:${output.attribute}`);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function signalRunKey(failure: Pick<SignalRunFailureSummary, "object_slug" | "record_id" | "signal_slug">) {
+  return `${failure.object_slug}:${failure.record_id}:${failure.signal_slug}`;
 }
 
 const columnHelper = createColumnHelper<RecordPreview>();
 
-function useRecordColumns(object: SchemaObject, valueColumns: Array<[string, string]>) {
+function SignalColumnHeader({ title }: { title: string }) {
+  const [tooltipRect, setTooltipRect] = useState<DOMRect | null>(null);
+  return (
+    <span className="signal-column-head">
+      <span>{title}</span>
+      <span
+        className="signal-column-head__icon"
+        aria-label="Signals are derived from your data through web search"
+        onMouseEnter={(event) => setTooltipRect(event.currentTarget.getBoundingClientRect())}
+        onMouseLeave={() => setTooltipRect(null)}
+        onFocus={(event) => setTooltipRect(event.currentTarget.getBoundingClientRect())}
+        onBlur={() => setTooltipRect(null)}
+        tabIndex={0}
+      >
+        <Zap size={12} className="lucide" aria-hidden="true" />
+      </span>
+      {tooltipRect && (
+        <span
+          className="signal-column-tooltip"
+          style={{
+            left: Math.min(tooltipRect.left, window.innerWidth - 390),
+            top: tooltipRect.bottom + 8
+          }}
+        >
+          Signals are derived from your data through web search
+        </span>
+      )}
+    </span>
+  );
+}
+
+function useRecordColumns(
+  object: SchemaObject,
+  valueColumns: ValueColumn[],
+  failureBySignal: Map<string, SignalRunFailureSummary>,
+  runningBySignal: Set<string>,
+  retryingSignals: Set<string>,
+  onRetrySignal?: (failure: SignalRunFailureSummary) => void,
+) {
   return useMemo(() => {
     const cols = [
       columnHelper.display({
@@ -792,34 +1106,71 @@ function useRecordColumns(object: SchemaObject, valueColumns: Array<[string, str
         },
         meta: { width: "minmax(220px, max-content)" }
       }),
-      ...valueColumns.map(([slug, title]) =>
+      ...valueColumns.map((column) =>
         columnHelper.accessor(
-          (record) => record.values.find((value) => value.attribute_slug === slug),
+          (record) => record.values.find((value) => value.attribute_slug === column.slug),
           {
-            id: slug,
-            header: title,
-            cell: (info) => <ValueCell value={info.getValue()} />,
-            meta: { width: "minmax(140px, max-content)" }
+            id: column.slug,
+            header: () =>
+              column.isSignal ? (
+                <SignalColumnHeader title={column.title} />
+              ) : (
+                column.title
+            ),
+            cell: (info) => {
+              const signalCellKey = `${info.row.original.object_slug}:${info.row.original.record_id}:${column.slug}`;
+              const signalFailure = column.isSignal
+                ? failureBySignal.get(signalCellKey)
+                : undefined;
+              const signalRunning = column.isSignal && runningBySignal.has(signalCellKey);
+              return (
+                <ValueCell
+                  value={info.getValue() as RecordValue | undefined}
+                  pendingSignal={column.isSignal}
+                  runningSignal={signalRunning}
+                  signalFailure={signalFailure}
+                  retryingSignal={signalFailure ? retryingSignals.has(signalRunKey(signalFailure)) : false}
+                  onRetrySignal={signalFailure ? () => onRetrySignal?.(signalFailure) : undefined}
+                />
+              );
+            },
+            meta: { width: column.isSignal ? "minmax(150px, 190px)" : "minmax(140px, 210px)" }
           }
         )
       )
     ];
     return cols;
-  }, [object, valueColumns]);
+  }, [failureBySignal, object, onRetrySignal, retryingSignals, runningBySignal, valueColumns]);
 }
 
 function RecordsTable({
   object,
   records,
   valueColumns,
+  failureBySignal,
+  runningBySignal,
+  retryingSignals,
+  onRetrySignal,
   onRowClick
 }: {
   object: SchemaObject;
   records: RecordPreview[];
-  valueColumns: Array<[string, string]>;
+  valueColumns: ValueColumn[];
+  failureBySignal: Map<string, SignalRunFailureSummary>;
+  runningBySignal: Set<string>;
+  retryingSignals: Set<string>;
+  onRetrySignal?: (failure: SignalRunFailureSummary) => void;
   onRowClick?: (record: RecordPreview) => void;
 }) {
-  const columns = useRecordColumns(object, valueColumns);
+  const columns = useRecordColumns(object, valueColumns, failureBySignal, runningBySignal, retryingSignals, onRetrySignal);
+  const [selectedCell, setSelectedCell] = useState<string | null>(null);
+  const [expandedCell, setExpandedCell] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedCell(null);
+    setExpandedCell(null);
+  }, [object.object_slug]);
+
   const table = useReactTable({
     data: records,
     columns,
@@ -858,13 +1209,53 @@ function RecordsTable({
               key={row.id}
               className="table__row"
               data-touched={index === 0 ? "true" : undefined}
-              onClick={onRowClick ? () => onRowClick(row.original) : undefined}
             >
-              {row.getVisibleCells().map((cell) => (
-                <span key={cell.id}>
-                  {flexRender(cell.column.columnDef.cell, cell.getContext()) as ReactNode}
-                </span>
-              ))}
+              {row.getVisibleCells().map((cell) => {
+                const isIdentity = cell.column.id === "identity";
+                const key = `${row.id}:${cell.column.id}`;
+                const text = cellText(cell.column.id, cell.getValue(), row.original);
+                const expanded = expandedCell === key;
+                return (
+                  <span
+                    key={cell.id}
+                    className={`table__cell${isIdentity ? " table__cell--identity" : ""}`}
+                    data-selected={!isIdentity && selectedCell === key ? "true" : undefined}
+                    data-expanded={expanded ? "true" : undefined}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (isIdentity) {
+                        onRowClick?.(row.original);
+                      } else {
+                        setSelectedCell(key);
+                        setExpandedCell(null);
+                      }
+                    }}
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      if (!isIdentity && text) {
+                        setSelectedCell(key);
+                        setExpandedCell(key);
+                      }
+                    }}
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext()) as ReactNode}
+                    {expanded && (
+                      <textarea
+                        className="table-cell-editor"
+                        value={text}
+                        readOnly
+                        autoFocus
+                        onClick={(event) => event.stopPropagation()}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onBlur={() => setExpandedCell(null)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setExpandedCell(null);
+                        }}
+                      />
+                    )}
+                  </span>
+                );
+              })}
             </div>
           ))
         )}
@@ -873,17 +1264,189 @@ function RecordsTable({
   );
 }
 
+function cellText(columnId: string, raw: unknown, record: RecordPreview): string {
+  if (columnId === "identity") return record.label;
+  if (raw && typeof raw === "object" && "display" in raw) {
+    const value = raw as RecordValue;
+    return value.display ?? "";
+  }
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "number") return String(raw);
+  return "";
+}
+
 function IdentityMark({ object, name }: { object: SchemaObject; name: string }) {
   if (object.object_slug === "people") return <Avatar name={name} size={20} />;
   if (object.object_slug === "companies") return <CompanyMark name={name} size={20} />;
   return <CompanyMark name={`${object.singular_name} ${name}`} size={20} />;
 }
 
-function ValueCell({ value }: { value?: RecordValue }) {
-  if (!value || !value.display) return <span className="table__cell--muted">—</span>;
+function ValueCell({
+  value,
+  pendingSignal = false,
+  runningSignal = false,
+  signalFailure,
+  retryingSignal = false,
+  onRetrySignal
+}: {
+  value?: RecordValue;
+  pendingSignal?: boolean;
+  runningSignal?: boolean;
+  signalFailure?: SignalRunFailureSummary;
+  retryingSignal?: boolean;
+  onRetrySignal?: () => void;
+}) {
+  if (!value || !value.display) {
+    if (runningSignal || retryingSignal) {
+      return (
+        <span className="signal-pending">
+          <Loader2 size={11} className="lucide spin" />
+          <span>calculating</span>
+        </span>
+      );
+    }
+    if (signalFailure) {
+      return (
+        <span className="signal-failed" title={signalFailureTitle(signalFailure)}>
+          <X size={11} className="lucide" />
+          <span>failed</span>
+          {onRetrySignal && (
+            <button
+              type="button"
+              className="signal-retry"
+              disabled={retryingSignal}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRetrySignal();
+              }}
+            >
+              {retryingSignal ? "running" : "run again"}
+            </button>
+          )}
+        </span>
+      );
+    }
+    if (pendingSignal) {
+      return <span className="table__cell--muted">—</span>;
+    }
+    return <span className="table__cell--muted">—</span>;
+  }
+  if (isSignalValue(value)) {
+    return <SignalValueCell value={value} />;
+  }
   if (looksLikeStage(value)) return <Badge kind={stageKind(value.display)} dot>{value.display}</Badge>;
   if (looksMono(value)) return <span className="table__cell--mono">{value.display}</span>;
   return <span className="table__cell--muted">{value.display}</span>;
+}
+
+function signalFailureTitle(failure: SignalRunFailureSummary) {
+  return [
+    failure.message,
+    failure.stdout_excerpt ? `stdout: ${failure.stdout_excerpt}` : "",
+    failure.stderr_excerpt ? `stderr: ${failure.stderr_excerpt}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function SignalValueCell({ value }: { value: RecordValue }) {
+  const [tab, setTab] = useState<"sources" | "reasoning">("sources");
+  return (
+    <span className="signal-cell" onMouseEnter={() => setTab("sources")}>
+      <span className="signal-value">
+        <span>{shortSignalDisplay(value.display)}</span>
+      </span>
+      <span className="signal-popover" onClick={(event) => event.stopPropagation()}>
+        <span className="signal-popover__tabs" role="tablist" aria-label={`${value.title} provenance`}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "sources"}
+            onClick={() => setTab("sources")}
+          >
+            Sources
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "reasoning"}
+            onClick={() => setTab("reasoning")}
+          >
+            Reasoning
+          </button>
+        </span>
+        <span className="signal-popover__panel">
+          {tab === "sources" ? (
+            <SignalSources value={value} />
+          ) : (
+            <SignalReasoning value={value} />
+          )}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function isSignalValue(value: RecordValue) {
+  return typeof value.source === "string" && value.source.startsWith("signal:");
+}
+
+function shortSignalDisplay(value: string) {
+  const words = value.trim().split(/\s+/);
+  if (words.length <= 7 && value.length <= 48) return value;
+  return `${words.slice(0, 7).join(" ")}…`;
+}
+
+function SignalSources({ value }: { value: RecordValue }) {
+  const provenance = value.provenance ?? {};
+  const citations = citationItems(provenance.citations);
+  if (citations.length === 0) {
+    return <span className="signal-popover__empty">No sources stored</span>;
+  }
+  return (
+    <span className="signal-source-list">
+      {citations.map((citation, index) => (
+        <a
+          key={`${citation.url}-${index}`}
+          href={citation.url}
+          target="_blank"
+          rel="noreferrer"
+          className="signal-source"
+        >
+          <span className="signal-source__favicon">{faviconLetter(citation)}</span>
+          <span>
+            <span className="signal-source__domain">{domainFromUrl(citation.url)}</span>
+            <span className="signal-source__title">{citation.title || citation.url}</span>
+          </span>
+        </a>
+      ))}
+    </span>
+  );
+}
+
+function SignalReasoning({ value }: { value: RecordValue }) {
+  const provenance = value.provenance ?? {};
+  const reasoning = typeof provenance.reasoning === "string" ? provenance.reasoning : "";
+  const notes = typeof provenance.notes === "string" ? provenance.notes : "";
+  return (
+    <span className="signal-reasoning">
+      {reasoning || "No reasoning stored"}
+      {notes && <span className="signal-reasoning__notes">{notes}</span>}
+    </span>
+  );
+}
+
+function faviconLetter(citation: { title: string; url: string }) {
+  const domain = domainFromUrl(citation.url);
+  return (citation.title || domain || "?").slice(0, 1).toUpperCase();
+}
+
+function domainFromUrl(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 function looksLikeStage(value: RecordValue) {
@@ -906,6 +1469,157 @@ function looksMono(value: RecordValue) {
     value.attribute_slug === "linkedin_url" ||
     value.attribute_slug === "domains"
   );
+}
+
+function RecordDetail({
+  object,
+  record
+}: {
+  object: SchemaObject;
+  record: RecordPreview;
+}) {
+  const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
+  const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSignals(null);
+    api.listSignals()
+      .then((nextSignals) => {
+        if (!cancelled) setSignals(nextSignals);
+      })
+      .catch(() => {
+        if (!cancelled) setSignals([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [object.object_slug]);
+
+  const signalAttributes = useMemo(
+    () =>
+      new Set(
+        (signals ?? [])
+          .filter((signal) => signal.object_slug === object.object_slug)
+          .flatMap((signal) => signal.outputs.map((output) => output.attribute)),
+      ),
+    [object.object_slug, signals],
+  );
+  const signalValues = record.values.filter(
+    (value) =>
+      signals !== null &&
+      value.display &&
+      isSignalValue(value) &&
+      signalAttributes.has(value.attribute_slug),
+  );
+  const otherValues = record.values.filter(
+    (value) => value.display && !isSignalValue(value) && value.attribute_slug !== "name",
+  );
+
+  return (
+    <div className="detail">
+      <header className="detail__header">
+        <h1 className="detail__title display">{record.label}</h1>
+        {meta && <div className="detail__meta">{meta}</div>}
+      </header>
+
+      <div className="record-detail">
+        <section className="record-detail__section">
+          <div className="record-detail__label">
+            <MonoLabel>Signals</MonoLabel>
+            <Zap size={12} className="lucide" />
+          </div>
+          {signalValues.length === 0 ? (
+            <div className="empty-inline">
+              <span>no signal values on this record yet</span>
+            </div>
+          ) : (
+            <div className="record-fields">
+              {signalValues.map((value) => (
+                <RecordField key={value.attribute_slug} value={value} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <aside className="record-detail__aside">
+          <MonoLabel>Fields</MonoLabel>
+          {otherValues.length === 0 ? (
+            <div className="empty-inline">
+              <span>no other fields on file</span>
+            </div>
+          ) : (
+            <div className="record-fields">
+              {otherValues.map((value) => (
+                <RecordField key={value.attribute_slug} value={value} compact />
+              ))}
+            </div>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function RecordField({ value, compact = false }: { value: RecordValue; compact?: boolean }) {
+  const isSignal = isSignalValue(value);
+  return (
+    <div className="record-field" data-signal={isSignal ? "true" : undefined}>
+      <div className="record-field__label">
+        <span>{value.title}</span>
+        {isSignal && <Info size={12} className="lucide" />}
+      </div>
+      <div className="record-field__value">
+        <ValueCell value={value} />
+      </div>
+      {isSignal && !compact && <SignalProvenance value={value} />}
+    </div>
+  );
+}
+
+function SignalProvenance({ value }: { value: RecordValue }) {
+  const provenance = value.provenance ?? {};
+  const reasoning = typeof provenance.reasoning === "string" ? provenance.reasoning : "";
+  const confidence = typeof provenance.confidence === "string" ? provenance.confidence : "";
+  const ranAt = typeof provenance.ran_at === "string" ? provenance.ran_at : "";
+  const notes = typeof provenance.notes === "string" ? provenance.notes : "";
+  const citations = citationItems(provenance.citations);
+  return (
+    <div className="signal-provenance">
+      {(confidence || ranAt) && (
+        <div className="signal-provenance__meta">
+          {[confidence ? `confidence ${confidence}` : "", ranAt ? `ran ${formatDateDisplay(ranAt)}` : ""]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+      )}
+      {reasoning && <p>{reasoning}</p>}
+      {notes && <p className="signal-provenance__notes">{notes}</p>}
+      {citations.length > 0 && (
+        <div className="signal-provenance__citations">
+          {citations.map((citation, index) => (
+            <a key={`${citation.url}-${index}`} href={citation.url} target="_blank" rel="noreferrer">
+              {citation.title || citation.url}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function citationItems(raw: unknown): Array<{ title: string; url: string }> {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((citation) => {
+    if (!citation || typeof citation !== "object" || Array.isArray(citation)) return [];
+    const item = citation as Record<string, unknown>;
+    const url = typeof item.url === "string" ? item.url : "";
+    if (!url) return [];
+    return [{
+      title: typeof item.title === "string" ? item.title : "",
+      url
+    }];
+  });
 }
 
 function readCssColor(varName: string, fallback: string): string {
