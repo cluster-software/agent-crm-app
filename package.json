@@ -25,7 +25,8 @@
       {
         "provider": "github",
         "owner": "cluster-software",
-        "repo": "agent-crm-app"
+        "repo": "agent-crm-app",
+        "releaseType": "release"
       }
     ],
     "files": [
