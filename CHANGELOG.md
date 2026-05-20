@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.0-295b305...v0.7.1-295b305) (2026-05-20)
+
+
+### Bug Fixes
+
+* attach release assets to published release instead of draft ([75a9827](https://github.com/cluster-software/agent-crm-app/commit/75a9827387874a1aa91d4b1f934e218a604ec25b))
+* publish release assets to the published release, not a draft ([cb48095](https://github.com/cluster-software/agent-crm-app/commit/cb48095ba2f3eed94d47e6847f48ca05c10aa882))
+
 ## [0.7.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.6.0-295b305...v0.7.0-295b305) (2026-05-20)
 
 
