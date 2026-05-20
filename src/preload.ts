@@ -3,7 +3,8 @@ import type {
   AppBridge,
   CreateRecordPayload,
   ImportCsvPayload,
-  TranscriptPayload
+  TranscriptPayload,
+  UpdateStatus
 } from "./shared/types.js";
 
 function unwrapError(error: unknown): never {
@@ -29,7 +30,7 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 const bridge: AppBridge = {
   platform: process.platform,
   openWorkspaceDialog: () => invoke("workspace:open-dialog"),
-  createWorkspaceDialog: () => invoke("workspace:create-dialog"),
+  createWorkspace: (name: string) => invoke("workspace:create", name),
   openWorkspacePath: (filePath: string) => invoke("workspace:open-path", filePath),
   closeWorkspace: () => invoke("workspace:close"),
   getWorkspace: () => invoke("workspace:get"),
@@ -42,7 +43,14 @@ const bridge: AppBridge = {
     const listener = () => handler();
     ipcRenderer.on("workspace:changed", listener);
     return () => ipcRenderer.off("workspace:changed", listener);
-  }
+  },
+  onUpdateStatus: (handler: (status: UpdateStatus) => void) => {
+    const listener = (_event: IpcRendererEvent, status: UpdateStatus) => handler(status);
+    ipcRenderer.on("update:status", listener);
+    void invoke<UpdateStatus>("update:get-status").then(handler).catch(() => undefined);
+    return () => ipcRenderer.off("update:status", listener);
+  },
+  installUpdate: () => invoke("update:install")
 };
 
 const terminal = {

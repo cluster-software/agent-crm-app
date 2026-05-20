@@ -2,6 +2,7 @@ import {
   Building2,
   ChevronRight,
   Database,
+  Download,
   FileText,
   FilePlus2,
   FolderOpen,
@@ -18,6 +19,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ComponentType,
+  FormEvent as ReactFormEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode
 } from "react";
@@ -35,6 +37,7 @@ import type {
   RecordPreview,
   RecordValue,
   SchemaObject,
+  UpdateStatus,
   WorkspaceSummary
 } from "../shared/types";
 import {
@@ -81,6 +84,12 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
+
+  useEffect(() => {
+    return api.onUpdateStatus(setUpdateStatus);
+  }, []);
 
   useEffect(() => {
     setDetailRecord(null);
@@ -257,6 +266,7 @@ export function App() {
             </div>
           </div>
         </div>
+        <UpdateBanner status={updateStatus} />
       </aside>
 
       <main className="main">
@@ -305,7 +315,7 @@ export function App() {
               type="button"
               title="Create workspace"
               aria-label="Create workspace"
-              onClick={() => runWorkspaceAction(api.createWorkspaceDialog)}
+              onClick={() => setCreateOpen(true)}
             >
               <FilePlus2 size={14} className="lucide" />
             </button>
@@ -343,7 +353,7 @@ export function App() {
             {!workspace ? (
               <EmptyWorkspace
                 onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
-                onCreate={() => runWorkspaceAction(api.createWorkspaceDialog)}
+                onCreate={() => setCreateOpen(true)}
               />
             ) : detailRecord && selectedObject?.object_slug === "people" ? (
               <PersonDetail record={detailRecord} tab={personTab} onTabChange={setPersonTab} />
@@ -369,6 +379,19 @@ export function App() {
         </div>
 
       </main>
+      {createOpen && (
+        <CreateWorkspaceModal
+          onClose={() => setCreateOpen(false)}
+          onCreate={async (name) => {
+            setError(null);
+            const summary = await api.createWorkspace(name);
+            if (summary) {
+              setWorkspace(summary);
+              setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -402,6 +425,122 @@ function iconForObject(objectSlug: string): ComponentType<{ size?: number; class
     default:
       return Database;
   }
+}
+
+function CreateWorkspaceModal({
+  onClose,
+  onCreate
+}: {
+  onClose: () => void;
+  onCreate: (name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !submitting) {
+        event.preventDefault();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, submitting]);
+
+  const trimmed = name.trim();
+  const canSubmit = trimmed.length > 0 && !submitting;
+
+  async function handleSubmit(event: ReactFormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setLocalError(null);
+    try {
+      await onCreate(trimmed);
+      onClose();
+    } catch (err) {
+      setLocalError(statusFromError(err));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <form className="modal modal--narrow" onSubmit={handleSubmit}>
+        <div className="modal__head">
+          <div>
+            <h2>New workspace</h2>
+            <p>Pick a name. The workspace is created under <span className="mono">~/agent-crm/</span>.</p>
+          </div>
+        </div>
+        <div className="modal__body">
+          <label className="input">
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="e.g. pipeline"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              disabled={submitting}
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={60}
+            />
+          </label>
+          {localError && <div className="strip strip--error">{localError}</div>}
+        </div>
+        <div className="modal__actions">
+          <button type="button" className="btn" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn--primary" disabled={!canSubmit}>
+            {submitting ? (
+              <>
+                <Loader2 size={14} className="lucide spin" />
+                <span>Creating</span>
+              </>
+            ) : (
+              <span>Create</span>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function UpdateBanner({ status }: { status: UpdateStatus }) {
+  if (status.state === "idle" || status.state === "checking" || status.state === "error") {
+    return null;
+  }
+  const isReady = status.state === "ready";
+  const label =
+    status.state === "available"
+      ? `Update v${status.version} available`
+      : status.state === "downloading"
+        ? `Downloading v${status.version} · ${status.percent}%`
+        : `Restart to install v${status.version}`;
+  return (
+    <button
+      type="button"
+      className="update-banner"
+      data-state={status.state}
+      disabled={!isReady}
+      onClick={() => {
+        if (isReady) void api.installUpdate();
+      }}
+    >
+      <Download size={13} className="lucide" />
+      <span>{label}</span>
+    </button>
+  );
 }
 
 function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: () => void }) {
@@ -455,6 +594,10 @@ function RecordsView({
 
   const valueColumns = pickValueColumns(object, records);
 
+  if (records.length === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
+    return <RecordsEmptyState slug={object.object_slug} />;
+  }
+
   return (
     <div className="table">
       <RecordsTable
@@ -463,6 +606,121 @@ function RecordsView({
         valueColumns={valueColumns}
         onRowClick={onRowClick}
       />
+    </div>
+  );
+}
+
+type RecordsEmptyConfig = {
+  marks: string[];
+  cols: [string, string, string];
+  markShape: "square" | "circle";
+  title: string;
+  body: string;
+  comment: string;
+};
+
+const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
+  companies: {
+    marks: ["a", "r", "v"],
+    cols: ["company", "domain", "linkedin"],
+    markShape: "square",
+    title: "Companies",
+    body: "The accounts in your world — design partners, customers, prospects.",
+    comment: "run the onboarding skill — Claude will ask a few questions, then pull in your companies"
+  },
+  people: {
+    marks: ["a", "b", "c"],
+    cols: ["name", "email", "company"],
+    markShape: "circle",
+    title: "People",
+    body: "The humans behind the accounts — champions, decision makers, the person who replied last Tuesday.",
+    comment: "run the onboarding skill — Claude will ask a few questions, then pull in your people"
+  },
+  deals: {
+    marks: ["$", "$", "$"],
+    cols: ["deal", "stage", "value"],
+    markShape: "square",
+    title: "Deals",
+    body: "The pipeline you're working — eval, trial, expansion, anything you call a stage.",
+    comment: "run the onboarding skill — Claude will ask a few questions, then draft your pipeline"
+  }
+};
+
+function RecordsEmptyState({ slug }: { slug: string }) {
+  const config = RECORDS_EMPTY_STATES[slug];
+  if (!config) return null;
+  return (
+    <div className="records-empty">
+      <div className="records-empty__inner">
+        <SchemaTablePreview
+          marks={config.marks}
+          cols={config.cols}
+          markShape={config.markShape}
+        />
+        <h2 className="records-empty__title">{config.title}</h2>
+        <p className="records-empty__body">{config.body}</p>
+        <div className="records-empty__cli">
+          <CliBlock comment={config.comment} command="/acrm-onboard" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SchemaTablePreview({
+  marks,
+  cols,
+  markShape
+}: {
+  marks: string[];
+  cols: [string, string, string];
+  markShape: "square" | "circle";
+}) {
+  const markClass =
+    markShape === "circle" ? "schema-table__mark schema-table__mark--circle" : "schema-table__mark";
+  return (
+    <div className="schema-table">
+      <div className="schema-table__head">
+        <span>{cols[0]}</span>
+        <span>{cols[1]}</span>
+        <span>{cols[2]}</span>
+      </div>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="schema-table__row" data-step={i}>
+          <span className="schema-table__identity">
+            <span className={markClass}>{marks[i] ?? "·"}</span>
+            <span className="schema-table__bar" />
+          </span>
+          <span className="schema-table__bar--cell" />
+          <span className="schema-table__dot" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CliBlock({ comment, command }: { comment: string; command: string }) {
+  const [copied, setCopied] = useState(false);
+  async function onCopy() {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <div className="cli-block">
+      <div className="cli-block__body">
+        <div className="cli-block__comment">{comment}</div>
+        <div className="cli-block__cmd">
+          <span className="cli-block__accent">{command}</span>
+        </div>
+      </div>
+      <button type="button" className="cli-block__copy" onClick={onCopy}>
+        {copied ? "copied" : "copy"}
+      </button>
     </div>
   );
 }
@@ -532,7 +790,7 @@ function useRecordColumns(object: SchemaObject, valueColumns: Array<[string, str
             </span>
           );
         },
-        meta: { width: "minmax(220px, 1.6fr)" }
+        meta: { width: "minmax(220px, max-content)" }
       }),
       ...valueColumns.map(([slug, title]) =>
         columnHelper.accessor(
@@ -541,7 +799,7 @@ function useRecordColumns(object: SchemaObject, valueColumns: Array<[string, str
             id: slug,
             header: title,
             cell: (info) => <ValueCell value={info.getValue()} />,
-            meta: { width: "minmax(140px, 1fr)" }
+            meta: { width: "minmax(140px, max-content)" }
           }
         )
       )
@@ -569,16 +827,17 @@ function RecordsTable({
     getRowId: (record) => `${record.object_slug}:${record.record_id}`
   });
 
-  const columnTemplate = table
-    .getVisibleLeafColumns()
-    .map((column) => (column.columnDef.meta as { width?: string } | undefined)?.width ?? "1fr")
-    .join(" ");
+  const columnTemplate =
+    table
+      .getVisibleLeafColumns()
+      .map((column) => (column.columnDef.meta as { width?: string } | undefined)?.width ?? "1fr")
+      .join(" ") + " 1fr";
   const gridStyle = { ["--columns" as string]: columnTemplate };
 
   return (
-    <>
+    <div className="table__inner" style={gridStyle}>
       {table.getHeaderGroups().map((headerGroup) => (
-        <div key={headerGroup.id} className="table__head" style={gridStyle}>
+        <div key={headerGroup.id} className="table__head">
           {headerGroup.headers.map((header) => (
             <span key={header.id}>
               {header.isPlaceholder
@@ -599,7 +858,6 @@ function RecordsTable({
               key={row.id}
               className="table__row"
               data-touched={index === 0 ? "true" : undefined}
-              style={gridStyle}
               onClick={onRowClick ? () => onRowClick(row.original) : undefined}
             >
               {row.getVisibleCells().map((cell) => (
@@ -611,7 +869,7 @@ function RecordsTable({
           ))
         )}
       </div>
-    </>
+    </div>
   );
 }
 
