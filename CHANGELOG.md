@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.1-295b305...v0.7.2-295b305) (2026-05-21)
+
+
+### Bug Fixes
+
+* fall back when user shell cannot spawn ([a35be07](https://github.com/cluster-software/agent-crm-app/commit/a35be07cbc9a13d2722ce162edb76591dd287ec3))
+
 ## [0.7.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.0-295b305...v0.7.1-295b305) (2026-05-20)
 
 
