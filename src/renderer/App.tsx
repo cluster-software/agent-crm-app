@@ -22,9 +22,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ComponentType,
+  Dispatch,
   FormEvent as ReactFormEvent,
   PointerEvent as ReactPointerEvent,
-  ReactNode
+  ReactNode,
+  SetStateAction
 } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -60,6 +62,7 @@ const sdkObjectOrder = ["companies", "people", "deals", "posts", "transcripts"];
 const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
 
 type PersonTab = "overview" | "transcripts" | "posts";
+type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -627,9 +630,6 @@ function SettingsView({
     <div className="detail settings-view">
       <header className="detail__header">
         <h1 className="detail__title display">Settings</h1>
-        <div className="detail__meta">
-          <span className="mono">signals/</span>
-        </div>
       </header>
 
       <nav className="detail__tabs tabs">
@@ -640,6 +640,9 @@ function SettingsView({
       </nav>
 
       <section className="settings-panel">
+        <p className="settings-panel__description">
+          Signals are configured in the /signals directory of your workspace. They automatically fill in data about a company or person using a background web search with Claude. Use the /create-signals signals skill to create one or learn more.
+        </p>
         {signals === null ? (
           <div className="empty-inline">
             <Loader2 size={14} className="lucide spin" />
@@ -657,7 +660,6 @@ function SettingsView({
                   <div className="settings-signal__title">
                     <MonoLabel>{signal.object_slug}</MonoLabel>
                     <h2>{signal.title}</h2>
-                    <span className="settings-signal__path mono">signals/{signal.slug}.md</span>
                   </div>
                   <Badge>{signal.outputs.length} fields</Badge>
                 </header>
@@ -1076,6 +1078,10 @@ function useRecordColumns(
   runningBySignal: Set<string>,
   retryingSignals: Set<string>,
   onRetrySignal?: (failure: SignalRunFailureSummary) => void,
+  openSignalCell?: string | null,
+  setOpenSignalCell?: Dispatch<SetStateAction<string | null>>,
+  signalPopoverTabs?: Record<string, SignalPopoverTab>,
+  setSignalPopoverTabs?: Dispatch<SetStateAction<Record<string, SignalPopoverTab>>>,
 ) {
   return useMemo(() => {
     const cols = [
@@ -1131,6 +1137,15 @@ function useRecordColumns(
                   signalFailure={signalFailure}
                   retryingSignal={signalFailure ? retryingSignals.has(signalRunKey(signalFailure)) : false}
                   onRetrySignal={signalFailure ? () => onRetrySignal?.(signalFailure) : undefined}
+                  signalPopoverOpen={openSignalCell === signalCellKey}
+                  signalPopoverTab={signalPopoverTabs?.[signalCellKey] ?? "sources"}
+                  onSignalPopoverTabChange={column.isSignal
+                    ? (tab) => setSignalPopoverTabs?.((current) => ({ ...current, [signalCellKey]: tab }))
+                    : undefined}
+                  onSignalPopoverOpen={column.isSignal ? () => setOpenSignalCell?.(signalCellKey) : undefined}
+                  onSignalPopoverClose={column.isSignal
+                    ? () => setOpenSignalCell?.((current) => current === signalCellKey ? null : current)
+                    : undefined}
                 />
               );
             },
@@ -1140,7 +1155,7 @@ function useRecordColumns(
       )
     ];
     return cols;
-  }, [failureBySignal, object, onRetrySignal, retryingSignals, runningBySignal, valueColumns]);
+  }, [failureBySignal, object, onRetrySignal, openSignalCell, retryingSignals, runningBySignal, setOpenSignalCell, setSignalPopoverTabs, signalPopoverTabs, valueColumns]);
 }
 
 function RecordsTable({
@@ -1162,13 +1177,28 @@ function RecordsTable({
   onRetrySignal?: (failure: SignalRunFailureSummary) => void;
   onRowClick?: (record: RecordPreview) => void;
 }) {
-  const columns = useRecordColumns(object, valueColumns, failureBySignal, runningBySignal, retryingSignals, onRetrySignal);
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [expandedCell, setExpandedCell] = useState<string | null>(null);
+  const [openSignalCell, setOpenSignalCell] = useState<string | null>(null);
+  const [signalPopoverTabs, setSignalPopoverTabs] = useState<Record<string, SignalPopoverTab>>({});
+  const columns = useRecordColumns(
+    object,
+    valueColumns,
+    failureBySignal,
+    runningBySignal,
+    retryingSignals,
+    onRetrySignal,
+    openSignalCell,
+    setOpenSignalCell,
+    signalPopoverTabs,
+    setSignalPopoverTabs,
+  );
 
   useEffect(() => {
     setSelectedCell(null);
     setExpandedCell(null);
+    setOpenSignalCell(null);
+    setSignalPopoverTabs({});
   }, [object.object_slug]);
 
   const table = useReactTable({
@@ -1210,17 +1240,19 @@ function RecordsTable({
               className="table__row"
               data-touched={index === 0 ? "true" : undefined}
             >
-              {row.getVisibleCells().map((cell) => {
+              {row.getVisibleCells().map((cell, cellIndex, cells) => {
                 const isIdentity = cell.column.id === "identity";
                 const key = `${row.id}:${cell.column.id}`;
                 const text = cellText(cell.column.id, cell.getValue(), row.original);
                 const expanded = expandedCell === key;
+                const nearRightEdge = cellIndex >= cells.length - 2;
                 return (
                   <span
                     key={cell.id}
                     className={`table__cell${isIdentity ? " table__cell--identity" : ""}`}
                     data-selected={!isIdentity && selectedCell === key ? "true" : undefined}
                     data-expanded={expanded ? "true" : undefined}
+                    data-edge-x={nearRightEdge ? "right" : undefined}
                     onClick={(event) => {
                       event.stopPropagation();
                       if (isIdentity) {
@@ -1287,7 +1319,12 @@ function ValueCell({
   runningSignal = false,
   signalFailure,
   retryingSignal = false,
-  onRetrySignal
+  onRetrySignal,
+  signalPopoverOpen = false,
+  signalPopoverTab = "sources",
+  onSignalPopoverTabChange,
+  onSignalPopoverOpen,
+  onSignalPopoverClose
 }: {
   value?: RecordValue;
   pendingSignal?: boolean;
@@ -1295,6 +1332,11 @@ function ValueCell({
   signalFailure?: SignalRunFailureSummary;
   retryingSignal?: boolean;
   onRetrySignal?: () => void;
+  signalPopoverOpen?: boolean;
+  signalPopoverTab?: SignalPopoverTab;
+  onSignalPopoverTabChange?: (tab: SignalPopoverTab) => void;
+  onSignalPopoverOpen?: () => void;
+  onSignalPopoverClose?: () => void;
 }) {
   if (!value || !value.display) {
     if (runningSignal || retryingSignal) {
@@ -1332,7 +1374,16 @@ function ValueCell({
     return <span className="table__cell--muted">—</span>;
   }
   if (isSignalValue(value)) {
-    return <SignalValueCell value={value} />;
+    return (
+      <SignalValueCell
+        value={value}
+        open={signalPopoverOpen}
+        tab={signalPopoverTab}
+        onTabChange={onSignalPopoverTabChange}
+        onOpen={onSignalPopoverOpen}
+        onClose={onSignalPopoverClose}
+      />
+    );
   }
   if (looksLikeStage(value)) return <Badge kind={stageKind(value.display)} dot>{value.display}</Badge>;
   if (looksMono(value)) return <span className="table__cell--mono">{value.display}</span>;
@@ -1349,20 +1400,73 @@ function signalFailureTitle(failure: SignalRunFailureSummary) {
     .join("\n\n");
 }
 
-function SignalValueCell({ value }: { value: RecordValue }) {
-  const [tab, setTab] = useState<"sources" | "reasoning">("sources");
+function SignalValueCell({
+  value,
+  open,
+  tab,
+  onTabChange,
+  onOpen,
+  onClose
+}: {
+  value: RecordValue;
+  open: boolean;
+  tab: SignalPopoverTab;
+  onTabChange?: (tab: SignalPopoverTab) => void;
+  onOpen?: () => void;
+  onClose?: () => void;
+}) {
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    };
+  }, []);
+
+  const cancelClose = () => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+
+  const openPopover = () => {
+    cancelClose();
+    onOpen?.();
+  };
+
+  const closePopoverSoon = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => {
+      onClose?.();
+      closeTimer.current = null;
+    }, 180);
+  };
+
   return (
-    <span className="signal-cell" onMouseEnter={() => setTab("sources")}>
+    <span
+      className="signal-cell"
+      data-open={open ? "true" : undefined}
+      onMouseEnter={openPopover}
+      onMouseLeave={closePopoverSoon}
+      onFocus={openPopover}
+      onBlur={closePopoverSoon}
+    >
       <span className="signal-value">
         <span>{shortSignalDisplay(value.display)}</span>
       </span>
-      <span className="signal-popover" onClick={(event) => event.stopPropagation()}>
+      <span
+        className="signal-popover"
+        onMouseEnter={openPopover}
+        onMouseLeave={closePopoverSoon}
+        onClick={(event) => event.stopPropagation()}
+      >
         <span className="signal-popover__tabs" role="tablist" aria-label={`${value.title} provenance`}>
           <button
             type="button"
             role="tab"
             aria-selected={tab === "sources"}
-            onClick={() => setTab("sources")}
+            onClick={() => onTabChange?.("sources")}
           >
             Sources
           </button>
@@ -1370,7 +1474,7 @@ function SignalValueCell({ value }: { value: RecordValue }) {
             type="button"
             role="tab"
             aria-selected={tab === "reasoning"}
-            onClick={() => setTab("reasoning")}
+            onClick={() => onTabChange?.("reasoning")}
           >
             Reasoning
           </button>
