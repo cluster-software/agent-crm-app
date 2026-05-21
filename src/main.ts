@@ -12,7 +12,8 @@ import type {
   CreateRecordPayload,
   ImportCsvPayload,
   QueryResult,
-  RecordPreview,
+  RecordListOptions,
+  RecordListResult,
   TranscriptImportResult,
   TranscriptPayload,
   UpdateStatus,
@@ -531,8 +532,8 @@ handle("workspace:close", async () => {
 handle("workspace:get", () => {
   return getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
 });
-handle("records:list", (objectSlug: string) => {
-  return getSdkClient().request<RecordPreview[]>("listRecords", objectSlug);
+handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
+  return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);
 });
 handle("records:create", (payload: CreateRecordPayload) => {
   return getSdkClient().request("createRecord", payload);

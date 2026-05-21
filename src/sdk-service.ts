@@ -14,6 +14,8 @@ import type {
   CreateRecordPayload,
   ImportCsvPayload,
   QueryResult,
+  RecordListOptions,
+  RecordListResult,
   RecordPreview,
   RecordValue,
   SchemaObject,
@@ -23,6 +25,10 @@ import type {
 
 let workspace: Workspace | null = null;
 let workspacePath: string | null = null;
+let schemaObjectsCache: SchemaObject[] | null = null;
+
+const DEFAULT_RECORD_LIMIT = 100;
+const MAX_RECORD_LIMIT = 250;
 
 type RpcRequest = {
   id: number;
@@ -35,6 +41,7 @@ function normalizePath(filePath: string) {
 }
 
 async function closeWorkspaceHandle() {
+  schemaObjectsCache = null;
   if (!workspace) return;
   await workspace.close();
   workspace = null;
@@ -51,6 +58,7 @@ function assertWorkspace(): Workspace {
 async function openWorkspaceAt(filePath: string) {
   await closeWorkspaceHandle();
   const absolutePath = normalizePath(filePath);
+  schemaObjectsCache = null;
   workspace = await Workspace.open(absolutePath);
   workspacePath = absolutePath;
   return getWorkspaceSummary();
@@ -59,6 +67,7 @@ async function openWorkspaceAt(filePath: string) {
 async function createWorkspaceAt(filePath: string) {
   await closeWorkspaceHandle();
   const absolutePath = normalizePath(filePath);
+  schemaObjectsCache = null;
   const created = await createWorkspace(absolutePath);
   workspace = created.workspace;
   workspacePath = absolutePath;
@@ -66,8 +75,10 @@ async function createWorkspaceAt(filePath: string) {
 }
 
 async function getSchemaObjects(): Promise<SchemaObject[]> {
+  if (schemaObjectsCache) return schemaObjectsCache;
   const current = assertWorkspace();
   const schema = await dumpSchema(current);
+  schemaObjectsCache = schema.objects;
   return schema.objects;
 }
 
@@ -117,30 +128,152 @@ async function listRecentRecords(current: Workspace, objects: SchemaObject[]) {
   return inflateRecords(current, objects, result.rows as Array<{ object_slug: string; record_id: string }>);
 }
 
-async function listRecordsForObject(objectSlug: string): Promise<RecordPreview[]> {
+async function listRecordsForObject(
+  objectSlug: string,
+  options: RecordListOptions = {}
+): Promise<RecordListResult> {
   const current = assertWorkspace();
   const objects = await getSchemaObjects();
+  const limit = normalizeRecordLimit(options.limit);
+  const cursor = normalizeCursor(options.cursor);
+  const fetchLimit = limit + 1;
+  const attributeSlugs = relevantAttributeSlugs(objectSlug, options.valueAttributes);
+  const params = [
+    objectSlug,
+    ...(cursor ? [cursor] : []),
+    ...attributeSlugs
+  ];
+  const cursorClause = cursor ? "AND record_id < $2" : "";
+  const attrStart = cursor ? 3 : 2;
+  const attributeFilter =
+    attributeSlugs.length > 0
+      ? `AND v.attribute_slug IN (${attributeSlugs
+          .map((_, index) => `$${attrStart + index}`)
+          .join(", ")})`
+      : "";
   const result = await query(
     current,
-    `SELECT object_slug, record_id
-       FROM acrm_record
-      WHERE object_slug = $1
-      ORDER BY record_id DESC
-      LIMIT 150`,
-    [objectSlug]
+    `WITH selected AS (
+       SELECT object_slug, record_id
+         FROM acrm_record
+        WHERE object_slug = $1
+          ${cursorClause}
+        ORDER BY record_id DESC
+        LIMIT ${fetchLimit}
+     )
+     SELECT s.object_slug, s.record_id, v.attribute_slug, v.value_json,
+            a.title, a.attribute_type, v.active_from
+       FROM selected s
+       LEFT JOIN acrm_value v
+         ON v.object_slug = s.object_slug
+        AND v.record_id = s.record_id
+        AND v.active_until IS NULL
+        ${attributeFilter}
+       LEFT JOIN acrm_attribute a
+         ON a.object_slug = v.object_slug
+        AND a.attribute_slug = v.attribute_slug
+      ORDER BY s.record_id DESC, v.active_from DESC`,
+    params
   );
-  return inflateRecords(current, objects, result.rows as Array<{ object_slug: string; record_id: string }>);
+  const rows = result.rows as Array<{
+    object_slug: string;
+    record_id: string;
+    attribute_slug?: string | null;
+    value_json?: unknown;
+    title?: string | null;
+    attribute_type?: string | null;
+  }>;
+  const selectedRows: Array<{ object_slug: string; record_id: string }> = [];
+  const seenRecords = new Set<string>();
+  for (const row of rows) {
+    const key = `${row.object_slug}:${row.record_id}`;
+    if (seenRecords.has(key)) continue;
+    seenRecords.add(key);
+    selectedRows.push({ object_slug: row.object_slug, record_id: row.record_id });
+  }
+  const pageRows = selectedRows.slice(0, limit);
+  const pageKeys = new Set(pageRows.map((record) => `${record.object_slug}:${record.record_id}`));
+  const valueRows = rows.filter(
+    (row) => row.attribute_slug != null && pageKeys.has(`${row.object_slug}:${row.record_id}`)
+  );
+  const records = await inflateRecordValueRows(
+    current,
+    objects,
+    pageRows,
+    valueRows
+  );
+
+  return {
+    objectSlug,
+    records,
+    limit,
+    cursor,
+    nextCursor: selectedRows.length > limit ? pageRows[pageRows.length - 1]?.record_id ?? null : null,
+    hasMore: selectedRows.length > limit
+  };
+}
+
+function normalizeRecordLimit(limit: unknown) {
+  const parsed = typeof limit === "number" ? Math.floor(limit) : DEFAULT_RECORD_LIMIT;
+  if (!Number.isFinite(parsed)) return DEFAULT_RECORD_LIMIT;
+  return Math.min(MAX_RECORD_LIMIT, Math.max(1, parsed));
+}
+
+function normalizeCursor(cursor: unknown) {
+  return typeof cursor === "string" && cursor.length > 0 ? cursor : null;
+}
+
+function relevantAttributeSlugs(objectSlug: string, valueAttributes: unknown): string[] {
+  const attrs = new Set([
+    ...primaryLabelAttributeSlugs(objectSlug),
+    ...secondaryLabelAttributeSlugs(objectSlug)
+  ]);
+  if (Array.isArray(valueAttributes)) {
+    for (const attr of valueAttributes) {
+      if (typeof attr === "string" && attr.length > 0) attrs.add(attr);
+    }
+  }
+  return [...attrs];
+}
+
+function primaryLabelAttributeSlugs(objectSlug: string): string[] {
+  const byObject: Record<string, string[]> = {
+    people: ["name", "email_addresses", "linkedin_url"],
+    companies: ["name", "domains", "linkedin_url"],
+    deals: ["name", "stage"],
+    posts: ["content", "url"],
+    transcripts: ["title", "source_id"]
+  };
+  return byObject[objectSlug] ?? ["name"];
+}
+
+function secondaryLabelAttributeSlugs(objectSlug: string): string[] {
+  const byObject: Record<string, string[]> = {
+    people: ["job_title", "company"],
+    companies: ["description", "domains"],
+    deals: ["value", "close_date", "next_step"],
+    posts: ["platform", "posted_at", "author"],
+    transcripts: ["source", "started_at", "duration_seconds"]
+  };
+  return byObject[objectSlug] ?? [];
 }
 
 async function inflateRecords(
   current: Workspace,
   objects: SchemaObject[],
-  records: Array<{ object_slug: string; record_id: string }>
+  records: Array<{ object_slug: string; record_id: string }>,
+  attributeSlugs?: string[]
 ): Promise<RecordPreview[]> {
   if (records.length === 0) {
     return [];
   }
 
+  const attributeFilter =
+    attributeSlugs && attributeSlugs.length > 0
+      ? `AND v.attribute_slug IN (${attributeSlugs
+          .map((_, index) => `$${records.length * 2 + index + 1}`)
+          .join(", ")})`
+      : "";
   const values = await query(
     current,
     `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json,
@@ -151,14 +284,47 @@ async function inflateRecords(
         AND a.attribute_slug = v.attribute_slug
       WHERE v.active_until IS NULL
         AND (${records.map((_, index) => `(v.object_slug = $${index * 2 + 1} AND v.record_id = $${index * 2 + 2})`).join(" OR ")})
+        ${attributeFilter}
       ORDER BY v.active_from DESC`,
-    records.flatMap((record) => [record.object_slug, record.record_id])
+    [
+      ...records.flatMap((record) => [record.object_slug, record.record_id]),
+      ...(attributeSlugs ?? [])
+    ]
   );
 
+  return inflateRecordValueRows(
+    current,
+    objects,
+    records,
+    values.rows as Array<{
+      object_slug: unknown;
+      record_id: unknown;
+      attribute_slug?: unknown;
+      value_json?: unknown;
+      title?: unknown;
+      attribute_type?: unknown;
+    }>
+  );
+}
+
+async function inflateRecordValueRows(
+  current: Workspace,
+  objects: SchemaObject[],
+  records: Array<{ object_slug: string; record_id: string }>,
+  valueRows: Array<{
+    object_slug: unknown;
+    record_id: unknown;
+    attribute_slug?: unknown;
+    value_json?: unknown;
+    title?: unknown;
+    attribute_type?: unknown;
+  }>
+): Promise<RecordPreview[]> {
   const schemaByObject = new Map(objects.map((object) => [object.object_slug, object]));
   const grouped = new Map<string, RecordValue[]>();
 
-  for (const row of values.rows) {
+  for (const row of valueRows) {
+    if (row.attribute_slug == null) continue;
     const key = `${row.object_slug}:${row.record_id}`;
     const parsed = parseValue(row.value_json);
     const value: RecordValue = {
@@ -299,14 +465,22 @@ async function resolveReferenceLabels(
   const where = pairs
     .map((_, i) => `(v.object_slug = $${i * 2 + 1} AND v.record_id = $${i * 2 + 2})`)
     .join(" OR ");
-  const params = pairs.flatMap((p) => [p.object_slug, p.record_id]);
+  const attributeSlugs = [...new Set(pairs.flatMap((p) => primaryLabelAttributeSlugs(p.object_slug)))];
+  const attributeFilter =
+    attributeSlugs.length > 0
+      ? `AND v.attribute_slug IN (${attributeSlugs
+          .map((_, index) => `$${pairs.length * 2 + index + 1}`)
+          .join(", ")})`
+      : "";
+  const params = [...pairs.flatMap((p) => [p.object_slug, p.record_id]), ...attributeSlugs];
 
   const valueRows = await query(
     current,
     `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json
        FROM acrm_value v
       WHERE v.active_until IS NULL
-        AND (${where})`,
+        AND (${where})
+        ${attributeFilter}`,
     params
   );
 
@@ -342,28 +516,14 @@ async function resolveReferenceLabels(
 }
 
 function primaryLabel(objectSlug: string, recordId: string, values: RecordValue[]) {
-  const byObject: Record<string, string[]> = {
-    people: ["name", "email_addresses", "linkedin_url"],
-    companies: ["name", "domains", "linkedin_url"],
-    deals: ["name", "stage"],
-    posts: ["content", "url"],
-    transcripts: ["title", "source_id"]
-  };
-  const label = (byObject[objectSlug] ?? ["name"])
+  const label = primaryLabelAttributeSlugs(objectSlug)
     .map((attr) => findDisplay(values, attr))
     .find(Boolean);
   return label || recordId.slice(0, 8);
 }
 
 function secondaryLabel(objectSlug: string, object: SchemaObject | undefined, values: RecordValue[]) {
-  const byObject: Record<string, string[]> = {
-    people: ["job_title", "company"],
-    companies: ["description", "domains"],
-    deals: ["value", "close_date", "next_step"],
-    posts: ["platform", "posted_at", "author"],
-    transcripts: ["source", "started_at", "duration_seconds"]
-  };
-  const parts = (byObject[objectSlug] ?? [])
+  const parts = secondaryLabelAttributeSlugs(objectSlug)
     .map((attr) => findDisplay(values, attr))
     .filter(Boolean)
     .slice(0, 2);
@@ -381,12 +541,15 @@ async function dispatch(method: string, params: unknown[] = []) {
     case "getWorkspace":
       return workspace ? getWorkspaceSummary() : null;
     case "listRecords":
-      return listRecordsForObject(String(params[0]));
+      return listRecordsForObject(String(params[0]), (params[1] ?? {}) as RecordListOptions);
     case "createRecord":
+      schemaObjectsCache = null;
       return createRecord(assertWorkspace(), params[0] as CreateRecordPayload);
     case "importCsv":
+      schemaObjectsCache = null;
       return importCsv(assertWorkspace(), params[0] as ImportCsvPayload);
     case "importTranscript":
+      schemaObjectsCache = null;
       return importTranscript(assertWorkspace(), params[0] as TranscriptPayload);
     case "runQuery":
       return query(assertWorkspace(), String(params[0]), (params[1] ?? []) as never[]) satisfies Promise<QueryResult>;

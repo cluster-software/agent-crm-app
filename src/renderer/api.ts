@@ -2,6 +2,8 @@ import type {
   AppBridge,
   CreateRecordPayload,
   ImportCsvPayload,
+  RecordListOptions,
+  RecordListResult,
   RecordPreview,
   TranscriptPayload,
   WorkspaceSummary
@@ -302,6 +304,29 @@ const previewWorkspace: WorkspaceSummary = {
   ]
 };
 
+function listPreviewRecords(
+  objectSlug: string,
+  options: RecordListOptions = {}
+): RecordListResult {
+  const limit = Math.min(250, Math.max(1, Math.floor(options.limit ?? 100)));
+  const allRecords = sampleRecordsByObject[objectSlug] ?? [];
+  const cursorIndex =
+    typeof options.cursor === "string"
+      ? allRecords.findIndex((record) => record.record_id === options.cursor)
+      : -1;
+  const start = cursorIndex >= 0 ? cursorIndex + 1 : 0;
+  const page = allRecords.slice(start, start + limit);
+  const hasMore = start + limit < allRecords.length;
+  return {
+    objectSlug,
+    records: page,
+    limit,
+    cursor: options.cursor ?? null,
+    nextCursor: hasMore ? page[page.length - 1]?.record_id ?? null : null,
+    hasMore
+  };
+}
+
 const browserPreview: AppBridge = {
   platform: "browser",
   openWorkspaceDialog: async () => previewWorkspace,
@@ -309,7 +334,8 @@ const browserPreview: AppBridge = {
   openWorkspacePath: async () => previewWorkspace,
   closeWorkspace: async () => undefined,
   getWorkspace: async () => previewWorkspace,
-  listRecords: async (objectSlug: string) => sampleRecordsByObject[objectSlug] ?? [],
+  listRecords: async (objectSlug: string, options?: RecordListOptions) =>
+    listPreviewRecords(objectSlug, options),
   importCsv: async (_payload: ImportCsvPayload) => ({
     stats: {
       rows: 12,
