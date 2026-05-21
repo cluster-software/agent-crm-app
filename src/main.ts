@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +12,8 @@ import type {
   CreateRecordPayload,
   ImportCsvPayload,
   QueryResult,
-  RecordPreview,
+  RecordListOptions,
+  RecordListResult,
   SignalRunRequest,
   TranscriptImportResult,
   TranscriptPayload,
@@ -27,8 +29,15 @@ const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
 let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
+
+function sendToMainWindow(channel: string, ...args: unknown[]) {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  window.webContents.send(channel, ...args);
+}
+
 const workspaceWatcher = createWorkspaceWatcher(() => {
-  mainWindow?.webContents.send("workspace:changed");
+  sendToMainWindow("workspace:changed");
 });
 
 type RpcResponse<T> =
@@ -177,14 +186,49 @@ const ptySessions = new Map<string, PtySession>();
 const MAX_BUFFER_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
 
-function defaultShell() {
-  if (process.platform === "win32") return process.env.ComSpec ?? "cmd.exe";
-  return process.env.SHELL ?? (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
+type ShellCandidate = {
+  command: string;
+  args: string[];
+};
+
+function defaultShellArgs(command: string): string[] {
+  if (process.platform === "win32") return [];
+  const basename = path.basename(command).toLowerCase();
+  if (basename === "sh") return ["-i"];
+  return ["-il"];
 }
 
-function defaultShellArgs(): string[] {
-  if (process.platform === "win32") return [];
-  return ["-il"];
+function isExecutable(command: string): boolean {
+  if (command.length === 0) return false;
+  if (process.platform === "win32") return true;
+  try {
+    accessSync(command, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function shellCandidates(): ShellCandidate[] {
+  const commands =
+    process.platform === "win32"
+      ? [process.env.ComSpec, "cmd.exe"]
+      : [
+          process.env.SHELL,
+          process.platform === "darwin" ? "/bin/zsh" : "/bin/bash",
+          "/bin/bash",
+          "/bin/sh"
+        ];
+  const seen = new Set<string>();
+  const candidates: ShellCandidate[] = [];
+
+  for (const command of commands) {
+    if (!command || seen.has(command) || !isExecutable(command)) continue;
+    seen.add(command);
+    candidates.push({ command, args: defaultShellArgs(command) });
+  }
+
+  return candidates;
 }
 
 function defaultCwd() {
@@ -292,7 +336,7 @@ function flushPending(id: string, session: PtySession) {
   if (session.pending.length === 0) return;
   const data = session.pending;
   session.pending = "";
-  mainWindow?.webContents.send("pty:data", id, data);
+  sendToMainWindow("pty:data", id, data);
 }
 
 function schedulePtyFlush(id: string, session: PtySession) {
@@ -302,7 +346,7 @@ function schedulePtyFlush(id: string, session: PtySession) {
     if (session.pending.length === 0) return;
     const data = session.pending;
     session.pending = "";
-    mainWindow?.webContents.send("pty:data", id, data);
+    sendToMainWindow("pty:data", id, data);
   }, FLUSH_INTERVAL_MS);
 }
 
@@ -315,13 +359,30 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   env.COLORTERM = "truecolor";
   env.TERM_PROGRAM = "agent-crm";
 
-  const proc = nodePty.spawn(defaultShell(), defaultShellArgs(), {
-    name: "xterm-256color",
-    cols: Math.max(2, cols),
-    rows: Math.max(1, rows),
-    cwd: cwd && cwd.length > 0 ? cwd : defaultCwd(),
-    env
-  });
+  const candidates = shellCandidates();
+  const attempts: string[] = [];
+  let proc: IPty | null = null;
+
+  for (const candidate of candidates) {
+    try {
+      proc = nodePty.spawn(candidate.command, candidate.args, {
+        name: "xterm-256color",
+        cols: Math.max(2, cols),
+        rows: Math.max(1, rows),
+        cwd: cwd && cwd.length > 0 ? cwd : defaultCwd(),
+        env
+      });
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      attempts.push(`${candidate.command}: ${message}`);
+    }
+  }
+
+  if (!proc) {
+    const detail = attempts.length > 0 ? ` Attempts: ${attempts.join(" | ")}` : "";
+    throw new Error(`Could not start an interactive shell.${detail}`);
+  }
 
   const session: PtySession = {
     proc,
@@ -340,7 +401,7 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   proc.onExit(({ exitCode, signal }) => {
     flushPending(id, session);
     ptySessions.delete(id);
-    mainWindow?.webContents.send("pty:exit", id, { exitCode, signal });
+    sendToMainWindow("pty:exit", id, { exitCode, signal });
   });
 
   ptySessions.set(id, session);
@@ -367,7 +428,7 @@ function killAllPtys() {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1440,
     height: 980,
     minWidth: 640,
@@ -384,19 +445,25 @@ function createWindow() {
     }
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
+  mainWindow = window;
+
+  window.once("ready-to-show", () => {
+    if (!window.isDestroyed()) window.show();
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
+  });
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
   });
 
   if (isDev) {
-    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL as string);
+    void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
   } else {
-    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void window.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 }
 
@@ -466,8 +533,8 @@ handle("workspace:close", async () => {
 handle("workspace:get", () => {
   return getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
 });
-handle("records:list", (objectSlug: string) => {
-  return getSdkClient().request<RecordPreview[]>("listRecords", objectSlug);
+handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
+  return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);
 });
 handle("records:create", (payload: CreateRecordPayload) => {
   return getSdkClient().request("createRecord", payload);
@@ -549,7 +616,7 @@ let latestUpdateStatus: UpdateStatus = { state: "idle" };
 
 function publishUpdateStatus(status: UpdateStatus) {
   latestUpdateStatus = status;
-  mainWindow?.webContents.send("update:status", status);
+  sendToMainWindow("update:status", status);
 }
 
 function setupAutoUpdater() {

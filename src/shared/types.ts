@@ -42,6 +42,21 @@ export type RecordPreview = {
   values: RecordValue[];
 };
 
+export type RecordListOptions = {
+  limit?: number;
+  cursor?: string | null;
+  valueAttributes?: string[];
+};
+
+export type RecordListResult = {
+  objectSlug: string;
+  records: RecordPreview[];
+  limit: number;
+  cursor: string | null;
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
 export type QueryResult = {
   rows: Record<string, unknown>[];
   rowsAffected: number;
@@ -224,7 +239,7 @@ export type AppBridge = {
   openWorkspacePath: (filePath: string) => Promise<WorkspaceSummary>;
   closeWorkspace: () => Promise<void>;
   getWorkspace: () => Promise<WorkspaceSummary | null>;
-  listRecords: (objectSlug: string) => Promise<RecordPreview[]>;
+  listRecords: (objectSlug: string, options?: RecordListOptions) => Promise<RecordListResult>;
   importCsv: (payload: ImportCsvPayload) => Promise<ImportCsvResult>;
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;

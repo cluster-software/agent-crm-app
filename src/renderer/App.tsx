@@ -1,5 +1,6 @@
 import {
   Building2,
+  ChevronLeft,
   ChevronRight,
   Database,
   Download,
@@ -392,8 +393,10 @@ export function App() {
               <RecordDetail object={selectedObject} record={detailRecord} />
             ) : selectedObject ? (
               <RecordsView
+                key={selectedObject.object_slug}
                 object={selectedObject}
                 dataVersion={dataVersion}
+                totalRecords={workspace.counts[selectedObject.object_slug] ?? 0}
                 onRowClick={setDetailRecord}
                 setError={setError}
               />
@@ -691,41 +694,86 @@ function SettingsView({
 function RecordsView({
   object,
   dataVersion,
+  totalRecords,
   onRowClick,
   setError
 }: {
   object: SchemaObject;
   dataVersion: number;
+  totalRecords: number;
   onRowClick?: (record: RecordPreview) => void;
   setError: (error: string | null) => void;
 }) {
+  const pageSize = 100;
   const [records, setRecords] = useState<RecordPreview[]>([]);
   const [signals, setSignals] = useState<SignalDefinitionSummary[]>([]);
   const [signalFailures, setSignalFailures] = useState<SignalRunFailureSummary[]>([]);
   const [signalRuns, setSignalRuns] = useState<SignalRunJob[]>([]);
+  const [loadingRecords, setLoadingRecords] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageCursors, setPageCursors] = useState<Array<string | null>>([null]);
+  const requestIdRef = useRef(0);
+  const [retryingSignals, setRetryingSignals] = useState<Set<string>>(() => new Set());
 
-  const loadRecords = useCallback(async () => {
+  useEffect(() => {
+    setRecords([]);
+    setSignals([]);
+    setSignalFailures([]);
+    setSignalRuns([]);
+    setLoadingRecords(true);
+    setHasMore(false);
+    setNextCursor(null);
+    setPageIndex(0);
+    setPageCursors([null]);
+  }, [object.object_slug, dataVersion]);
+
+  const loadRecords = useCallback(async (options: { quiet?: boolean } = {}) => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    if (!options.quiet) {
+      setRecords([]);
+      setLoadingRecords(true);
+    }
     try {
-      const [nextRecords, nextSignals, nextSignalFailures, nextSignalRuns] = await Promise.all([
-        api.listRecords(object.object_slug),
+      const [nextSignals, nextSignalFailures, nextSignalRuns] = await Promise.all([
         api.listSignals(),
         api.listSignalFailures(),
         api.listSignalRuns()
       ]);
-      setRecords(nextRecords);
+      const requestedColumns = pickValueColumns(object, [], nextSignals);
+      const result = await api.listRecords(object.object_slug, {
+        limit: pageSize,
+        cursor: pageCursors[pageIndex] ?? null,
+        valueAttributes: requestedColumns.map((column) => column.slug)
+      });
+      if (requestId !== requestIdRef.current) return;
+      if (result.objectSlug !== object.object_slug) return;
+      setRecords(result.records);
       setSignals(nextSignals);
       setSignalFailures(nextSignalFailures);
       setSignalRuns(nextSignalRuns);
+      setHasMore(result.hasMore);
+      setNextCursor(result.nextCursor);
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       setError(statusFromError(err));
+    } finally {
+      if (requestId === requestIdRef.current && !options.quiet) {
+        setLoadingRecords(false);
+      }
     }
-  }, [object.object_slug, setError]);
+  }, [object, pageCursors, pageIndex, setError]);
 
   useEffect(() => {
     void loadRecords();
   }, [loadRecords, dataVersion]);
 
-  const valueColumns = pickValueColumns(object, records, signals);
+  const valueColumns = useMemo(
+    () => pickValueColumns(object, records, signals),
+    [object, records, signals],
+  );
   const failureBySignal = useMemo(
     () => signalFailureMap(signalFailures, signals),
     [signalFailures, signals],
@@ -734,7 +782,6 @@ function RecordsView({
     () => signalRunningMap(signalRuns, signals),
     [signalRuns, signals],
   );
-  const [retryingSignals, setRetryingSignals] = useState<Set<string>>(() => new Set());
   const retrySignal = useCallback(
     async (failure: SignalRunFailureSummary) => {
       const key = signalRunKey(failure);
@@ -748,7 +795,7 @@ function RecordsView({
           record_ids: [failure.record_id],
           concurrency: 1
         });
-        await loadRecords();
+        await loadRecords({ quiet: true });
       } catch (err) {
         setError(statusFromError(err));
       } finally {
@@ -772,17 +819,70 @@ function RecordsView({
   useEffect(() => {
     if (!hasRunningSignalCells) return;
     const timer = window.setInterval(() => {
-      void loadRecords();
+      void loadRecords({ quiet: true });
     }, 2000);
     return () => window.clearInterval(timer);
   }, [hasRunningSignalCells, loadRecords]);
 
-  if (records.length === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
+  function goToPreviousPage() {
+    setPageIndex((index) => Math.max(0, index - 1));
+  }
+
+  function goToNextPage() {
+    if (!nextCursor) return;
+    setPageCursors((cursors) => {
+      const next = cursors.slice(0, pageIndex + 1);
+      next[pageIndex + 1] = nextCursor;
+      return next;
+    });
+    setPageIndex((index) => index + 1);
+  }
+
+  if (!loadingRecords && totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
     return <RecordsEmptyState slug={object.object_slug} />;
   }
 
+  const pageStart = records.length === 0 ? 0 : pageIndex * pageSize + 1;
+  const pageEnd = pageIndex * pageSize + records.length;
+
   return (
     <div className="table">
+      <div className="table-toolbar">
+        <div className="table-toolbar__meta">
+          {loadingRecords ? (
+            <>
+              <Loader2 size={13} className="lucide spin" />
+              <span>Loading {object.plural_name.toLowerCase()}</span>
+            </>
+          ) : (
+            <span>
+              {formatNumber(pageStart)}-{formatNumber(pageEnd)} of {formatNumber(totalRecords)}
+            </span>
+          )}
+        </div>
+        <div className="table-toolbar__pager">
+          <button
+            type="button"
+            className="icon-btn"
+            title="Previous page"
+            aria-label="Previous page"
+            disabled={pageIndex === 0 || loadingRecords}
+            onClick={goToPreviousPage}
+          >
+            <ChevronLeft size={14} className="lucide" />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Next page"
+            aria-label="Next page"
+            disabled={!hasMore || loadingRecords}
+            onClick={goToNextPage}
+          >
+            <ChevronRight size={14} className="lucide" />
+          </button>
+        </div>
+      </div>
       <RecordsTable
         object={object}
         records={records}
@@ -792,6 +892,7 @@ function RecordsView({
         retryingSignals={retryingSignals}
         onRetrySignal={retrySignal}
         onRowClick={onRowClick}
+        loading={loadingRecords}
       />
     </div>
   );
@@ -847,7 +948,7 @@ function RecordsEmptyState({ slug }: { slug: string }) {
         <h2 className="records-empty__title">{config.title}</h2>
         <p className="records-empty__body">{config.body}</p>
         <div className="records-empty__cli">
-          <CliBlock comment={config.comment} command="/acrm-onboard" />
+          <CliBlock comment={config.comment} command="/acrm-onboarding" />
         </div>
       </div>
     </div>
@@ -1166,7 +1267,8 @@ function RecordsTable({
   runningBySignal,
   retryingSignals,
   onRetrySignal,
-  onRowClick
+  onRowClick,
+  loading
 }: {
   object: SchemaObject;
   records: RecordPreview[];
@@ -1176,6 +1278,7 @@ function RecordsTable({
   retryingSignals: Set<string>;
   onRetrySignal?: (failure: SignalRunFailureSummary) => void;
   onRowClick?: (record: RecordPreview) => void;
+  loading: boolean;
 }) {
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [expandedCell, setExpandedCell] = useState<string | null>(null);
@@ -1229,7 +1332,9 @@ function RecordsTable({
         </div>
       ))}
       <div className="table__body">
-        {records.length === 0 ? (
+        {loading && records.length === 0 ? (
+          <TableSkeleton columnCount={columns.length} />
+        ) : records.length === 0 ? (
           <div className="empty-inline">
             <span>no records yet · run an import or create one</span>
           </div>
@@ -1305,6 +1410,25 @@ function cellText(columnId: string, raw: unknown, record: RecordPreview): string
   if (typeof raw === "string") return raw;
   if (typeof raw === "number") return String(raw);
   return "";
+}
+
+function TableSkeleton({ columnCount }: { columnCount: number }) {
+  return (
+    <>
+      {Array.from({ length: 10 }).map((_, rowIndex) => (
+        <div key={rowIndex} className="table__row table__row--skeleton">
+          {Array.from({ length: columnCount }).map((__, columnIndex) => (
+            <span key={columnIndex}>
+              <span
+                className="table-skeleton-bar"
+                data-column={columnIndex === 0 ? "select" : undefined}
+              />
+            </span>
+          ))}
+        </div>
+      ))}
+    </>
+  );
 }
 
 function IdentityMark({ object, name }: { object: SchemaObject; name: string }) {
