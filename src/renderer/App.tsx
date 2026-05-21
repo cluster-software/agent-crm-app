@@ -604,12 +604,11 @@ function RecordsView({
     setNextCursor(null);
     setPageIndex(0);
     setPageCursors([null]);
-  }, [object.object_slug, dataVersion]);
+  }, [object.object_slug]);
 
   const loadRecords = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setRecords([]);
     setLoadingRecords(true);
     try {
       const result = await api.listRecords(object.object_slug, {
@@ -634,7 +633,7 @@ function RecordsView({
 
   useEffect(() => {
     void loadRecords();
-  }, [loadRecords]);
+  }, [loadRecords, dataVersion]);
 
   function goToPreviousPage() {
     setPageIndex((index) => Math.max(0, index - 1));
@@ -946,14 +945,13 @@ function RecordsTable({
         </div>
       ))}
       <div className="table__body">
-        {loading && records.length === 0 ? (
-          <TableSkeleton columnCount={columns.length} />
-        ) : records.length === 0 ? (
+        {records.length === 0 && !loading ? (
           <div className="empty-inline">
             <span>no records yet · run an import or create one</span>
           </div>
-        ) : (
-          table.getRowModel().rows.map((row, index) => (
+        ) : null}
+        {records.length > 0
+          ? table.getRowModel().rows.map((row, index) => (
             <div
               key={row.id}
               className="table__row"
@@ -967,7 +965,8 @@ function RecordsTable({
               ))}
             </div>
           ))
-        )}
+          : null}
+        {loading ? <TableSkeleton columnCount={columns.length} /> : null}
       </div>
     </div>
   );
