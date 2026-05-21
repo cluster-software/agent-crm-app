@@ -660,7 +660,7 @@ function RecordsEmptyState({ slug }: { slug: string }) {
         <h2 className="records-empty__title">{config.title}</h2>
         <p className="records-empty__body">{config.body}</p>
         <div className="records-empty__cli">
-          <CliBlock comment={config.comment} command="/acrm-onboard" />
+          <CliBlock comment={config.comment} command="/acrm-onboarding" />
         </div>
       </div>
     </div>
