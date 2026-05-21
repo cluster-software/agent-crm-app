@@ -947,6 +947,9 @@ body.resizing-terminal * { cursor: col-resize !important; }
   cursor: default;
   pointer-events: none;
 }
+.table__row--skeleton > span {
+  padding-right: 12px;
+}
 .table-skeleton-bar {
   display: block;
   width: min(100%, 180px);
