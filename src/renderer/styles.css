@@ -1708,6 +1708,11 @@ body.resizing-terminal * { cursor: col-resize !important; }
   font-size: 14px;
   line-height: 1.55;
 }
+.settings-panel__description code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--accent-hi);
+}
 .settings-signals {
   display: flex;
   flex-direction: column;

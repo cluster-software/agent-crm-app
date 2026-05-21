@@ -641,7 +641,7 @@ function SettingsView({
 
       <section className="settings-panel">
         <p className="settings-panel__description">
-          Signals are configured in the /signals directory of your workspace. They automatically fill in data about a company or person using a background web search with Claude. Use the /create-signals signals skill to create one or learn more.
+          Signals are configured in the <code>/signals</code> directory of your workspace. They automatically fill in data about a company or person using a background web search with Claude. Use the <code>/create-signals</code> signals skill to create one or learn more.
         </p>
         {signals === null ? (
           <div className="empty-inline">
