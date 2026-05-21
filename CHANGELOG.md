@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.2-295b305...v0.7.3-295b305) (2026-05-21)
+
+
+### Bug Fixes
+
+* release record list pagination ([a648daf](https://github.com/cluster-software/agent-crm-app/commit/a648daf9e62cbff9d6303f4fafb544f04a373164))
+
 ## [0.7.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.1-295b305...v0.7.2-295b305) (2026-05-21)
 
 
