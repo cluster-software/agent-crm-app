@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.3-295b305...v0.7.4-295b305) (2026-05-21)
+
+
+### Bug Fixes
+
+* keep table rows visible while loading ([d3f9f2d](https://github.com/cluster-software/agent-crm-app/commit/d3f9f2dd305fd53fe1016505a8986d6fee68a2f1))
+* keep table rows visible while loading ([f686a54](https://github.com/cluster-software/agent-crm-app/commit/f686a5429aefd10b717aa1d35f82e2f875331c84))
+
 ## [0.7.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.2-295b305...v0.7.3-295b305) (2026-05-21)
 
 
