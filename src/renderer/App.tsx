@@ -1,5 +1,6 @@
 import {
   Building2,
+  ChevronLeft,
   ChevronRight,
   Database,
   Download,
@@ -359,8 +360,10 @@ export function App() {
               <PersonDetail record={detailRecord} tab={personTab} onTabChange={setPersonTab} />
             ) : selectedObject ? (
               <RecordsView
+                key={selectedObject.object_slug}
                 object={selectedObject}
                 dataVersion={dataVersion}
+                totalRecords={workspace.counts[selectedObject.object_slug] ?? 0}
                 onRowClick={
                   selectedObject.object_slug === "people" ? setDetailRecord : undefined
                 }
@@ -570,41 +573,134 @@ function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: ()
 function RecordsView({
   object,
   dataVersion,
+  totalRecords,
   onRowClick,
   setError
 }: {
   object: SchemaObject;
   dataVersion: number;
+  totalRecords: number;
   onRowClick?: (record: RecordPreview) => void;
   setError: (error: string | null) => void;
 }) {
+  const pageSize = 100;
   const [records, setRecords] = useState<RecordPreview[]>([]);
+  const [loadingRecords, setLoadingRecords] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageCursors, setPageCursors] = useState<Array<string | null>>([null]);
+  const requestIdRef = useRef(0);
+  const valueColumns = useMemo(() => pickValueColumns(object, []), [object]);
+  const valueAttributeSlugs = useMemo(
+    () => valueColumns.map(([slug]) => slug),
+    [valueColumns]
+  );
+
+  useEffect(() => {
+    setRecords([]);
+    setLoadingRecords(true);
+    setHasMore(false);
+    setNextCursor(null);
+    setPageIndex(0);
+    setPageCursors([null]);
+  }, [object.object_slug, dataVersion]);
 
   const loadRecords = useCallback(async () => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setRecords([]);
+    setLoadingRecords(true);
     try {
-      setRecords(await api.listRecords(object.object_slug));
+      const result = await api.listRecords(object.object_slug, {
+        limit: pageSize,
+        cursor: pageCursors[pageIndex] ?? null,
+        valueAttributes: valueAttributeSlugs
+      });
+      if (requestId !== requestIdRef.current) return;
+      if (result.objectSlug !== object.object_slug) return;
+      setRecords(result.records);
+      setHasMore(result.hasMore);
+      setNextCursor(result.nextCursor);
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       setError(statusFromError(err));
+    } finally {
+      if (requestId === requestIdRef.current) {
+        setLoadingRecords(false);
+      }
     }
-  }, [object.object_slug, setError]);
+  }, [object.object_slug, pageCursors, pageIndex, setError, valueAttributeSlugs]);
 
   useEffect(() => {
     void loadRecords();
-  }, [loadRecords, dataVersion]);
+  }, [loadRecords]);
 
-  const valueColumns = pickValueColumns(object, records);
+  function goToPreviousPage() {
+    setPageIndex((index) => Math.max(0, index - 1));
+  }
 
-  if (records.length === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
+  function goToNextPage() {
+    if (!nextCursor) return;
+    setPageCursors((cursors) => {
+      const next = cursors.slice(0, pageIndex + 1);
+      next[pageIndex + 1] = nextCursor;
+      return next;
+    });
+    setPageIndex((index) => index + 1);
+  }
+
+  if (!loadingRecords && totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
     return <RecordsEmptyState slug={object.object_slug} />;
   }
 
+  const pageStart = records.length === 0 ? 0 : pageIndex * pageSize + 1;
+  const pageEnd = pageIndex * pageSize + records.length;
+
   return (
     <div className="table">
+      <div className="table-toolbar">
+        <div className="table-toolbar__meta">
+          {loadingRecords ? (
+            <>
+              <Loader2 size={13} className="lucide spin" />
+              <span>Loading {object.plural_name.toLowerCase()}</span>
+            </>
+          ) : (
+            <span>
+              {formatNumber(pageStart)}-{formatNumber(pageEnd)} of {formatNumber(totalRecords)}
+            </span>
+          )}
+        </div>
+        <div className="table-toolbar__pager">
+          <button
+            type="button"
+            className="icon-btn"
+            title="Previous page"
+            aria-label="Previous page"
+            disabled={pageIndex === 0 || loadingRecords}
+            onClick={goToPreviousPage}
+          >
+            <ChevronLeft size={14} className="lucide" />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Next page"
+            aria-label="Next page"
+            disabled={!hasMore || loadingRecords}
+            onClick={goToNextPage}
+          >
+            <ChevronRight size={14} className="lucide" />
+          </button>
+        </div>
+      </div>
       <RecordsTable
         object={object}
         records={records}
         valueColumns={valueColumns}
         onRowClick={onRowClick}
+        loading={loadingRecords}
       />
     </div>
   );
@@ -812,12 +908,14 @@ function RecordsTable({
   object,
   records,
   valueColumns,
-  onRowClick
+  onRowClick,
+  loading
 }: {
   object: SchemaObject;
   records: RecordPreview[];
   valueColumns: Array<[string, string]>;
   onRowClick?: (record: RecordPreview) => void;
+  loading: boolean;
 }) {
   const columns = useRecordColumns(object, valueColumns);
   const table = useReactTable({
@@ -848,7 +946,9 @@ function RecordsTable({
         </div>
       ))}
       <div className="table__body">
-        {records.length === 0 ? (
+        {loading && records.length === 0 ? (
+          <TableSkeleton columnCount={columns.length} />
+        ) : records.length === 0 ? (
           <div className="empty-inline">
             <span>no records yet · run an import or create one</span>
           </div>
@@ -870,6 +970,25 @@ function RecordsTable({
         )}
       </div>
     </div>
+  );
+}
+
+function TableSkeleton({ columnCount }: { columnCount: number }) {
+  return (
+    <>
+      {Array.from({ length: 10 }).map((_, rowIndex) => (
+        <div key={rowIndex} className="table__row table__row--skeleton">
+          {Array.from({ length: columnCount }).map((__, columnIndex) => (
+            <span key={columnIndex}>
+              <span
+                className="table-skeleton-bar"
+                data-column={columnIndex === 0 ? "select" : undefined}
+              />
+            </span>
+          ))}
+        </div>
+      ))}
+    </>
   );
 }
 
