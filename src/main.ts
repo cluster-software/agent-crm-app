@@ -26,8 +26,15 @@ const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
 let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
+
+function sendToMainWindow(channel: string, ...args: unknown[]) {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  window.webContents.send(channel, ...args);
+}
+
 const workspaceWatcher = createWorkspaceWatcher(() => {
-  mainWindow?.webContents.send("workspace:changed");
+  sendToMainWindow("workspace:changed");
 });
 
 type RpcResponse<T> =
@@ -291,7 +298,7 @@ function flushPending(id: string, session: PtySession) {
   if (session.pending.length === 0) return;
   const data = session.pending;
   session.pending = "";
-  mainWindow?.webContents.send("pty:data", id, data);
+  sendToMainWindow("pty:data", id, data);
 }
 
 function schedulePtyFlush(id: string, session: PtySession) {
@@ -301,7 +308,7 @@ function schedulePtyFlush(id: string, session: PtySession) {
     if (session.pending.length === 0) return;
     const data = session.pending;
     session.pending = "";
-    mainWindow?.webContents.send("pty:data", id, data);
+    sendToMainWindow("pty:data", id, data);
   }, FLUSH_INTERVAL_MS);
 }
 
@@ -339,7 +346,7 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   proc.onExit(({ exitCode, signal }) => {
     flushPending(id, session);
     ptySessions.delete(id);
-    mainWindow?.webContents.send("pty:exit", id, { exitCode, signal });
+    sendToMainWindow("pty:exit", id, { exitCode, signal });
   });
 
   ptySessions.set(id, session);
@@ -366,7 +373,7 @@ function killAllPtys() {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1440,
     height: 980,
     minWidth: 640,
@@ -383,19 +390,25 @@ function createWindow() {
     }
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
+  mainWindow = window;
+
+  window.once("ready-to-show", () => {
+    if (!window.isDestroyed()) window.show();
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
+  });
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
   });
 
   if (isDev) {
-    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL as string);
+    void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
   } else {
-    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void window.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 }
 
@@ -533,7 +546,7 @@ let latestUpdateStatus: UpdateStatus = { state: "idle" };
 
 function publishUpdateStatus(status: UpdateStatus) {
   latestUpdateStatus = status;
-  mainWindow?.webContents.send("update:status", status);
+  sendToMainWindow("update:status", status);
 }
 
 function setupAutoUpdater() {
