@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -176,14 +177,49 @@ const ptySessions = new Map<string, PtySession>();
 const MAX_BUFFER_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
 
-function defaultShell() {
-  if (process.platform === "win32") return process.env.ComSpec ?? "cmd.exe";
-  return process.env.SHELL ?? (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
+type ShellCandidate = {
+  command: string;
+  args: string[];
+};
+
+function defaultShellArgs(command: string): string[] {
+  if (process.platform === "win32") return [];
+  const basename = path.basename(command).toLowerCase();
+  if (basename === "sh") return ["-i"];
+  return ["-il"];
 }
 
-function defaultShellArgs(): string[] {
-  if (process.platform === "win32") return [];
-  return ["-il"];
+function isExecutable(command: string): boolean {
+  if (command.length === 0) return false;
+  if (process.platform === "win32") return true;
+  try {
+    accessSync(command, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function shellCandidates(): ShellCandidate[] {
+  const commands =
+    process.platform === "win32"
+      ? [process.env.ComSpec, "cmd.exe"]
+      : [
+          process.env.SHELL,
+          process.platform === "darwin" ? "/bin/zsh" : "/bin/bash",
+          "/bin/bash",
+          "/bin/sh"
+        ];
+  const seen = new Set<string>();
+  const candidates: ShellCandidate[] = [];
+
+  for (const command of commands) {
+    if (!command || seen.has(command) || !isExecutable(command)) continue;
+    seen.add(command);
+    candidates.push({ command, args: defaultShellArgs(command) });
+  }
+
+  return candidates;
 }
 
 function defaultCwd() {
@@ -314,13 +350,30 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   env.COLORTERM = "truecolor";
   env.TERM_PROGRAM = "agent-crm";
 
-  const proc = nodePty.spawn(defaultShell(), defaultShellArgs(), {
-    name: "xterm-256color",
-    cols: Math.max(2, cols),
-    rows: Math.max(1, rows),
-    cwd: cwd && cwd.length > 0 ? cwd : defaultCwd(),
-    env
-  });
+  const candidates = shellCandidates();
+  const attempts: string[] = [];
+  let proc: IPty | null = null;
+
+  for (const candidate of candidates) {
+    try {
+      proc = nodePty.spawn(candidate.command, candidate.args, {
+        name: "xterm-256color",
+        cols: Math.max(2, cols),
+        rows: Math.max(1, rows),
+        cwd: cwd && cwd.length > 0 ? cwd : defaultCwd(),
+        env
+      });
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      attempts.push(`${candidate.command}: ${message}`);
+    }
+  }
+
+  if (!proc) {
+    const detail = attempts.length > 0 ? ` Attempts: ${attempts.join(" | ")}` : "";
+    throw new Error(`Could not start an interactive shell.${detail}`);
+  }
 
   const session: PtySession = {
     proc,
