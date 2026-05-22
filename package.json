@@ -38,6 +38,7 @@
       "dist/electron/sdk-service.js",
       "**/node_modules/@agent-crm/**/*",
       "**/node_modules/@lix-js/**/*",
+      "**/node_modules/libphonenumber-js/**/*",
       "**/node_modules/better-sqlite3/**/*",
       "**/node_modules/bindings/**/*",
       "**/node_modules/file-uri-to-path/**/*"
