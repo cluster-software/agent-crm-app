@@ -1,5 +1,6 @@
 import {
   Building2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Database,
@@ -837,7 +838,7 @@ function RecordsView({
     setPageIndex((index) => index + 1);
   }
 
-  if (!loadingRecords && totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
+  if (totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
     return <RecordsEmptyState slug={object.object_slug} />;
   }
 
@@ -1249,7 +1250,7 @@ function useRecordColumns(
                 />
               );
             },
-            meta: { width: column.isSignal ? "minmax(150px, 190px)" : "minmax(140px, 210px)" }
+            meta: { width: column.isSignal ? "minmax(150px, max-content)" : "minmax(140px, max-content)" }
           }
         )
       )
@@ -1302,6 +1303,16 @@ function RecordsTable({
     setOpenSignalCell(null);
     setSignalPopoverTabs({});
   }, [object.object_slug]);
+
+  useEffect(() => {
+    if (!openSignalCell) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setOpenSignalCell(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openSignalCell]);
 
   const table = useReactTable({
     data: records,
@@ -1577,6 +1588,19 @@ function SignalValueCell({
     >
       <span className="signal-value">
         <span>{shortSignalDisplay(value.display)}</span>
+        <button
+          type="button"
+          className="signal-value__trigger"
+          title="Show provenance"
+          aria-label={`Show provenance for ${value.title}`}
+          aria-expanded={open}
+          onClick={(event) => {
+            event.stopPropagation();
+            openPopover();
+          }}
+        >
+          <ChevronDown size={12} className="lucide" />
+        </button>
       </span>
       <span
         className="signal-popover"

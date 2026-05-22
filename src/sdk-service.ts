@@ -421,6 +421,7 @@ async function listRecordsForObject(
         LIMIT ${fetchLimit}
      )
      SELECT s.object_slug, s.record_id, v.attribute_slug, v.value_json,
+            v.source, v.provenance_json,
             a.title, a.attribute_type, v.active_from
        FROM selected s
        LEFT JOIN acrm_value v
@@ -439,6 +440,8 @@ async function listRecordsForObject(
     record_id: string;
     attribute_slug?: string | null;
     value_json?: unknown;
+    source?: unknown;
+    provenance_json?: unknown;
     title?: string | null;
     attribute_type?: string | null;
   }>;
