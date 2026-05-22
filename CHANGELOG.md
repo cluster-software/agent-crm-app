@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.4-295b305...v0.8.0-295b305) (2026-05-22)
+
+
+### Features
+
+* **signal ui:** trigger release ([d5e091f](https://github.com/cluster-software/agent-crm-app/commit/d5e091f6e4ebb7fb92e8b71ec2c1d0dcffef74df))
+* **signal ui:** trigger release ([ccb0246](https://github.com/cluster-software/agent-crm-app/commit/ccb02466d388fb4aa93035d4095ff34a96a2daf4))
+
 ## [0.7.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.3-295b305...v0.7.4-295b305) (2026-05-21)
 
 
