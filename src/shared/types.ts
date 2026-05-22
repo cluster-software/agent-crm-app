@@ -30,6 +30,8 @@ export type RecordValue = {
   display: string;
   raw: unknown;
   values: unknown[];
+  source?: string | null;
+  provenance?: Record<string, unknown> | null;
 };
 
 export type RecordPreview = {
@@ -76,6 +78,7 @@ export type ImportCsvResult = {
   };
   warnings: string[];
   pending_at_final_flush: number;
+  touched_records?: Array<{ object_slug: "people" | "companies"; record_id: string }>;
 };
 
 export type ParticipantInput = {
@@ -131,6 +134,85 @@ export type CreateRecordResult = {
   values_inserted: number;
 };
 
+export type SignalOutputDefinition = {
+  key: string;
+  attribute: string;
+  title: string;
+  type: string;
+  options?: Array<{ id: string; title: string }>;
+};
+
+export type SignalDefinitionSummary = {
+  slug: string;
+  title: string;
+  object_slug: "people" | "companies";
+  outputs: SignalOutputDefinition[];
+};
+
+export type SignalSyncResult = {
+  definitions: number;
+  attributes_created: number;
+  attributes_updated: number;
+};
+
+export type SignalRunRequest = {
+  mode?: "missing" | "force";
+  signalSlugs?: string[];
+  object_slug?: "people" | "companies";
+  record_ids?: string[];
+  limit?: number;
+  concurrency?: number;
+};
+
+export type SignalRunJob = {
+  id: string;
+  object_slug?: "people" | "companies";
+  record_ids: string[];
+  signalSlugs: string[];
+  log_path: string;
+  started_at: string;
+};
+
+export type SignalRunStartResult = {
+  started: true;
+  job: SignalRunJob;
+};
+
+export type SignalRunResult = {
+  definitions: number;
+  records_considered: number;
+  runs_attempted: number;
+  runs_succeeded: number;
+  runs_failed: number;
+  values_written: number;
+  skipped: number;
+  failures: Array<{
+    object_slug: "people" | "companies";
+    record_id: string;
+    signal_slug: string;
+    message: string;
+    stdout_excerpt?: string;
+    stderr_excerpt?: string;
+  }>;
+  statuses: Array<{
+    object_slug: "people" | "companies";
+    record_id: string;
+    signal_slug: string;
+    status: "succeeded" | "failed" | "skipped";
+    values_written?: number;
+  }>;
+};
+
+export type SignalRunFailureSummary = {
+  object_slug: "people" | "companies";
+  record_id: string;
+  signal_slug: string;
+  message: string;
+  stdout_excerpt?: string;
+  stderr_excerpt?: string;
+  log_path: string;
+};
+
 export type TerminalExit = { exitCode: number; signal?: number };
 
 export type TerminalBridge = {
@@ -162,6 +244,11 @@ export type AppBridge = {
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;
   runQuery: (sql: string, params?: unknown[]) => Promise<QueryResult>;
+  listSignals: () => Promise<SignalDefinitionSummary[]>;
+  listSignalFailures: () => Promise<SignalRunFailureSummary[]>;
+  listSignalRuns: () => Promise<SignalRunJob[]>;
+  syncSignals: () => Promise<SignalSyncResult>;
+  runSignals: (request?: SignalRunRequest) => Promise<SignalRunStartResult>;
   onWorkspaceChanged: (handler: () => void) => () => void;
   onUpdateStatus: (handler: (status: UpdateStatus) => void) => () => void;
   installUpdate: () => Promise<void>;

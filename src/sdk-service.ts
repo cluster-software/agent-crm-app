@@ -1,14 +1,20 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline";
 import {
   Workspace,
   createRecord,
-  createWorkspace,
   dumpSchema,
+  ensureSignalAttributes,
+  finishSignalJob,
   importCsv,
   importTranscript,
-  query
+  listRunningSignalJobs,
+  loadSignalDefinitions,
+  query,
+  runSignals,
+  writeSignalJobState
 } from "@agent-crm/sdk";
 import type {
   CreateRecordPayload,
@@ -19,12 +25,16 @@ import type {
   RecordPreview,
   RecordValue,
   SchemaObject,
+  SignalRunFailureSummary,
+  SignalRunJob,
+  SignalRunRequest,
   TranscriptPayload,
   WorkspaceSummary
 } from "./shared/types.js";
 
 let workspace: Workspace | null = null;
 let workspacePath: string | null = null;
+let signalJobQueue = Promise.resolve();
 let schemaObjectsCache: SchemaObject[] | null = null;
 
 const DEFAULT_RECORD_LIMIT = 100;
@@ -68,8 +78,7 @@ async function createWorkspaceAt(filePath: string) {
   await closeWorkspaceHandle();
   const absolutePath = normalizePath(filePath);
   schemaObjectsCache = null;
-  const created = await createWorkspace(absolutePath);
-  workspace = created.workspace;
+  workspace = await Workspace.create(absolutePath);
   workspacePath = absolutePath;
   return getWorkspaceSummary();
 }
@@ -97,6 +106,256 @@ async function getWorkspaceSummary(): Promise<WorkspaceSummary> {
     activeValues,
     recent
   };
+}
+
+function getSignalsDir(): string {
+  if (!workspacePath) {
+    throw new Error("No .acrm workspace is open.");
+  }
+  return path.join(path.dirname(workspacePath), "signals");
+}
+
+async function listSignalDefinitions() {
+  const definitions = await loadSignalDefinitions(getSignalsDir());
+  return definitions.map((definition) => ({
+    slug: definition.slug,
+    title: definition.title,
+    object_slug: definition.object_slug,
+    outputs: definition.outputs
+  }));
+}
+
+async function listSignalFailures(): Promise<SignalRunFailureSummary[]> {
+  if (!workspacePath) return [];
+  const dir = getSignalsCacheDir();
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const latest = new Map<string, { time: number; failure: SignalRunFailureSummary | null }>();
+  for (const name of entries) {
+    if (!name.endsWith(".log")) continue;
+    const logPath = path.join(dir, name);
+    const stat = await fs.stat(logPath).catch(() => null);
+    const time = stat?.mtimeMs ?? 0;
+    const text = await fs.readFile(logPath, "utf8").catch(() => "");
+    const parsed = parseLastJsonLine(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const root = parsed as Record<string, unknown>;
+    if (root.ok !== true) continue;
+    const data = root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? root.data as Record<string, unknown>
+      : null;
+    if (!data) continue;
+    const failures = failureMap(data.failures, logPath);
+    const statuses = Array.isArray(data.statuses) ? data.statuses : [];
+    if (statuses.length > 0) {
+      for (const status of statuses) {
+        const item = parseSignalStatus(status);
+        if (!item) continue;
+        const key = signalFailureKey(item);
+        const current = latest.get(key);
+        if (current && current.time > time) continue;
+        latest.set(key, {
+          time,
+          failure: item.status === "failed" ? failures.get(key) ?? null : null
+        });
+      }
+      continue;
+    }
+    for (const [key, failure] of failures) {
+      const current = latest.get(key);
+      if (current && current.time > time) continue;
+      latest.set(key, { time, failure });
+    }
+  }
+  return Array.from(latest.values()).flatMap((entry) => entry.failure ? [entry.failure] : []);
+}
+
+function failureMap(raw: unknown, logPath: string): Map<string, SignalRunFailureSummary> {
+  const out = new Map<string, SignalRunFailureSummary>();
+  if (!Array.isArray(raw)) return out;
+  for (const failure of raw) {
+    if (!failure || typeof failure !== "object" || Array.isArray(failure)) continue;
+    const item = failure as Record<string, unknown>;
+    if (
+      (item.object_slug === "people" || item.object_slug === "companies") &&
+      typeof item.record_id === "string" &&
+      typeof item.signal_slug === "string" &&
+      typeof item.message === "string"
+    ) {
+      const parsed: SignalRunFailureSummary = {
+        object_slug: item.object_slug,
+        record_id: item.record_id,
+        signal_slug: item.signal_slug,
+        message: item.message,
+        ...(typeof item.stdout_excerpt === "string" ? { stdout_excerpt: item.stdout_excerpt } : {}),
+        ...(typeof item.stderr_excerpt === "string" ? { stderr_excerpt: item.stderr_excerpt } : {}),
+        log_path: logPath
+      };
+      out.set(signalFailureKey(parsed), parsed);
+    }
+  }
+  return out;
+}
+
+function parseSignalStatus(raw: unknown): {
+  object_slug: "people" | "companies";
+  record_id: string;
+  signal_slug: string;
+  status: "succeeded" | "failed" | "skipped";
+} | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const item = raw as Record<string, unknown>;
+  if (
+    (item.object_slug === "people" || item.object_slug === "companies") &&
+    typeof item.record_id === "string" &&
+    typeof item.signal_slug === "string" &&
+    (item.status === "succeeded" || item.status === "failed" || item.status === "skipped")
+  ) {
+    return {
+      object_slug: item.object_slug,
+      record_id: item.record_id,
+      signal_slug: item.signal_slug,
+      status: item.status
+    };
+  }
+  return null;
+}
+
+function signalFailureKey(item: { object_slug: string; record_id: string; signal_slug: string }): string {
+  return `${item.object_slug}:${item.record_id}:${item.signal_slug}`;
+}
+
+function parseLastJsonLine(text: string): unknown {
+  const lines = text.split(/\r?\n/).reverse();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+async function syncSignalDefinitions() {
+  const current = assertWorkspace();
+  const definitions = await loadSignalDefinitions(getSignalsDir());
+  const result = await ensureSignalAttributes(current, definitions);
+  return {
+    definitions: result.definitions,
+    attributes_created: result.attributes_created,
+    attributes_updated: result.attributes_updated
+  };
+}
+
+function getSignalsCacheDir(): string {
+  if (!workspacePath) {
+    throw new Error("No .acrm workspace is open.");
+  }
+  return path.join(path.dirname(workspacePath), ".cache", "signals");
+}
+
+async function createSignalRunLogPath(): Promise<string> {
+  const dir = getSignalsCacheDir();
+  await fs.mkdir(dir, { recursive: true });
+  return path.join(dir, `ui-signals-${Date.now()}.log`);
+}
+
+async function writeSignalRunResultLog(
+  logPath: string,
+  result: Awaited<ReturnType<typeof runSignals>>,
+): Promise<void> {
+  await fs.appendFile(logPath, `${JSON.stringify({ ok: true, data: result })}\n`, "utf8");
+}
+
+async function runWorkspaceSignals(request: SignalRunRequest = {}) {
+  if (!workspacePath) {
+    throw new Error("No .acrm workspace is open.");
+  }
+  const workspaceFile = workspacePath;
+  const jobId = `ui-signals-${Date.now()}`;
+  const logPath = await createSignalRunLogPath();
+  const job: SignalRunJob = {
+    id: jobId,
+    ...(request.object_slug ? { object_slug: request.object_slug } : {}),
+    record_ids: request.record_ids ?? [],
+    signalSlugs: request.signalSlugs ?? [],
+    log_path: logPath,
+    started_at: new Date().toISOString()
+  };
+  await writeSignalJobState(workspaceFile, {
+    ...job,
+    status: "running",
+    source: "app",
+    updated_at: job.started_at,
+    pid: process.pid
+  });
+  signalJobQueue = signalJobQueue
+    .catch(() => undefined)
+    .then(() => runWorkspaceSignalJob(job.id, workspaceFile, request, logPath));
+  return { started: true, job };
+}
+
+async function listSignalRuns(): Promise<SignalRunJob[]> {
+  if (!workspacePath) return [];
+  const jobs = await listRunningSignalJobs(workspacePath);
+  return jobs.map((job) => ({
+    id: job.id,
+    ...(job.object_slug ? { object_slug: job.object_slug } : {}),
+    record_ids: job.record_ids,
+    signalSlugs: job.signalSlugs,
+    log_path: job.log_path,
+    started_at: job.started_at
+  }));
+}
+
+async function runWorkspaceSignalJob(
+  jobId: string,
+  workspaceFile: string,
+  request: SignalRunRequest,
+  logPath: string,
+): Promise<void> {
+  const previousLogPath = process.env.ACRM_SIGNAL_LOG_PATH;
+  process.env.ACRM_SIGNAL_LOG_PATH = logPath;
+  try {
+    if (!workspace || workspacePath !== workspaceFile) {
+      throw new Error("Signal run workspace is no longer open.");
+    }
+    const result = await runSignals(workspace, {
+      signalsDir: path.join(path.dirname(workspaceFile), "signals"),
+      mode: request.mode,
+      signalSlugs: request.signalSlugs,
+      object_slug: request.object_slug,
+      record_ids: request.record_ids,
+      limit: request.limit,
+      concurrency: request.concurrency
+    });
+    await writeSignalRunResultLog(logPath, result);
+    await finishSignalJob(
+      workspaceFile,
+      jobId,
+      result.runs_failed > 0 ? "failed" : "succeeded"
+    );
+  } catch (error) {
+    await fs.appendFile(logPath, `${JSON.stringify({ ok: false, error: serializeError(error) })}\n`, "utf8")
+      .catch(() => undefined);
+    await finishSignalJob(
+      workspaceFile,
+      jobId,
+      "failed",
+      error instanceof Error ? error.message : String(error)
+    ).catch(() => undefined);
+  } finally {
+    if (previousLogPath === undefined) delete process.env.ACRM_SIGNAL_LOG_PATH;
+    else process.env.ACRM_SIGNAL_LOG_PATH = previousLogPath;
+  }
 }
 
 async function countRecords(current: Workspace): Promise<Record<string, number>> {
@@ -277,6 +536,7 @@ async function inflateRecords(
   const values = await query(
     current,
     `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json,
+            v.source, v.provenance_json,
             a.title, a.attribute_type
        FROM acrm_value v
        JOIN acrm_attribute a
@@ -301,6 +561,8 @@ async function inflateRecords(
       record_id: unknown;
       attribute_slug?: unknown;
       value_json?: unknown;
+      source?: unknown;
+      provenance_json?: unknown;
       title?: unknown;
       attribute_type?: unknown;
     }>
@@ -316,6 +578,8 @@ async function inflateRecordValueRows(
     record_id: unknown;
     attribute_slug?: unknown;
     value_json?: unknown;
+    source?: unknown;
+    provenance_json?: unknown;
     title?: unknown;
     attribute_type?: unknown;
   }>
@@ -333,7 +597,9 @@ async function inflateRecordValueRows(
       type: String(row.attribute_type),
       display: displayValue(parsed),
       raw: parsed,
-      values: [parsed]
+      values: [parsed],
+      source: typeof row.source === "string" ? row.source : null,
+      provenance: parseObject(row.provenance_json)
     };
     const list = grouped.get(key) ?? [];
     const existing = list.find((item) => item.attribute_slug === value.attribute_slug);
@@ -392,6 +658,14 @@ function parseValue(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+function parseObject(value: unknown): Record<string, unknown> | null {
+  const parsed = parseValue(value);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
+  }
+  return null;
 }
 
 function displayValue(value: unknown): string {
@@ -553,6 +827,16 @@ async function dispatch(method: string, params: unknown[] = []) {
       return importTranscript(assertWorkspace(), params[0] as TranscriptPayload);
     case "runQuery":
       return query(assertWorkspace(), String(params[0]), (params[1] ?? []) as never[]) satisfies Promise<QueryResult>;
+    case "listSignals":
+      return listSignalDefinitions();
+    case "listSignalFailures":
+      return listSignalFailures();
+    case "listSignalRuns":
+      return listSignalRuns();
+    case "syncSignals":
+      return syncSignalDefinitions();
+    case "runSignals":
+      return runWorkspaceSignals((params[0] ?? {}) as SignalRunRequest);
     default:
       throw new Error(`Unknown SDK service method: ${method}`);
   }

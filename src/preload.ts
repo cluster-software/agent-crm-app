@@ -3,6 +3,7 @@ import type {
   AppBridge,
   CreateRecordPayload,
   ImportCsvPayload,
+  SignalRunRequest,
   TranscriptPayload,
   UpdateStatus
 } from "./shared/types.js";
@@ -39,6 +40,11 @@ const bridge: AppBridge = {
   importTranscript: (payload: TranscriptPayload) => invoke("import:transcript", payload),
   createRecord: (payload: CreateRecordPayload) => invoke("records:create", payload),
   runQuery: (sql: string, params?: unknown[]) => invoke("query:run", sql, params),
+  listSignals: () => invoke("signals:list"),
+  listSignalFailures: () => invoke("signals:failures"),
+  listSignalRuns: () => invoke("signals:runs"),
+  syncSignals: () => invoke("signals:sync"),
+  runSignals: (request?: SignalRunRequest) => invoke("signals:run", request),
   onWorkspaceChanged: (handler: () => void) => {
     const listener = () => handler();
     ipcRenderer.on("workspace:changed", listener);
