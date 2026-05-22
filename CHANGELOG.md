@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.1-295b305...v0.8.2-295b305) (2026-05-22)
+
+
+### Bug Fixes
+
+* polish signal table popovers ([e03a5da](https://github.com/cluster-software/agent-crm-app/commit/e03a5daefba5b55e1b82f0643c4c95ef28b71566))
+* polish signal table popovers ([857d0b6](https://github.com/cluster-software/agent-crm-app/commit/857d0b64351e56e5ce59235fd1a5bbac0157696e))
+
 ## [0.8.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.0-295b305...v0.8.1-295b305) (2026-05-22)
 
 
