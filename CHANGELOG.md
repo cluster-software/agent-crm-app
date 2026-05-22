@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.0-295b305...v0.8.1-295b305) (2026-05-22)
+
+
+### Bug Fixes
+
+* unpack SDK phone dependency ([9effd52](https://github.com/cluster-software/agent-crm-app/commit/9effd52c01d50217fb7488e176ec8dfdf15d397f))
+* unpack SDK phone dependency ([19dbd52](https://github.com/cluster-software/agent-crm-app/commit/19dbd52e7e127cd3b425c1b869ffb9b96f513c57))
+
 ## [0.8.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.7.4-295b305...v0.8.0-295b305) (2026-05-22)
 
 
