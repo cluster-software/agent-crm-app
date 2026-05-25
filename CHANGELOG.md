@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.9.0-295b305...v0.10.0-295b305) (2026-05-25)
+
+
+### Features
+
+* import hosted gmail sync locally ([ac11eb0](https://github.com/cluster-software/agent-crm-app/commit/ac11eb07106fdb83f62f3f49befc0d41ead060ac))
+* import hosted Gmail sync locally ([1d02428](https://github.com/cluster-software/agent-crm-app/commit/1d02428a56a83475e7d8954a0a844e893dc874f0))
+
 ## [0.9.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.4-295b305...v0.9.0-295b305) (2026-05-25)
 
 
