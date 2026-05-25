@@ -1,5 +1,6 @@
 import {
   Building2,
+  CircleAlert,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -41,6 +42,7 @@ import {
 import { api } from "./api";
 import type {
   CloudIntegrationsStatus,
+  CloudSyncStatus,
   IntegrationAccountSummary,
   IntegrationProviderStatus,
   RecordPreview,
@@ -114,10 +116,15 @@ export function App() {
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
   const previousWorkspacePathRef = useRef<string | null>(null);
 
   useEffect(() => {
     return api.onUpdateStatus(setUpdateStatus);
+  }, []);
+
+  useEffect(() => {
+    return api.onCloudSyncStatus(setCloudSyncStatus);
   }, []);
 
   useEffect(() => {
@@ -442,6 +449,7 @@ export function App() {
                 object={selectedObject}
                 dataVersion={dataVersion}
                 totalRecords={workspace.counts[selectedObject.object_slug] ?? 0}
+                cloudSyncStatus={cloudSyncStatus}
                 onRowClick={setDetailRecord}
                 setError={setError}
               />
@@ -964,12 +972,14 @@ function RecordsView({
   object,
   dataVersion,
   totalRecords,
+  cloudSyncStatus,
   onRowClick,
   setError
 }: {
   object: SchemaObject;
   dataVersion: number;
   totalRecords: number;
+  cloudSyncStatus: CloudSyncStatus;
   onRowClick?: (record: RecordPreview) => void;
   setError: (error: string | null) => void;
 }) {
@@ -1107,7 +1117,12 @@ function RecordsView({
   }
 
   if (totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
-    return <RecordsEmptyState slug={object.object_slug} />;
+    return (
+      <RecordsEmptyState
+        slug={object.object_slug}
+        syncStatus={!loadingRecords ? cloudSyncStatus : null}
+      />
+    );
   }
 
   const pageStart = records.length === 0 ? 0 : pageIndex * pageSize + 1;
@@ -1175,7 +1190,7 @@ type RecordsEmptyConfig = {
   comment: string;
 };
 
-const ACRM_ONBOARDING_PROMPT = "Onboard me into Agent CRM for this workspace.";
+const ACRM_ONBOARDING_PROMPT = "Onboard me into Agent CRM for this workspace";
 
 const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
   companies: {
@@ -1184,7 +1199,7 @@ const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
     markShape: "square",
     title: "Companies",
     body: "The accounts in your world — design partners, customers, prospects.",
-    comment: "run the onboarding skill — Claude will ask a few questions, then pull in your companies"
+    comment: "Paste this into Claude Code to kickoff onboarding"
   },
   people: {
     marks: ["a", "b", "c"],
@@ -1192,7 +1207,7 @@ const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
     markShape: "circle",
     title: "People",
     body: "The humans behind the accounts — champions, decision makers, the person who replied last Tuesday.",
-    comment: "run the onboarding skill — Claude will ask a few questions, then pull in your people"
+    comment: "Paste this into Claude Code to kickoff onboarding"
   },
   deals: {
     marks: ["$", "$", "$"],
@@ -1200,11 +1215,17 @@ const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
     markShape: "square",
     title: "Deals",
     body: "The pipeline you're working — eval, trial, expansion, anything you call a stage.",
-    comment: "run the onboarding skill — Claude will ask a few questions, then draft your pipeline"
+    comment: "Paste this into Claude Code to kickoff onboarding"
   }
 };
 
-function RecordsEmptyState({ slug }: { slug: string }) {
+function RecordsEmptyState({
+  slug,
+  syncStatus
+}: {
+  slug: string;
+  syncStatus: CloudSyncStatus | null;
+}) {
   const config = RECORDS_EMPTY_STATES[slug];
   if (!config) return null;
   return (
@@ -1220,9 +1241,44 @@ function RecordsEmptyState({ slug }: { slug: string }) {
         <div className="records-empty__cli">
           <CliBlock comment={config.comment} command={ACRM_ONBOARDING_PROMPT} />
         </div>
+        <RecordsEmptySyncStatus status={syncStatus} />
       </div>
     </div>
   );
+}
+
+function RecordsEmptySyncStatus({ status }: { status: CloudSyncStatus | null }) {
+  const statusText = cloudSyncStatusText(status);
+  if (!statusText) return null;
+  const isError = status?.state === "error";
+  return (
+    <div
+      className={`records-empty__sync${isError ? " records-empty__sync--error" : ""}`}
+      role={isError ? "alert" : "status"}
+      aria-live="polite"
+    >
+      {isError ? (
+        <CircleAlert size={13} className="lucide" />
+      ) : (
+        <Loader2 size={13} className="lucide spin" />
+      )}
+      <span>{statusText}</span>
+    </div>
+  );
+}
+
+function cloudSyncStatusText(status: CloudSyncStatus | null): string | null {
+  if (!status) return null;
+  if (status.state === "checking") return "Checking Gmail sync";
+  if (status.state === "error") return status.message || "Gmail sync failed";
+  if (status.state !== "syncing") return null;
+  const providers = status.providers ?? [];
+  const hasGmail = providers.includes("gmail");
+  const hasLinkedIn = providers.includes("linkedin");
+  if (hasGmail && hasLinkedIn) return "Syncing Gmail and LinkedIn";
+  if (hasGmail) return "Syncing Gmail";
+  if (hasLinkedIn) return "Syncing LinkedIn";
+  return "Syncing integrations";
 }
 
 function SchemaTablePreview({

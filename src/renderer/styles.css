@@ -1526,6 +1526,26 @@ body.resizing-terminal * { cursor: col-resize !important; }
   margin-top: 28px;
   width: 100%;
 }
+.records-empty__sync {
+  margin-top: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.records-empty__sync svg {
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+.records-empty__sync--error {
+  color: var(--danger);
+}
+.records-empty__sync--error svg {
+  color: currentColor;
+}
 
 .schema-table {
   width: 280px;
