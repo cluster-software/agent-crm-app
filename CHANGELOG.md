@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.13.1-295b305...v0.13.2-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* hide Gmail sync check spinner ([7c889a5](https://github.com/cluster-software/agent-crm-app/commit/7c889a564dd8acb2c44f9be9ac30666295fd90a8))
+* hide Gmail sync check spinner ([2db0481](https://github.com/cluster-software/agent-crm-app/commit/2db048168dc77efb33ebe35c4b12d1b9b611b98a))
+
 ## [0.13.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.13.0-295b305...v0.13.1-295b305) (2026-05-25)
 
 
