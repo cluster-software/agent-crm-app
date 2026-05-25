@@ -47,6 +47,7 @@ const bridge: AppBridge = {
   runSignals: (request?: SignalRunRequest) => invoke("signals:run", request),
   getCloudSyncStatus: () => invoke("cloud-sync:get-status"),
   triggerCloudSync: () => invoke("cloud-sync:trigger"),
+  getCloudIntegrations: () => invoke("cloud-integrations:get"),
   onWorkspaceChanged: (handler: () => void) => {
     const listener = () => handler();
     ipcRenderer.on("workspace:changed", listener);

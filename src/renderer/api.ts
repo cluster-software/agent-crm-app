@@ -1,5 +1,6 @@
 import type {
   AppBridge,
+  CloudIntegrationsStatus,
   CreateRecordPayload,
   ImportCsvPayload,
   RecordListOptions,
@@ -392,6 +393,14 @@ const browserPreview: AppBridge = {
   }),
   getCloudSyncStatus: async () => ({ state: "disconnected" }),
   triggerCloudSync: async () => ({ state: "disconnected" }),
+  getCloudIntegrations: async (): Promise<CloudIntegrationsStatus> => ({
+    state: "ready",
+    workspaceId: "preview",
+    integrations: {
+      gmail: { connected: false },
+      linkedin: { connected: false }
+    }
+  }),
   onWorkspaceChanged: () => () => undefined,
   onCloudSyncStatus: () => () => undefined,
   onUpdateStatus: () => () => undefined,

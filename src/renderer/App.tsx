@@ -41,6 +41,9 @@ import {
 } from "@tanstack/react-table";
 import { api } from "./api";
 import type {
+  CloudIntegrationsStatus,
+  IntegrationAccountSummary,
+  IntegrationProviderStatus,
   RecordPreview,
   RecordValue,
   SchemaObject,
@@ -66,6 +69,7 @@ const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
 type PersonTab = "overview" | "transcripts" | "posts";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
+type SettingsTab = "signals" | "integrations";
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -629,7 +633,9 @@ function SettingsView({
   dataVersion: number;
   setError: (error: string | null) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>("signals");
   const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
+  const [integrations, setIntegrations] = useState<CloudIntegrationsStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -649,6 +655,27 @@ function SettingsView({
     };
   }, [dataVersion, setError]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setIntegrations(null);
+    api.getCloudIntegrations()
+      .then((status) => {
+        if (!cancelled) setIntegrations(status);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setIntegrations({ state: "error", message: statusFromError(err) });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataVersion]);
+
+  const connectedIntegrations = integrations?.state === "ready"
+    ? Object.values(integrations.integrations).filter((integration) => integration.connected).length
+    : 0;
+
   return (
     <div className="detail settings-view">
       <header className="detail__header">
@@ -656,59 +683,202 @@ function SettingsView({
       </header>
 
       <nav className="detail__tabs tabs">
-        <button type="button" className="tab" aria-current="true">
+        <button
+          type="button"
+          className="tab"
+          aria-current={activeTab === "signals" ? "true" : undefined}
+          onClick={() => setActiveTab("signals")}
+        >
           Signals
           {signals && <span className="tab__count">{signals.length}</span>}
         </button>
+        <button
+          type="button"
+          className="tab"
+          aria-current={activeTab === "integrations" ? "true" : undefined}
+          onClick={() => setActiveTab("integrations")}
+        >
+          Integrations
+          {integrations?.state === "ready" && connectedIntegrations > 0 && (
+            <span className="tab__count">{connectedIntegrations}</span>
+          )}
+        </button>
       </nav>
 
-      <section className="settings-panel">
-        <p className="settings-panel__description">
-          Signals are configured in the <code>/signals</code> directory of your workspace. They automatically fill in data about a company or person using a background web search with Claude. Use the <code>/create-signals</code> signals skill to create one or learn more.
-        </p>
-        {signals === null ? (
-          <div className="empty-inline">
-            <Loader2 size={14} className="lucide spin" />
-            <span>loading signals</span>
-          </div>
-        ) : signals.length === 0 ? (
-          <div className="empty-inline">
-            <span>no signal definitions in signals/</span>
-          </div>
-        ) : (
-          <div className="settings-signals">
-            {signals.map((signal) => (
-              <article className="settings-signal" key={signal.slug}>
-                <header className="settings-signal__header">
-                  <div className="settings-signal__title">
-                    <MonoLabel>{signal.object_slug}</MonoLabel>
-                    <h2>{signal.title}</h2>
-                  </div>
-                  <Badge>{signal.outputs.length} fields</Badge>
-                </header>
-                <div className="settings-signal__outputs">
-                  {signal.outputs.map((output) => (
-                    <div className="settings-signal__output" key={output.key}>
-                      <div className="settings-signal__output-main">
-                        <span>{output.title}</span>
-                        <span className="settings-signal__attribute mono">{output.attribute}</span>
-                      </div>
-                      <span className="settings-signal__type">{output.type}</span>
-                      {output.options && output.options.length > 0 && (
-                        <span className="settings-signal__options">
-                          {output.options.map((option) => option.title).join(", ")}
-                        </span>
-                      )}
+      {activeTab === "signals" ? (
+        <section className="settings-panel">
+          <p className="settings-panel__description">
+            Signals are configured in the <code>/signals</code> directory of your workspace. They automatically fill in data about a company or person using a background web search with Claude. Use the <code>/create-signals</code> signals skill to create one or learn more.
+          </p>
+          {signals === null ? (
+            <div className="empty-inline">
+              <Loader2 size={14} className="lucide spin" />
+              <span>loading signals</span>
+            </div>
+          ) : signals.length === 0 ? (
+            <div className="empty-inline">
+              <span>no signal definitions in signals/</span>
+            </div>
+          ) : (
+            <div className="settings-signals">
+              {signals.map((signal) => (
+                <article className="settings-signal" key={signal.slug}>
+                  <header className="settings-signal__header">
+                    <div className="settings-signal__title">
+                      <MonoLabel>{signal.object_slug}</MonoLabel>
+                      <h2>{signal.title}</h2>
                     </div>
-                  ))}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+                    <Badge>{signal.outputs.length} fields</Badge>
+                  </header>
+                  <div className="settings-signal__outputs">
+                    {signal.outputs.map((output) => (
+                      <div className="settings-signal__output" key={output.key}>
+                        <div className="settings-signal__output-main">
+                          <span>{output.title}</span>
+                          <span className="settings-signal__attribute mono">{output.attribute}</span>
+                        </div>
+                        <span className="settings-signal__type">{output.type}</span>
+                        {output.options && output.options.length > 0 && (
+                          <span className="settings-signal__options">
+                            {output.options.map((option) => option.title).join(", ")}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : (
+        <IntegrationsSettingsPanel integrations={integrations} />
+      )}
     </div>
   );
+}
+
+function IntegrationsSettingsPanel({
+  integrations
+}: {
+  integrations: CloudIntegrationsStatus | null;
+}) {
+  if (integrations === null) {
+    return (
+      <section className="settings-panel">
+        <div className="empty-inline">
+          <Loader2 size={14} className="lucide spin" />
+          <span>loading integrations</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (integrations.state === "no_workspace") {
+    return (
+      <section className="settings-panel">
+        <div className="empty-inline">
+          <span>open a workspace to view integrations</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (integrations.state === "error") {
+    return (
+      <section className="settings-panel">
+        <div className="empty-inline">
+          <span>{integrations.message}</span>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="settings-panel">
+      <div className="settings-integrations">
+        <IntegrationProviderRow
+          title="Gmail"
+          Icon={Mail}
+          status={integrations.integrations.gmail}
+        />
+        <IntegrationProviderRow
+          title="LinkedIn"
+          Icon={LinkedInIcon}
+          status={integrations.integrations.linkedin}
+        />
+      </div>
+    </section>
+  );
+}
+
+function IntegrationProviderRow({
+  title,
+  Icon,
+  status
+}: {
+  title: string;
+  Icon: ComponentType<{ size?: number; className?: string }>;
+  status: IntegrationProviderStatus;
+}) {
+  const accounts = integrationAccounts(status);
+  return (
+    <article className="settings-integration">
+      <header className="settings-integration__header">
+        <div className="settings-integration__provider">
+          <span className="settings-integration__icon">
+            <Icon size={15} className="lucide" />
+          </span>
+          <div className="settings-integration__title">
+            <h2>{title}</h2>
+            <span>{status.connected ? "Connected" : "Not connected"}</span>
+          </div>
+        </div>
+        <Badge kind={status.connected ? "success" : "neutral"}>
+          {status.connected ? "connected" : "not connected"}
+        </Badge>
+      </header>
+      {accounts.length > 0 && (
+        <div className="settings-integration__accounts">
+          {accounts.map((account, index) => (
+            <div className="settings-integration__account" key={`${accountLabel(account, title)}-${index}`}>
+              <span className="settings-integration__account-name">
+                {accountLabel(account, title)}
+              </span>
+              <span className="settings-integration__account-meta">
+                {accountMeta(account)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function integrationAccounts(status: IntegrationProviderStatus): IntegrationAccountSummary[] {
+  if (status.accounts && status.accounts.length > 0) return status.accounts;
+  if (!status.connected) return [];
+  return [{
+    accountEmail: status.accountEmail,
+    displayName: status.displayName,
+    providerAccountId: status.providerAccountId,
+    lastSyncedAt: status.lastSyncedAt
+  }];
+}
+
+function accountLabel(account: IntegrationAccountSummary, fallback: string): string {
+  return account.displayName ?? account.accountEmail ?? account.providerAccountId ?? fallback;
+}
+
+function accountMeta(account: IntegrationAccountSummary): string {
+  const parts = [
+    account.accountEmail,
+    account.providerAccountId,
+    account.status,
+    account.lastSyncedAt ? `last sync ${formatDateDisplay(account.lastSyncedAt)}` : undefined
+  ].filter((part): part is string => Boolean(part));
+  return [...new Set(parts)].join(" · ");
 }
 
 function RecordsView({

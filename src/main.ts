@@ -10,9 +10,12 @@ import { fileURLToPath } from "node:url";
 import type { IPty } from "node-pty";
 import * as nodePty from "node-pty";
 import type {
+  CloudIntegrationsStatus,
   CloudSyncStatus,
   CreateRecordPayload,
   ImportCsvPayload,
+  IntegrationAccountSummary,
+  IntegrationProviderStatus,
   QueryResult,
   RecordListOptions,
   RecordListResult,
@@ -38,6 +41,12 @@ let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudSyncWorkspace: WorkspaceSummary | null = null;
 let cloudSyncInFlight: Promise<CloudSyncStatus> | null = null;
+
+type CommunicationImportStats = {
+  people_created: number;
+  communication_threads_created: number;
+  communication_messages_created: number;
+};
 
 function sendToMainWindow(channel: string, ...args: unknown[]) {
   const window = mainWindow;
@@ -390,37 +399,59 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
     const status = await fetchJson<{
       ok: true;
       integrations: {
-        gmail: {
+        gmail?: {
           connected: boolean;
           accountEmail?: string;
+          lastSyncedAt?: string;
+        };
+        linkedin?: {
+          connected: boolean;
+          providerAccountId?: string;
+          lastSyncedAt?: string;
+        };
+        linkedin_unipile?: {
+          connected: boolean;
+          providerAccountId?: string;
           lastSyncedAt?: string;
         };
       };
     }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
 
-    if (!status.integrations.gmail.connected) {
-      return setCloudSyncStatus({ state: "disconnected" });
+    setCloudSyncStatus({ state: "syncing" });
+    const aggregateStats: CommunicationImportStats = {
+      people_created: 0,
+      communication_threads_created: 0,
+      communication_messages_created: 0
+    };
+    let syncedProviders = 0;
+
+    if (status.integrations.gmail?.connected) {
+      const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail");
+      addCommunicationStats(aggregateStats, stats);
+      syncedProviders += 1;
     }
 
-    setCloudSyncStatus({ state: "syncing" });
-    const exported = await fetchJson<{
-      ok: true;
-      data: unknown;
-    }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/gmail/export`, clientToken);
-    const result = await getSdkClient().request<{
-      stats?: {
-        people_created: number;
-        communication_threads_created: number;
-        communication_messages_created: number;
-      };
-    }>("importCommunicationBatch", exported.data);
+    const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
+    if (linkedInStatus?.connected !== false) {
+      const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "linkedin", {
+        ignoreMissingEndpoint: true
+      });
+      if (stats) {
+        addCommunicationStats(aggregateStats, stats);
+        syncedProviders += 1;
+      }
+    }
+
+    if (syncedProviders === 0) {
+      return setCloudSyncStatus({ state: "disconnected" });
+    }
 
     sendToMainWindow("workspace:changed");
     scheduleCloudSync();
     return setCloudSyncStatus({
       state: "synced",
       lastSyncedAt: new Date().toISOString(),
-      ...(result.stats ? { stats: result.stats } : {})
+      stats: aggregateStats
     });
   } catch (error) {
     return setCloudSyncStatus({
@@ -428,6 +459,43 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
       message: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+async function importCloudCommunicationExport(
+  workspaceId: string,
+  clientToken: string,
+  provider: "gmail" | "linkedin",
+  options: { ignoreMissingEndpoint?: boolean } = {}
+): Promise<CommunicationImportStats | undefined> {
+  try {
+    const exported = await fetchJson<{
+      ok: true;
+      data: unknown;
+    }>(`/workspaces/${encodeURIComponent(workspaceId)}/integrations/${provider}/export`, clientToken);
+    const result = await getSdkClient().request<{
+      stats?: Partial<CommunicationImportStats>;
+    }>("importCommunicationBatch", exported.data);
+    return {
+      people_created: result.stats?.people_created ?? 0,
+      communication_threads_created: result.stats?.communication_threads_created ?? 0,
+      communication_messages_created: result.stats?.communication_messages_created ?? 0
+    };
+  } catch (error) {
+    if (options.ignoreMissingEndpoint && error instanceof Error && error.message.includes("(404)")) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function addCommunicationStats(
+  aggregate: CommunicationImportStats,
+  next?: CommunicationImportStats
+) {
+  if (!next) return;
+  aggregate.people_created += next.people_created;
+  aggregate.communication_threads_created += next.communication_threads_created;
+  aggregate.communication_messages_created += next.communication_messages_created;
 }
 
 async function fetchJson<T>(pathname: string, clientToken: string): Promise<T> {
@@ -446,6 +514,97 @@ async function fetchJson<T>(pathname: string, clientToken: string): Promise<T> {
   }
   if (!payload) throw new Error("Cloud sync response was empty.");
   return payload;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringField(source: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function normalizeIntegrationProvider(value: unknown): IntegrationProviderStatus {
+  const source = isRecord(value) ? value : {};
+  const accountEmail = stringField(source, "accountEmail", "account_email");
+  const displayName = stringField(source, "displayName", "display_name");
+  const providerAccountId = stringField(source, "providerAccountId", "provider_account_id");
+  const lastSyncedAt = stringField(source, "lastSyncedAt", "last_synced_at");
+  const status = stringField(source, "status");
+  const accounts = Array.isArray(source.accounts)
+    ? source.accounts.flatMap((account): IntegrationAccountSummary[] => {
+        if (!isRecord(account)) return [];
+        return [{
+          id: stringField(account, "id"),
+          providerAccountId: stringField(account, "providerAccountId", "provider_account_id"),
+          accountEmail: stringField(account, "accountEmail", "account_email"),
+          displayName: stringField(account, "displayName", "display_name"),
+          status: stringField(account, "status"),
+          lastSyncedAt: stringField(account, "lastSyncedAt", "last_synced_at")
+        }];
+      })
+    : [];
+
+  if (accounts.length === 0 && (accountEmail || displayName || providerAccountId || lastSyncedAt || status)) {
+    accounts.push({
+      accountEmail,
+      displayName,
+      providerAccountId,
+      status,
+      lastSyncedAt
+    });
+  }
+
+  return {
+    connected: source.connected === true || accounts.length > 0,
+    ...(accountEmail ? { accountEmail } : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(providerAccountId ? { providerAccountId } : {}),
+    ...(lastSyncedAt ? { lastSyncedAt } : {}),
+    ...(accounts.length > 0 ? { accounts } : {})
+  };
+}
+
+async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
+  const current = cloudSyncWorkspace
+    ?? await getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
+  if (!current?.path) return { state: "no_workspace" };
+
+  const summary = current.cloudWorkspaceId ? current : await withCloudWorkspace(current);
+  if (!summary.cloudWorkspaceId) return { state: "no_workspace" };
+
+  const cwd = path.dirname(summary.path);
+  const clientToken = cloudWorkspaceTokensByCwd.get(cwd);
+  if (!clientToken) {
+    return { state: "error", message: "Cloud workspace token is missing." };
+  }
+
+  try {
+    const status = await fetchJson<{
+      ok: true;
+      integrations?: Record<string, unknown>;
+    }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
+    const integrations = isRecord(status.integrations) ? status.integrations : {};
+    return {
+      state: "ready",
+      workspaceId: summary.cloudWorkspaceId,
+      integrations: {
+        gmail: normalizeIntegrationProvider(integrations.gmail),
+        linkedin: normalizeIntegrationProvider(
+          integrations.linkedin ?? integrations.linkedIn ?? integrations.linkedin_unipile
+        )
+      }
+    };
+  } catch (error) {
+    return {
+      state: "error",
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
 }
 
 const claudeJsonPath = path.join(os.homedir(), ".claude.json");
@@ -765,6 +924,7 @@ handle("signals:run", (request: SignalRunRequest = {}) => {
 });
 handle("cloud-sync:get-status", async () => cloudSyncStatus);
 handle("cloud-sync:trigger", async () => runCloudSync());
+handle("cloud-integrations:get", async () => getCloudIntegrationsStatus());
 
 handle("pty:subscribe", async (id: string, cols: number, rows: number, cwd?: string) => {
   const resolvedCwd = resolvePtyCwd(cwd);
