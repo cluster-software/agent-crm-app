@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.0-295b305...v0.10.1-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* remove gmail sync sidebar footer ([c983d2c](https://github.com/cluster-software/agent-crm-app/commit/c983d2c16c050d50ccaa2961d64077b430df51a4))
+* remove Gmail sync sidebar footer ([d2dac8d](https://github.com/cluster-software/agent-crm-app/commit/d2dac8db553b148cdc6af8cf1d2736435a4522b5))
+
 ## [0.10.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.9.0-295b305...v0.10.0-295b305) (2026-05-25)
 
 
