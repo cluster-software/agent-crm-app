@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -29,6 +30,8 @@ const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
 let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
+const cloudWorkspaceIdsByCwd = new Map<string, string>();
+const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-crm-sync-engine.onrender.com";
 
 function sendToMainWindow(channel: string, ...args: unknown[]) {
   const window = mainWindow;
@@ -237,6 +240,7 @@ function defaultCwd() {
 }
 
 const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
+const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
 
 function slugifyWorkspaceName(name: string): string {
   const cleaned = name
@@ -274,6 +278,45 @@ function resolvePtyCwd(workspaceFile?: string): string {
     return path.dirname(workspaceFile);
   }
   return AGENT_CRM_ROOT;
+}
+
+async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceSummary> {
+  if (!summary.path) return summary;
+  const cwd = path.dirname(summary.path);
+  const metadataPath = path.join(cwd, CLOUD_METADATA_FILENAME);
+  let workspaceId: string | undefined;
+
+  try {
+    const parsed = JSON.parse(await fs.readFile(metadataPath, "utf8")) as {
+      workspaceId?: unknown;
+    };
+    if (typeof parsed.workspaceId === "string" && parsed.workspaceId.length > 0) {
+      workspaceId = parsed.workspaceId;
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      console.warn(`[cloud-workspace] failed to read ${metadataPath}: ${(error as Error).message}`);
+    }
+  }
+
+  if (!workspaceId) {
+    workspaceId = randomUUID();
+    await fs.writeFile(
+      metadataPath,
+      `${JSON.stringify({
+        workspaceId,
+        createdAt: new Date().toISOString()
+      }, null, 2)}\n`,
+      "utf8"
+    );
+  }
+
+  cloudWorkspaceIdsByCwd.set(cwd, workspaceId);
+  return {
+    ...summary,
+    cloudWorkspaceId: workspaceId
+  };
 }
 
 const claudeJsonPath = path.join(os.homedir(), ".claude.json");
@@ -358,6 +401,11 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";
   env.TERM_PROGRAM = "agent-crm";
+  env.ACRM_SYNC_ENGINE_URL = syncEngineUrl;
+  const cloudWorkspaceId = cloudWorkspaceIdsByCwd.get(cwd);
+  if (cloudWorkspaceId) {
+    env.ACRM_CLOUD_WORKSPACE_ID = cloudWorkspaceId;
+  }
 
   const candidates = shellCandidates();
   const attempts: string[] = [];
@@ -492,7 +540,9 @@ function handle<TArgs extends unknown[], TResult>(
 }
 
 async function openAndWatch(filePath: string): Promise<WorkspaceSummary> {
-  const summary = await getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath);
+  const summary = await withCloudWorkspace(
+    await getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath)
+  );
   if (summary?.path) workspaceWatcher.start(summary.path);
   return summary;
 }
@@ -518,7 +568,9 @@ handle("workspace:create", async (name: string) => {
   }
   const dir = await allocateWorkspaceDir(slug);
   const filePath = path.join(dir, `${slug}.acrm`);
-  const summary = await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath);
+  const summary = await withCloudWorkspace(
+    await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath)
+  );
   if (summary?.path) workspaceWatcher.start(summary.path);
   return summary;
 });
@@ -530,8 +582,9 @@ handle("workspace:close", async () => {
   workspaceWatcher.stop();
   await getSdkClient().request<void>("closeWorkspace");
 });
-handle("workspace:get", () => {
-  return getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
+handle("workspace:get", async () => {
+  const summary = await getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
+  return summary ? withCloudWorkspace(summary) : null;
 });
 handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
   return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);

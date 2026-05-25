@@ -1,6 +1,7 @@
 export type WorkspaceSummary = {
   path: string;
   filename: string;
+  cloudWorkspaceId?: string;
   objects: SchemaObject[];
   counts: Record<string, number>;
   activeValues: number;
