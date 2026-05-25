@@ -24,6 +24,36 @@ export type CloudSyncStatus =
     }
   | { state: "error"; message: string };
 
+export type IntegrationAccountSummary = {
+  id?: string;
+  providerAccountId?: string;
+  accountEmail?: string;
+  displayName?: string;
+  status?: string;
+  lastSyncedAt?: string;
+};
+
+export type IntegrationProviderStatus = {
+  connected: boolean;
+  accountEmail?: string;
+  displayName?: string;
+  providerAccountId?: string;
+  lastSyncedAt?: string;
+  accounts?: IntegrationAccountSummary[];
+};
+
+export type CloudIntegrationsStatus =
+  | { state: "no_workspace" }
+  | {
+      state: "ready";
+      workspaceId: string;
+      integrations: {
+        gmail: IntegrationProviderStatus;
+        linkedin: IntegrationProviderStatus;
+      };
+    }
+  | { state: "error"; message: string };
+
 export type SchemaAttribute = {
   attribute_slug: string;
   title: string;
@@ -268,6 +298,7 @@ export type AppBridge = {
   runSignals: (request?: SignalRunRequest) => Promise<SignalRunStartResult>;
   getCloudSyncStatus: () => Promise<CloudSyncStatus>;
   triggerCloudSync: () => Promise<CloudSyncStatus>;
+  getCloudIntegrations: () => Promise<CloudIntegrationsStatus>;
   onWorkspaceChanged: (handler: () => void) => () => void;
   onCloudSyncStatus: (handler: (status: CloudSyncStatus) => void) => () => void;
   onUpdateStatus: (handler: (status: UpdateStatus) => void) => () => void;
