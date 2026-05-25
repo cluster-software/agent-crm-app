@@ -431,8 +431,8 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
       syncedProviders += 1;
     }
 
-    const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
-    if (linkedInStatus?.connected !== false) {
+const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
+    if (linkedInStatus?.connected) {
       const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "linkedin", {
         ignoreMissingEndpoint: true
       });
