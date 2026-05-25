@@ -874,8 +874,6 @@ function accountLabel(account: IntegrationAccountSummary, fallback: string): str
 function accountMeta(account: IntegrationAccountSummary): string {
   const parts = [
     account.accountEmail,
-    account.providerAccountId,
-    account.status,
     account.lastSyncedAt ? `last sync ${formatDateDisplay(account.lastSyncedAt)}` : undefined
   ].filter((part): part is string => Boolean(part));
   return [...new Set(parts)].join(" · ");
@@ -2597,10 +2595,17 @@ function PersonDetail({
             ) : (
               <div className="detail__contact">
                 {contactRows.map((row, index) => (
-                  <div key={index} className="detail__contact-row">
-                    <row.Icon size={13} className="lucide" />
-                    <span className="mono">{row.value}</span>
-                  </div>
+                  row.href ? (
+                    <a key={index} className="detail__contact-row detail__contact-link" href={row.href} target="_blank" rel="noreferrer">
+                      <row.Icon size={13} className="lucide" />
+                      <span className="mono">{row.value}</span>
+                    </a>
+                  ) : (
+                    <div key={index} className="detail__contact-row">
+                      <row.Icon size={13} className="lucide" />
+                      <span className="mono">{row.value}</span>
+                    </div>
+                  )
                 ))}
               </div>
             )}
@@ -2669,16 +2674,17 @@ function RelatedList({
 type ContactRow = {
   Icon: ComponentType<{ size?: number; className?: string }>;
   value: string;
+  href?: string;
 };
 
 function buildContactRows(record: RecordPreview): ContactRow[] {
   const rows: ContactRow[] = [];
   const seen = new Set<string>();
-  const push = (Icon: ContactRow["Icon"], value: string) => {
-    const key = `${Icon.name}:${value}`;
+  const push = (Icon: ContactRow["Icon"], value: string, href?: string) => {
+    const key = `${Icon.name}:${value}:${href ?? ""}`;
     if (!value || seen.has(key)) return;
     seen.add(key);
-    rows.push({ Icon, value });
+    rows.push({ Icon, value, href });
   };
 
   for (const value of record.values) {
@@ -2699,29 +2705,29 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
         }
         break;
       case "linkedin_url":
-        push(LinkedInIcon, stripUrl(display));
+        push(LinkedInIcon, stripUrl(display), externalUrl(display));
         break;
       case "twitter_url":
       case "x_url":
-        push(XIcon, stripUrl(display));
+        push(XIcon, stripUrl(display), externalUrl(display));
         break;
       case "github_url":
       case "github":
-        push(GitHubIcon, stripUrl(display));
+        push(GitHubIcon, stripUrl(display), externalUrl(display));
         break;
       case "website":
       case "url":
       case "domain":
       case "domains":
-        push(Globe, stripUrl(display));
+        push(Globe, stripUrl(display), externalUrl(display));
         break;
       default:
         if (/github\.com/i.test(display)) {
-          push(GitHubIcon, stripUrl(display));
+          push(GitHubIcon, stripUrl(display), externalUrl(display));
         } else if (/linkedin\.com/i.test(display)) {
-          push(LinkedInIcon, stripUrl(display));
+          push(LinkedInIcon, stripUrl(display), externalUrl(display));
         } else if (/(?:^|\W)(?:x\.com|twitter\.com)/i.test(display)) {
-          push(XIcon, stripUrl(display));
+          push(XIcon, stripUrl(display), externalUrl(display));
         }
         break;
     }
@@ -2731,4 +2737,9 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
 
 function stripUrl(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
+
+function externalUrl(url: string): string {
+  const trimmed = url.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
