@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.12.1-295b305...v0.13.0-295b305) (2026-05-25)
+
+
+### Features
+
+* add people messages and settings polish ([3efe08d](https://github.com/cluster-software/agent-crm-app/commit/3efe08d38fb79dc146d52f65fe7b24441f866cbd))
+
 ## [0.12.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.12.0-295b305...v0.12.1-295b305) (2026-05-25)
 
 
