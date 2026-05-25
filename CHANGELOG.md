@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.1-295b305...v0.10.2-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* update agent crm sdk ([122199c](https://github.com/cluster-software/agent-crm-app/commit/122199c421f6c8f9cfb0727ea531e780c1657a4d))
+* update Agent CRM SDK ([5fdf9d7](https://github.com/cluster-software/agent-crm-app/commit/5fdf9d72043f7c423c8772ab2cacbb7be4bf92ef))
+
 ## [0.10.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.0-295b305...v0.10.1-295b305) (2026-05-25)
 
 
