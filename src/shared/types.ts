@@ -282,7 +282,8 @@ export type UpdateStatus =
 export type AppBridge = {
   platform: string;
   openWorkspaceDialog: () => Promise<WorkspaceSummary | null>;
-  createWorkspace: (name: string) => Promise<WorkspaceSummary | null>;
+  chooseWorkspaceDirectory: () => Promise<string | null>;
+  createWorkspace: (name: string, parentDir?: string) => Promise<WorkspaceSummary | null>;
   openWorkspacePath: (filePath: string) => Promise<WorkspaceSummary>;
   closeWorkspace: () => Promise<void>;
   getWorkspace: () => Promise<WorkspaceSummary | null>;

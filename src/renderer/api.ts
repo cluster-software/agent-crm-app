@@ -333,7 +333,9 @@ function listPreviewRecords(
 const browserPreview: AppBridge = {
   platform: "browser",
   openWorkspaceDialog: async () => previewWorkspace,
-  createWorkspace: async (_name: string) => previewWorkspace,
+  chooseWorkspaceDirectory: async () =>
+    "/Users/example/Documents/Agent CRM workspaces/enterprise-growth-pipeline-directory",
+  createWorkspace: async (_name: string, _parentDir?: string) => previewWorkspace,
   openWorkspacePath: async () => previewWorkspace,
   closeWorkspace: async () => undefined,
   getWorkspace: async () => previewWorkspace,

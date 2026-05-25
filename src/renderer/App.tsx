@@ -440,9 +440,10 @@ export function App() {
       {createOpen && (
         <CreateWorkspaceModal
           onClose={() => setCreateOpen(false)}
-          onCreate={async (name) => {
+          onPickDirectory={api.chooseWorkspaceDirectory}
+          onCreate={async (name, parentDir) => {
             setError(null);
-            const summary = await api.createWorkspace(name);
+            const summary = await api.createWorkspace(name, parentDir);
             if (summary) {
               setWorkspace(summary);
               setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
@@ -488,12 +489,15 @@ function iconForObject(objectSlug: string): ComponentType<{ size?: number; class
 
 function CreateWorkspaceModal({
   onClose,
+  onPickDirectory,
   onCreate
 }: {
   onClose: () => void;
-  onCreate: (name: string) => Promise<void>;
+  onPickDirectory: () => Promise<string | null>;
+  onCreate: (name: string, parentDir?: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
+  const [parentDir, setParentDir] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -516,13 +520,27 @@ function CreateWorkspaceModal({
   const trimmed = name.trim();
   const canSubmit = trimmed.length > 0 && !submitting;
 
+  async function handlePickDirectory() {
+    if (submitting) return;
+    setLocalError(null);
+    try {
+      const directory = await onPickDirectory();
+      if (directory) {
+        setParentDir(directory);
+        inputRef.current?.focus();
+      }
+    } catch (err) {
+      setLocalError(statusFromError(err));
+    }
+  }
+
   async function handleSubmit(event: ReactFormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
     setLocalError(null);
     try {
-      await onCreate(trimmed);
+      await onCreate(trimmed, parentDir ?? undefined);
       onClose();
     } catch (err) {
       setLocalError(statusFromError(err));
@@ -530,29 +548,58 @@ function CreateWorkspaceModal({
     }
   }
 
+  const parentDirLabel =
+    parentDir && parentDir.length > 52
+      ? `${parentDir.slice(0, 24)}...${parentDir.slice(-25)}`
+      : parentDir ?? "";
+
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <form className="modal modal--narrow" onSubmit={handleSubmit}>
         <div className="modal__head">
           <div>
             <h2>New workspace</h2>
-            <p>Pick a name. The workspace is created under <span className="mono">~/agent-crm/</span>.</p>
+            {parentDir ? (
+              <p>
+                Pick a name. The workspace will be created under{" "}
+                <span className="mono modal-path" title={parentDir}>
+                  {parentDirLabel}
+                </span>
+              </p>
+            ) : (
+              <p>
+                Pick a name. By default the workspace is created under{" "}
+                <span className="mono">~/agent-crm/</span>.
+              </p>
+            )}
           </div>
         </div>
         <div className="modal__body">
-          <label className="input">
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="e.g. pipeline"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
+          <div className="workspace-name-row">
+            <label className="input workspace-name-row__input">
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder="e.g. pipeline"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                disabled={submitting}
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={60}
+              />
+            </label>
+            <button
+              type="button"
+              className="icon-btn workspace-directory-btn"
+              title="Choose workspace directory"
+              aria-label="Choose workspace directory"
+              onClick={handlePickDirectory}
               disabled={submitting}
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={60}
-            />
-          </label>
+            >
+              <FolderOpen size={14} className="lucide" />
+            </button>
+          </div>
           {localError && <div className="strip strip--error">{localError}</div>}
         </div>
         <div className="modal__actions">
