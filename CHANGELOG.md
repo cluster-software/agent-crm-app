@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.12.0-295b305...v0.12.1-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* improve Electron app icon readability ([275e7e6](https://github.com/cluster-software/agent-crm-app/commit/275e7e6f3aaf9c6771022d604b2ce5b0899dabb9))
+
 ## [0.12.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.11.1-295b305...v0.12.0-295b305) (2026-05-25)
 
 
