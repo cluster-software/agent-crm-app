@@ -93,12 +93,13 @@ export function App() {
   const [mainView, setMainView] = useState<MainView>("records");
   const [loading, setLoading] = useState("Loading workspace");
   const [error, setError] = useState<string | null>(null);
-  const [terminalOpen, setTerminalOpen] = useState(true);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
+  const previousWorkspacePathRef = useRef<string | null>(null);
 
   useEffect(() => {
     return api.onUpdateStatus(setUpdateStatus);
@@ -111,6 +112,22 @@ export function App() {
   useEffect(() => {
     setPersonTab("overview");
   }, [detailRecord?.record_id]);
+
+  useEffect(() => {
+    const nextPath = workspace?.path ?? null;
+    const previousPath = previousWorkspacePathRef.current;
+    previousWorkspacePathRef.current = nextPath;
+
+    if (!nextPath) {
+      setTerminalOpen(false);
+      return;
+    }
+
+    if (nextPath !== previousPath) {
+      setTerminalOpen(true);
+    }
+  }, [workspace?.path]);
+
   const [terminalWidth, setTerminalWidth] = useState(() => {
     if (typeof window === "undefined") return 720;
     const stored = window.localStorage.getItem("terminalWidth");
@@ -403,14 +420,16 @@ export function App() {
               />
             ) : null}
           </div>
-          <TerminalPane
-            visible={terminalOpen}
-            cwd={workspace?.path}
-            width={terminalWidth}
-            onWidthChange={setTerminalWidth}
-            onClose={() => setTerminalOpen(false)}
-            setError={setError}
-          />
+          {terminalOpen && (
+            <TerminalPane
+              visible={terminalOpen}
+              cwd={workspace?.path}
+              width={terminalWidth}
+              onWidthChange={setTerminalWidth}
+              onClose={() => setTerminalOpen(false)}
+              setError={setError}
+            />
+          )}
         </div>
 
       </main>
