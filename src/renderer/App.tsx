@@ -2167,6 +2167,14 @@ function TerminalPane({
         event.preventDefault();
         return false;
       }
+      // Shift+Enter → Ctrl+J: Claude Code treats LF as "insert newline".
+      if (shift && !meta && !ctrl && !alt && event.key === "Enter") {
+        bridge.send(sessionId, "\x0a");
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+        return false;
+      }
       // ⌘+← / ⌘+→: jump to start/end of line (^A / ^E)
       if (meta && !ctrl && !alt && !shift && event.key === "ArrowLeft") {
         bridge.send(sessionId, "\x01");
