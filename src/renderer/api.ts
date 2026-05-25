@@ -390,7 +390,10 @@ const browserPreview: AppBridge = {
       started_at: new Date(0).toISOString()
     }
   }),
+  getCloudSyncStatus: async () => ({ state: "disconnected" }),
+  triggerCloudSync: async () => ({ state: "disconnected" }),
   onWorkspaceChanged: () => () => undefined,
+  onCloudSyncStatus: () => () => undefined,
   onUpdateStatus: () => () => undefined,
   installUpdate: async () => undefined
 };

@@ -828,6 +828,13 @@ async function dispatch(method: string, params: unknown[] = []) {
     case "importTranscript":
       schemaObjectsCache = null;
       return importTranscript(assertWorkspace(), params[0] as TranscriptPayload);
+    case "importCommunicationBatch": {
+      schemaObjectsCache = null;
+      const sdk = await import("@agent-crm/sdk") as unknown as {
+        importCommunicationBatch: (workspace: Workspace, batch: unknown) => Promise<unknown>;
+      };
+      return sdk.importCommunicationBatch(assertWorkspace(), params[0]);
+    }
     case "runQuery":
       return query(assertWorkspace(), String(params[0]), (params[1] ?? []) as never[]) satisfies Promise<QueryResult>;
     case "listSignals":

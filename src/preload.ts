@@ -45,10 +45,18 @@ const bridge: AppBridge = {
   listSignalRuns: () => invoke("signals:runs"),
   syncSignals: () => invoke("signals:sync"),
   runSignals: (request?: SignalRunRequest) => invoke("signals:run", request),
+  getCloudSyncStatus: () => invoke("cloud-sync:get-status"),
+  triggerCloudSync: () => invoke("cloud-sync:trigger"),
   onWorkspaceChanged: (handler: () => void) => {
     const listener = () => handler();
     ipcRenderer.on("workspace:changed", listener);
     return () => ipcRenderer.off("workspace:changed", listener);
+  },
+  onCloudSyncStatus: (handler) => {
+    const listener = (_event: IpcRendererEvent, status: Parameters<typeof handler>[0]) => handler(status);
+    ipcRenderer.on("cloud-sync:status", listener);
+    void invoke<Parameters<typeof handler>[0]>("cloud-sync:get-status").then(handler).catch(() => undefined);
+    return () => ipcRenderer.off("cloud-sync:status", listener);
   },
   onUpdateStatus: (handler: (status: UpdateStatus) => void) => {
     const listener = (_event: IpcRendererEvent, status: UpdateStatus) => handler(status);
