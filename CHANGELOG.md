@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.13.0-295b305...v0.13.1-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* show durable Gmail sync loading state ([ed93e84](https://github.com/cluster-software/agent-crm-app/commit/ed93e84e695ef286f60aa46ddfd63a1913d0ed73))
+* show durable Gmail sync loading state ([b84ba99](https://github.com/cluster-software/agent-crm-app/commit/b84ba99916029b4852fc86756cd37e02c8bd5b69))
+
 ## [0.13.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.12.1-295b305...v0.13.0-295b305) (2026-05-25)
 
 
