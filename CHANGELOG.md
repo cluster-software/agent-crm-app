@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.11.0-295b305...v0.11.1-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* update Electron app logo ([c0a1411](https://github.com/cluster-software/agent-crm-app/commit/c0a14112eeaa7eaca7ec90456dfaf399db3be2af))
+* update Electron app logo ([ef7fd59](https://github.com/cluster-software/agent-crm-app/commit/ef7fd59eef24873240ed677dbbdc2b2eae274ee4))
+
 ## [0.11.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.3-295b305...v0.11.0-295b305) (2026-05-25)
 
 
