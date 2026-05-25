@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.3-295b305...v0.8.4-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* avoid onboarding slash command conflict ([f352b96](https://github.com/cluster-software/agent-crm-app/commit/f352b96941dea7530d06c3876a18e938d1636ef2))
+* avoid onboarding slash command conflict ([e660be9](https://github.com/cluster-software/agent-crm-app/commit/e660be92b84f09784e52f9236b00c49a0adbbfba))
+
 ## [0.8.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.2-295b305...v0.8.3-295b305) (2026-05-25)
 
 
