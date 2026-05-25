@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.3-295b305...v0.11.0-295b305) (2026-05-25)
+
+
+### Features
+
+* release desktop LinkedIn integrations ([bad3189](https://github.com/cluster-software/agent-crm-app/commit/bad31899a4b76a75f499e309f5f4aa8e84d08173))
+
 ## [0.10.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.2-295b305...v0.10.3-295b305) (2026-05-25)
 
 
