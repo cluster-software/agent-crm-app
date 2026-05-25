@@ -316,25 +316,6 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
   text-overflow: ellipsis;
 }
 
-.sidebar-footer__sub {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sidebar-footer__sub svg { flex: 0 0 auto; }
-.sidebar-footer__sub span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sidebar-footer__sub[data-state="error"] { color: var(--danger); }
-
 /* ─── Main pane ─────────────────────────────────────────── */
 
 .main {
