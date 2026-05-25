@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.4-295b305...v0.9.0-295b305) (2026-05-25)
+
+
+### Features
+
+* pass cloud workspace context to terminal ([b5b969c](https://github.com/cluster-software/agent-crm-app/commit/b5b969caa667e14c51daf00d7658d020f08dc726))
+* pass cloud workspace context to terminal ([9b6c185](https://github.com/cluster-software/agent-crm-app/commit/9b6c185a38bc56277ad4e2693fc93b3ecc2ab94d))
+
 ## [0.8.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.3-295b305...v0.8.4-295b305) (2026-05-25)
 
 
