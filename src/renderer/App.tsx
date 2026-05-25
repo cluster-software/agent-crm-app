@@ -41,7 +41,6 @@ import {
 } from "@tanstack/react-table";
 import { api } from "./api";
 import type {
-  CloudSyncStatus,
   RecordPreview,
   RecordValue,
   SchemaObject,
@@ -100,15 +99,10 @@ export function App() {
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
-  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
   const previousWorkspacePathRef = useRef<string | null>(null);
 
   useEffect(() => {
     return api.onUpdateStatus(setUpdateStatus);
-  }, []);
-
-  useEffect(() => {
-    return api.onCloudSyncStatus(setCloudSyncStatus);
   }, []);
 
   useEffect(() => {
@@ -316,7 +310,6 @@ export function App() {
             <div className="sidebar-footer__title">
               {workspace ? workspace.filename : "agent-crm"}
             </div>
-            {workspace && <CloudSyncFooter status={cloudSyncStatus} />}
           </div>
         </div>
         <UpdateBanner status={updateStatus} />
@@ -603,40 +596,6 @@ function UpdateBanner({ status }: { status: UpdateStatus }) {
       <span>{label}</span>
     </button>
   );
-}
-
-function CloudSyncFooter({ status }: { status: CloudSyncStatus }) {
-  if (status.state === "idle") return null;
-  const label =
-    status.state === "checking"
-      ? "Checking Gmail sync"
-      : status.state === "syncing"
-        ? "Importing Gmail"
-        : status.state === "disconnected"
-          ? "Gmail not connected"
-          : status.state === "error"
-            ? "Gmail sync error"
-            : `Gmail synced ${relativeTime(status.lastSyncedAt)}`;
-
-  return (
-    <div className="sidebar-footer__sub" data-state={status.state}>
-      {(status.state === "checking" || status.state === "syncing") && (
-        <Loader2 size={10} className="lucide spin" />
-      )}
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function relativeTime(iso: string) {
-  const elapsed = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(elapsed) || elapsed < 5_000) return "just now";
-  const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes === 1) return "1 min ago";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  return hours === 1 ? "1 hr ago" : `${hours} hr ago`;
 }
 
 function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: () => void }) {
