@@ -125,6 +125,42 @@ const sampleRecordsByObject: Record<string, RecordPreview[]> = {
       ]
     }
   ],
+  communication_threads: [
+    {
+      object_slug: "communication_threads",
+      record_id: "preview-thread",
+      label: "Platform team rollout - pricing + SOC2",
+      subtitle: "Email · May 25, 2026",
+      values: [
+        {
+          attribute_slug: "subject",
+          title: "Subject",
+          type: "text",
+          display: "Platform team rollout - pricing + SOC2",
+          raw: "Platform team rollout - pricing + SOC2",
+          values: ["Platform team rollout - pricing + SOC2"]
+        }
+      ]
+    }
+  ],
+  communication_messages: [
+    {
+      object_slug: "communication_messages",
+      record_id: "preview-message",
+      label: "Thanks for sending these over.",
+      subtitle: "Email · inbound",
+      values: [
+        {
+          attribute_slug: "snippet",
+          title: "Snippet",
+          type: "text",
+          display: "Thanks for sending these over.",
+          raw: "Thanks for sending these over.",
+          values: ["Thanks for sending these over."]
+        }
+      ]
+    }
+  ],
   posts: [
     {
       object_slug: "posts",
@@ -187,6 +223,8 @@ const previewWorkspace: WorkspaceSummary = {
     companies: 18,
     people: 42,
     deals: 9,
+    communication_threads: 7,
+    communication_messages: 24,
     posts: 27,
     transcripts: 6
   },
@@ -238,6 +276,14 @@ const previewWorkspace: WorkspaceSummary = {
           attribute_type: "text",
           is_multivalued: false,
           is_unique: false
+        },
+        {
+          attribute_slug: "communication_threads",
+          title: "Communication threads",
+          attribute_type: "record-reference",
+          is_multivalued: true,
+          is_unique: false,
+          config: { target_object: "communication_threads", inverse: "participants" }
         }
       ]
     },
@@ -259,6 +305,63 @@ const previewWorkspace: WorkspaceSummary = {
           attribute_type: "status",
           is_multivalued: false,
           is_unique: false
+        }
+      ]
+    },
+    {
+      object_slug: "communication_threads",
+      singular_name: "Communication thread",
+      plural_name: "Communication threads",
+      attributes: [
+        {
+          attribute_slug: "subject",
+          title: "Subject",
+          attribute_type: "text",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
+          attribute_slug: "channel",
+          title: "Channel",
+          attribute_type: "status",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
+          attribute_slug: "last_message_at",
+          title: "Last message at",
+          attribute_type: "timestamp",
+          is_multivalued: false,
+          is_unique: false
+        }
+      ]
+    },
+    {
+      object_slug: "communication_messages",
+      singular_name: "Communication message",
+      plural_name: "Communication messages",
+      attributes: [
+        {
+          attribute_slug: "body_text",
+          title: "Body text",
+          attribute_type: "text",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
+          attribute_slug: "sent_at",
+          title: "Sent at",
+          attribute_type: "timestamp",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
+          attribute_slug: "thread",
+          title: "Thread",
+          attribute_type: "record-reference",
+          is_multivalued: false,
+          is_unique: false,
+          config: { target_object: "communication_threads", inverse: "messages" }
         }
       ]
     },
@@ -366,13 +469,55 @@ const browserPreview: AppBridge = {
     record_id: "preview-created",
     values_inserted: 3
   }),
-  runQuery: async () => ({
-    rows: [
-      { object_slug: "people", count: 42 },
-      { object_slug: "companies", count: 18 }
-    ],
-    rowsAffected: 0
-  }),
+  runQuery: async (sql: string, params?: unknown[]) => {
+    if (sql.includes("v.object_slug = 'people'") && params?.[1] === "communication_threads") {
+      return {
+        rows: [
+          { rec_id: "preview-thread", attr: "subject", val: JSON.stringify("Platform team rollout - pricing + SOC2") },
+          { rec_id: "preview-thread", attr: "channel", val: JSON.stringify("email") },
+          { rec_id: "preview-thread", attr: "snippet", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us.") },
+          { rec_id: "preview-thread", attr: "last_message_at", val: JSON.stringify("2026-05-25T17:18:00.000Z") },
+          { rec_id: "preview-thread", attr: "message_count", val: JSON.stringify(3) }
+        ],
+        rowsAffected: 0
+      };
+    }
+    if (sql.includes("v.object_slug = 'communication_messages'")) {
+      return {
+        rows: [
+          { rec_id: "preview-message-1", attr: "channel", val: JSON.stringify("email") },
+          { rec_id: "preview-message-1", attr: "direction", val: JSON.stringify("outbound") },
+          { rec_id: "preview-message-1", attr: "sender", ref_object: "people", ref_record_id: "preview-user" },
+          { rec_id: "preview-message-1", attr: "recipients", ref_object: "people", ref_record_id: "preview-person" },
+          { rec_id: "preview-message-1", attr: "sent_at", val: JSON.stringify("2026-05-15T21:10:00.000Z") },
+          { rec_id: "preview-message-1", attr: "body_text", val: JSON.stringify("Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.") },
+          { rec_id: "preview-message-2", attr: "channel", val: JSON.stringify("email") },
+          { rec_id: "preview-message-2", attr: "direction", val: JSON.stringify("inbound") },
+          { rec_id: "preview-message-2", attr: "sender", ref_object: "people", ref_record_id: "preview-person" },
+          { rec_id: "preview-message-2", attr: "recipients", ref_object: "people", ref_record_id: "preview-user" },
+          { rec_id: "preview-message-2", attr: "sent_at", val: JSON.stringify("2026-05-25T17:18:00.000Z") },
+          { rec_id: "preview-message-2", attr: "body_text", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?") }
+        ],
+        rowsAffected: 0
+      };
+    }
+    if (sql.includes("object_slug = 'people'") && sql.includes("attribute_slug IN")) {
+      return {
+        rows: [
+          { record_id: "preview-person", attribute_slug: "name", value_json: JSON.stringify({ full_name: "Maya Chen" }) },
+          { record_id: "preview-user", attribute_slug: "name", value_json: JSON.stringify({ full_name: "Margaret Hamilton" }) }
+        ],
+        rowsAffected: 0
+      };
+    }
+    return {
+      rows: [
+        { object_slug: "people", count: 42 },
+        { object_slug: "companies", count: 18 }
+      ],
+      rowsAffected: 0
+    };
+  },
   listSignals: async (): Promise<SignalDefinitionSummary[]> => [],
   listSignalFailures: async () => [],
   listSignalRuns: async () => [],

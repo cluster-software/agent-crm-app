@@ -77,6 +77,11 @@ class SdkServiceClient {
 
   async request<T>(method: string, ...params: unknown[]): Promise<T> {
     this.ensureStarted();
+    const child = this.child;
+    if (!child || child.stdin.destroyed || child.stdin.writableEnded) {
+      throw new Error("SDK service is not available.");
+    }
+
     const id = this.nextId++;
     const payload = JSON.stringify({ id, method, params });
 
@@ -85,7 +90,8 @@ class SdkServiceClient {
         resolve: (value) => resolve(value as T),
         reject
       });
-      this.child?.stdin.write(`${payload}\n`, (error) => {
+
+      child.stdin.write(`${payload}\n`, (error) => {
         if (error) {
           this.pending.delete(id);
           reject(error);
@@ -144,6 +150,13 @@ class SdkServiceClient {
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
       console.error(`[sdk-service] ${chunk}`);
+    });
+
+    child.stdin.on("error", (error) => {
+      this.rejectAll(error);
+      if (this.child === child) {
+        this.child = null;
+      }
     });
 
     child.on("error", (error) => {
