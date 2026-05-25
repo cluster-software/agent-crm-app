@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.2-295b305...v0.8.3-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* defer terminal startup until workspace opens ([e73f397](https://github.com/cluster-software/agent-crm-app/commit/e73f397461df6dd7dd47ea32cbf7f9389b4bcb78))
+* defer terminal startup until workspace opens ([8c6e726](https://github.com/cluster-software/agent-crm-app/commit/8c6e726e93d6a7abbc3b0b75fb90c62492fee0bd))
+
 ## [0.8.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.8.1-295b305...v0.8.2-295b305) (2026-05-22)
 
 
