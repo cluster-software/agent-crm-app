@@ -44,6 +44,7 @@
       "**/node_modules/file-uri-to-path/**/*"
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,

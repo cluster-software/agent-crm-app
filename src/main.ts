@@ -31,6 +31,7 @@ const { autoUpdater } = electronUpdater;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+const devIconPath = path.join(__dirname, "../../build/icon.png");
 
 let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
@@ -776,6 +777,7 @@ function createWindow() {
     titleBarStyle: "hiddenInset",
     vibrancy: "sidebar",
     backgroundColor: "#11100f",
+    icon: isDev ? devIconPath : undefined,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1027,6 +1029,7 @@ ipcMain.handle("update:install", () => {
 app
   .whenReady()
   .then(() => {
+    if (isDev && process.platform === "darwin") app.dock?.setIcon(devIconPath);
     createWindow();
     setupAutoUpdater();
   })
