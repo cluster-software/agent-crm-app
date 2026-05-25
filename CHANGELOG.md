@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.11.1-295b305...v0.12.0-295b305) (2026-05-25)
+
+
+### Features
+
+* polish integration contact display ([e7f16ea](https://github.com/cluster-software/agent-crm-app/commit/e7f16ea0e09aaa79f8a13e4308801cffddde65fe))
+* polish integration contact display ([00e9022](https://github.com/cluster-software/agent-crm-app/commit/00e90227d68f6e505c025d055c8a344db3b69796))
+
 ## [0.11.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.11.0-295b305...v0.11.1-295b305) (2026-05-25)
 
 
