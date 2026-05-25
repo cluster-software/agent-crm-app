@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.2-295b305...v0.10.3-295b305) (2026-05-25)
+
+
+### Bug Fixes
+
+* update SDK for Gmail company import ([34b9654](https://github.com/cluster-software/agent-crm-app/commit/34b9654d82c2f7beafb16875498d585f546c20ac))
+
 ## [0.10.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.10.1-295b305...v0.10.2-295b305) (2026-05-25)
 
 
