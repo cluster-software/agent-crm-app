@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { IPty } from "node-pty";
 import * as nodePty from "node-pty";
 import type {
+  CloudSyncStatus,
   CreateRecordPayload,
   ImportCsvPayload,
   QueryResult,
@@ -31,7 +32,12 @@ const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
 const cloudWorkspaceIdsByCwd = new Map<string, string>();
+const cloudWorkspaceTokensByCwd = new Map<string, string>();
 const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-crm-sync-engine.onrender.com";
+let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
+let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudSyncWorkspace: WorkspaceSummary | null = null;
+let cloudSyncInFlight: Promise<CloudSyncStatus> | null = null;
 
 function sendToMainWindow(channel: string, ...args: unknown[]) {
   const window = mainWindow;
@@ -285,13 +291,18 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
   const cwd = path.dirname(summary.path);
   const metadataPath = path.join(cwd, CLOUD_METADATA_FILENAME);
   let workspaceId: string | undefined;
+  let clientToken: string | undefined;
 
   try {
     const parsed = JSON.parse(await fs.readFile(metadataPath, "utf8")) as {
       workspaceId?: unknown;
+      clientToken?: unknown;
     };
     if (typeof parsed.workspaceId === "string" && parsed.workspaceId.length > 0) {
       workspaceId = parsed.workspaceId;
+    }
+    if (typeof parsed.clientToken === "string" && parsed.clientToken.length > 0) {
+      clientToken = parsed.clientToken;
     }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
@@ -300,12 +311,14 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
     }
   }
 
-  if (!workspaceId) {
-    workspaceId = randomUUID();
+  if (!workspaceId || !clientToken) {
+    workspaceId = workspaceId ?? randomUUID();
+    clientToken = clientToken ?? randomUUID();
     await fs.writeFile(
       metadataPath,
       `${JSON.stringify({
         workspaceId,
+        clientToken,
         createdAt: new Date().toISOString()
       }, null, 2)}\n`,
       "utf8"
@@ -313,10 +326,126 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
   }
 
   cloudWorkspaceIdsByCwd.set(cwd, workspaceId);
+  cloudWorkspaceTokensByCwd.set(cwd, clientToken);
   return {
     ...summary,
     cloudWorkspaceId: workspaceId
   };
+}
+
+function setCloudSyncStatus(status: CloudSyncStatus): CloudSyncStatus {
+  cloudSyncStatus = status;
+  sendToMainWindow("cloud-sync:status", status);
+  return status;
+}
+
+function stopCloudSync() {
+  if (cloudSyncTimer) {
+    clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = null;
+  }
+  cloudSyncWorkspace = null;
+  setCloudSyncStatus({ state: "idle" });
+}
+
+function startCloudSync(summary: WorkspaceSummary) {
+  cloudSyncWorkspace = summary;
+  if (cloudSyncTimer) {
+    clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = null;
+  }
+  void runCloudSync();
+}
+
+function scheduleCloudSync() {
+  if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    cloudSyncTimer = null;
+    void runCloudSync();
+  }, 60_000);
+}
+
+async function runCloudSync(): Promise<CloudSyncStatus> {
+  if (cloudSyncInFlight) return cloudSyncInFlight;
+  cloudSyncInFlight = runCloudSyncOnce().finally(() => {
+    cloudSyncInFlight = null;
+  });
+  return cloudSyncInFlight;
+}
+
+async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
+  const summary = cloudSyncWorkspace;
+  if (!summary?.path || !summary.cloudWorkspaceId) {
+    return setCloudSyncStatus({ state: "idle" });
+  }
+
+  const cwd = path.dirname(summary.path);
+  const clientToken = cloudWorkspaceTokensByCwd.get(cwd);
+  if (!clientToken) {
+    return setCloudSyncStatus({ state: "error", message: "Cloud workspace token is missing." });
+  }
+
+  try {
+    setCloudSyncStatus({ state: "checking" });
+    const status = await fetchJson<{
+      ok: true;
+      integrations: {
+        gmail: {
+          connected: boolean;
+          accountEmail?: string;
+          lastSyncedAt?: string;
+        };
+      };
+    }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
+
+    if (!status.integrations.gmail.connected) {
+      return setCloudSyncStatus({ state: "disconnected" });
+    }
+
+    setCloudSyncStatus({ state: "syncing" });
+    const exported = await fetchJson<{
+      ok: true;
+      data: unknown;
+    }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/gmail/export`, clientToken);
+    const result = await getSdkClient().request<{
+      stats?: {
+        people_created: number;
+        communication_threads_created: number;
+        communication_messages_created: number;
+      };
+    }>("importCommunicationBatch", exported.data);
+
+    sendToMainWindow("workspace:changed");
+    scheduleCloudSync();
+    return setCloudSyncStatus({
+      state: "synced",
+      lastSyncedAt: new Date().toISOString(),
+      ...(result.stats ? { stats: result.stats } : {})
+    });
+  } catch (error) {
+    return setCloudSyncStatus({
+      state: "error",
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function fetchJson<T>(pathname: string, clientToken: string): Promise<T> {
+  const url = new URL(pathname, syncEngineUrl);
+  const response = await fetch(url, {
+    headers: {
+      authorization: `Bearer ${clientToken}`
+    }
+  });
+  const payload = await response.json().catch(() => undefined) as T | undefined;
+  if (!response.ok) {
+    const error = payload && typeof payload === "object" && "error" in payload
+      ? String((payload as { error?: unknown }).error)
+      : `Cloud sync request failed (${response.status})`;
+    throw new Error(error);
+  }
+  if (!payload) throw new Error("Cloud sync response was empty.");
+  return payload;
 }
 
 const claudeJsonPath = path.join(os.homedir(), ".claude.json");
@@ -405,6 +534,10 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   const cloudWorkspaceId = cloudWorkspaceIdsByCwd.get(cwd);
   if (cloudWorkspaceId) {
     env.ACRM_CLOUD_WORKSPACE_ID = cloudWorkspaceId;
+  }
+  const cloudWorkspaceClientToken = cloudWorkspaceTokensByCwd.get(cwd);
+  if (cloudWorkspaceClientToken) {
+    env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN = cloudWorkspaceClientToken;
   }
 
   const candidates = shellCandidates();
@@ -499,6 +632,12 @@ function createWindow() {
     if (!window.isDestroyed()) window.show();
   });
 
+  window.on("focus", () => {
+    if (cloudSyncWorkspace && cloudSyncStatus.state !== "syncing" && cloudSyncStatus.state !== "checking") {
+      void runCloudSync();
+    }
+  });
+
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });
@@ -544,6 +683,7 @@ async function openAndWatch(filePath: string): Promise<WorkspaceSummary> {
     await getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath)
   );
   if (summary?.path) workspaceWatcher.start(summary.path);
+  startCloudSync(summary);
   return summary;
 }
 
@@ -572,6 +712,7 @@ handle("workspace:create", async (name: string) => {
     await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath)
   );
   if (summary?.path) workspaceWatcher.start(summary.path);
+  startCloudSync(summary);
   return summary;
 });
 
@@ -580,11 +721,17 @@ handle("workspace:open-path", (filePath: string) => {
 });
 handle("workspace:close", async () => {
   workspaceWatcher.stop();
+  stopCloudSync();
   await getSdkClient().request<void>("closeWorkspace");
 });
 handle("workspace:get", async () => {
   const summary = await getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
-  return summary ? withCloudWorkspace(summary) : null;
+  if (!summary) return null;
+  const withCloud = await withCloudWorkspace(summary);
+  if (!cloudSyncWorkspace || cloudSyncWorkspace.path !== withCloud.path) {
+    startCloudSync(withCloud);
+  }
+  return withCloud;
 });
 handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
   return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);
@@ -616,6 +763,8 @@ handle("signals:sync", () => {
 handle("signals:run", (request: SignalRunRequest = {}) => {
   return getSdkClient().request("runSignals", request);
 });
+handle("cloud-sync:get-status", async () => cloudSyncStatus);
+handle("cloud-sync:trigger", async () => runCloudSync());
 
 handle("pty:subscribe", async (id: string, cols: number, rows: number, cwd?: string) => {
   const resolvedCwd = resolvePtyCwd(cwd);
@@ -740,6 +889,7 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   workspaceWatcher.stop();
+  stopCloudSync();
   killAllPtys();
   void sdkClient?.dispose();
 });

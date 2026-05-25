@@ -13,6 +13,7 @@ Agent CRM App is a local desktop client for Agent CRM workspaces. It uses the SD
 - create records with SDK field syntax
 - import CSV rows
 - import meeting transcripts
+- import connected Gmail data from the hosted sync engine into the local `.acrm`
 - run SQL queries against the workspace
 
 The sidebar is schema-driven. It reads objects from the open workspace through `dumpSchema()` and renders them dynamically. The built-in SDK objects are:
@@ -22,6 +23,8 @@ The sidebar is schema-driven. It reads objects from the open workspace through `
 - `deals`
 - `posts`
 - `transcripts`
+- `communication_threads`
+- `communication_messages`
 
 Those default objects get a preferred display order and icons, but the list itself comes from the workspace schema. Additional custom objects should appear after the SDK defaults.
 
@@ -46,6 +49,19 @@ React UI
   -> @agent-crm/sdk
   -> .acrm workspace file
 ```
+
+Gmail sync flow:
+
+```text
+/acrm-onboarding
+  -> hosted Google OAuth
+  -> sync engine / Supabase cache
+  -> Electron background pull
+  -> @agent-crm/sdk
+  -> local .acrm workspace file
+```
+
+The app never starts Google OAuth from the UI. It only checks whether Gmail is already connected for the open workspace, then imports exported Gmail data locally.
 
 ## Project Structure
 
@@ -88,6 +104,16 @@ npm run dev
 This starts Vite on `127.0.0.1:5173`, compiles the Electron files, and opens the Electron shell.
 
 Use **Create** to create a fresh `.acrm` workspace, or **Open** to choose an existing workspace file.
+
+The app stores hosted-sync metadata next to the workspace in `.agent-crm-cloud.json`:
+
+```json
+{
+  "workspaceId": "...",
+  "clientToken": "...",
+  "createdAt": "..."
+}
+```
 
 ## Browser Preview
 

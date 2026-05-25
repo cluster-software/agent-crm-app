@@ -8,6 +8,22 @@ export type WorkspaceSummary = {
   recent: RecordPreview[];
 };
 
+export type CloudSyncStatus =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "disconnected" }
+  | { state: "syncing" }
+  | {
+      state: "synced";
+      lastSyncedAt: string;
+      stats?: {
+        people_created: number;
+        communication_threads_created: number;
+        communication_messages_created: number;
+      };
+    }
+  | { state: "error"; message: string };
+
 export type SchemaAttribute = {
   attribute_slug: string;
   title: string;
@@ -250,7 +266,10 @@ export type AppBridge = {
   listSignalRuns: () => Promise<SignalRunJob[]>;
   syncSignals: () => Promise<SignalSyncResult>;
   runSignals: (request?: SignalRunRequest) => Promise<SignalRunStartResult>;
+  getCloudSyncStatus: () => Promise<CloudSyncStatus>;
+  triggerCloudSync: () => Promise<CloudSyncStatus>;
   onWorkspaceChanged: (handler: () => void) => () => void;
+  onCloudSyncStatus: (handler: (status: CloudSyncStatus) => void) => () => void;
   onUpdateStatus: (handler: (status: UpdateStatus) => void) => () => void;
   installUpdate: () => Promise<void>;
 };
