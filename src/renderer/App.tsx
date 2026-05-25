@@ -926,6 +926,8 @@ type RecordsEmptyConfig = {
   comment: string;
 };
 
+const ACRM_ONBOARDING_PROMPT = "Onboard me into Agent CRM for this workspace.";
+
 const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
   companies: {
     marks: ["a", "r", "v"],
@@ -967,7 +969,7 @@ function RecordsEmptyState({ slug }: { slug: string }) {
         <h2 className="records-empty__title">{config.title}</h2>
         <p className="records-empty__body">{config.body}</p>
         <div className="records-empty__cli">
-          <CliBlock comment={config.comment} command="/acrm-onboarding" />
+          <CliBlock comment={config.comment} command={ACRM_ONBOARDING_PROMPT} />
         </div>
       </div>
     </div>
