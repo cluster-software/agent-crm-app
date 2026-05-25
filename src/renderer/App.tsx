@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
-  Download,
   FileText,
   FilePlus2,
   FolderOpen,
@@ -62,11 +61,23 @@ import {
   MonoLabel,
   XIcon
 } from "./primitives";
+import agentCrmLogo from "./assets/agent-crm-bg.png";
+import packageJson from "../../package.json";
 
-const sdkObjectOrder = ["companies", "people", "deals", "posts", "transcripts"];
+const sdkObjectOrder = [
+  "companies",
+  "people",
+  "deals",
+  "communication_threads",
+  "communication_messages",
+  "posts",
+  "transcripts"
+];
 const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
+const appVersion = packageJson.version;
+const appDisplayVersion = displayVersion(appVersion);
 
-type PersonTab = "overview" | "transcripts" | "posts";
+type PersonTab = "overview" | "messages" | "transcripts" | "posts";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
@@ -111,7 +122,7 @@ export function App() {
 
   useEffect(() => {
     setDetailRecord(null);
-  }, [mainView, selectedObjectSlug]);
+  }, [selectedObjectSlug]);
 
   useEffect(() => {
     setPersonTab("overview");
@@ -165,6 +176,13 @@ export function App() {
     function onEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+
+      if (mainView === "settings") {
+        event.preventDefault();
+        setMainView("records");
+        return;
+      }
+
       if (isEditableTarget(event.target)) return;
       if (isTerminalTarget(event.target)) return;
 
@@ -180,7 +198,7 @@ export function App() {
     }
     window.addEventListener("keydown", onEscape);
     return () => window.removeEventListener("keydown", onEscape);
-  }, [detailRecord, personTab]);
+  }, [detailRecord, mainView, personTab]);
 
   const [dataVersion, setDataVersion] = useState(0);
 
@@ -256,7 +274,7 @@ export function App() {
       <aside className="sidebar" hidden={!sidebarOpen}>
         <div className="traffic-space" />
         <div className="workspace-switcher">
-          <span className="workspace-label">Agent CRM</span>
+          <img className="workspace-logo" src={agentCrmLogo} alt="Agent CRM" />
         </div>
 
         <div className="sidebar-section">
@@ -276,6 +294,8 @@ export function App() {
                   onClick={() => {
                     setSelectedObjectSlug(object.object_slug);
                     setMainView("records");
+                    setDetailRecord(null);
+                    setPersonTab("overview");
                   }}
                 >
                   <span className="nav-item__icon">
@@ -293,30 +313,33 @@ export function App() {
 
         <div className="sidebar-spacer" />
 
-        <button
-          type="button"
-          className="nav-item nav-item--settings"
-          aria-current={mainView === "settings"}
-          onClick={() => setMainView("settings")}
-        >
-          <span className="nav-item__icon">
-            <Settings size={14} className="lucide" />
-          </span>
-          <span className="nav-item__label">Settings</span>
-        </button>
-
         <div className="sidebar-footer">
-          <span
-            className="sidebar-footer__dot"
-            data-state={workspace ? "live" : "idle"}
-          />
-          <div className="sidebar-footer__body">
-            <div className="sidebar-footer__title">
-              {workspace ? workspace.filename : "agent-crm"}
+          <button
+            type="button"
+            className="sidebar-footer__settings"
+            aria-current={mainView === "settings"}
+            onClick={() => setMainView("settings")}
+          >
+            <Settings size={14} className="lucide" />
+            <span>Settings</span>
+          </button>
+
+          <div className="sidebar-footer__divider" aria-hidden="true" />
+
+          <div className="sidebar-footer__content">
+            <div
+              className="sidebar-footer__status"
+              title={workspace ? workspace.filename : "No workspace"}
+            >
+              <span
+                className="sidebar-footer__dot"
+                data-state={workspace ? "live" : "idle"}
+              />
+              <span>agent-crm v{appDisplayVersion}</span>
             </div>
+            <UpdateBanner status={updateStatus} appVersion={appVersion} />
           </div>
         </div>
-        <UpdateBanner status={updateStatus} />
       </aside>
 
       <main className="main">
@@ -575,17 +598,24 @@ function CreateWorkspaceModal({
   );
 }
 
-function UpdateBanner({ status }: { status: UpdateStatus }) {
+function UpdateBanner({ status, appVersion }: { status: UpdateStatus; appVersion: string }) {
   if (status.state === "idle" || status.state === "checking" || status.state === "error") {
     return null;
   }
+
   const isReady = status.state === "ready";
+  const version =
+    status.state === "available" || status.state === "downloading" || status.state === "ready"
+      ? status.version
+      : appVersion;
   const label =
     status.state === "available"
-      ? `Update v${status.version} available`
+      ? "Update"
       : status.state === "downloading"
-        ? `Downloading v${status.version} · ${status.percent}%`
-        : `Restart to install v${status.version}`;
+        ? "Downloading"
+        : "Restart";
+  const detail = status.state === "downloading" ? `${status.percent}%` : `v${displayVersion(version)}`;
+
   return (
     <button
       type="button"
@@ -596,10 +626,14 @@ function UpdateBanner({ status }: { status: UpdateStatus }) {
         if (isReady) void api.installUpdate();
       }}
     >
-      <Download size={13} className="lucide" />
-      <span>{label}</span>
+      <span className="update-banner__label">{label}</span>
+      <span className="update-banner__version">{detail}</span>
     </button>
   );
+}
+
+function displayVersion(version: string): string {
+  return version.split("-")[0] ?? version;
 }
 
 function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: () => void }) {
@@ -707,53 +741,100 @@ function SettingsView({
 
       {activeTab === "signals" ? (
         <section className="settings-panel">
-          <p className="settings-panel__description">
-            Signals are configured in the <code>/signals</code> directory of your workspace. They automatically fill in data about a company or person using a background web search with Claude. Use the <code>/create-signals</code> signals skill to create one or learn more.
-          </p>
           {signals === null ? (
             <div className="empty-inline">
               <Loader2 size={14} className="lucide spin" />
               <span>loading signals</span>
             </div>
           ) : signals.length === 0 ? (
-            <div className="empty-inline">
-              <span>no signal definitions in signals/</span>
-            </div>
+            <SignalsEmptyState />
           ) : (
-            <div className="settings-signals">
-              {signals.map((signal) => (
-                <article className="settings-signal" key={signal.slug}>
-                  <header className="settings-signal__header">
-                    <div className="settings-signal__title">
-                      <MonoLabel>{signal.object_slug}</MonoLabel>
-                      <h2>{signal.title}</h2>
-                    </div>
-                    <Badge>{signal.outputs.length} fields</Badge>
-                  </header>
-                  <div className="settings-signal__outputs">
-                    {signal.outputs.map((output) => (
-                      <div className="settings-signal__output" key={output.key}>
-                        <div className="settings-signal__output-main">
-                          <span>{output.title}</span>
-                          <span className="settings-signal__attribute mono">{output.attribute}</span>
-                        </div>
-                        <span className="settings-signal__type">{output.type}</span>
-                        {output.options && output.options.length > 0 && (
-                          <span className="settings-signal__options">
-                            {output.options.map((option) => option.title).join(", ")}
-                          </span>
-                        )}
+            <>
+              <p className="settings-panel__description">
+                Signals are configured in the <code>/signals</code> directory of your workspace. They automatically fill in data about a company or person using a background web search with Claude. Use the <code>/create-signals</code> signals skill to create one or learn more.
+              </p>
+              <div className="settings-signals">
+                {signals.map((signal) => (
+                  <article className="settings-signal" key={signal.slug}>
+                    <header className="settings-signal__header">
+                      <div className="settings-signal__title">
+                        <MonoLabel>{signal.object_slug}</MonoLabel>
+                        <h2>{signal.title}</h2>
                       </div>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
+                      <Badge>{signal.outputs.length} fields</Badge>
+                    </header>
+                    <div className="settings-signal__outputs">
+                      {signal.outputs.map((output) => (
+                        <div className="settings-signal__output" key={output.key}>
+                          <div className="settings-signal__output-main">
+                            <span>{output.title}</span>
+                            <span className="settings-signal__attribute mono">{output.attribute}</span>
+                          </div>
+                          <span className="settings-signal__type">{output.type}</span>
+                          {output.options && output.options.length > 0 && (
+                            <span className="settings-signal__options">
+                              {output.options.map((option) => option.title).join(", ")}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </>
           )}
         </section>
       ) : (
         <IntegrationsSettingsPanel integrations={integrations} />
       )}
+    </div>
+  );
+}
+
+function SignalsEmptyState() {
+  return (
+    <div className="signals-empty">
+      <div className="signals-empty__ghost" aria-hidden="true">
+        <div className="signals-empty-card">
+          <div className="signals-empty-card__header">
+            <span className="signals-empty-card__chip">company_signal</span>
+            <span className="signals-empty-card__status" />
+          </div>
+          <div className="signals-empty-card__body">
+            <div className="signals-empty-card__row" data-wide="true">
+              <span />
+              <span />
+            </div>
+            <div className="signals-empty-card__row">
+              <span />
+              <span />
+            </div>
+            <div className="signals-empty-card__row" data-short="true">
+              <span />
+              <span />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2>Let Claude research your prospects</h2>
+      <p>
+        Signals allow Claude to scrape the web for prospect information relevant to your
+        business. Every time you import a record Claude runs in the background with{" "}
+        <code>claude -p</code> based on the prompt configured by the{" "}
+        <code>/create-signals</code> skill.
+      </p>
+      <p>
+        Define what you want, and every record gets enriched.
+      </p>
+
+      <div className="signals-empty__cli">
+        <CliBlock
+          comment="define a new signal interactively"
+          command="/create-signals for hotels in companies research whether they offer breakfast"
+        />
+      </div>
     </div>
   );
 }
@@ -799,12 +880,12 @@ function IntegrationsSettingsPanel({
       <div className="settings-integrations">
         <IntegrationProviderRow
           title="Gmail"
-          Icon={Mail}
+          channel="email"
           status={integrations.integrations.gmail}
         />
         <IntegrationProviderRow
           title="LinkedIn"
-          Icon={LinkedInIcon}
+          channel="linkedin"
           status={integrations.integrations.linkedin}
         />
       </div>
@@ -814,11 +895,11 @@ function IntegrationsSettingsPanel({
 
 function IntegrationProviderRow({
   title,
-  Icon,
+  channel,
   status
 }: {
   title: string;
-  Icon: ComponentType<{ size?: number; className?: string }>;
+  channel: "email" | "linkedin";
   status: IntegrationProviderStatus;
 }) {
   const accounts = integrationAccounts(status);
@@ -827,7 +908,7 @@ function IntegrationProviderRow({
       <header className="settings-integration__header">
         <div className="settings-integration__provider">
           <span className="settings-integration__icon">
-            <Icon size={15} className="lucide" />
+            <ChannelMark channel={channel} size={24} />
           </span>
           <div className="settings-integration__title">
             <h2>{title}</h2>
@@ -2374,9 +2455,22 @@ type RelatedRecord = {
   attrs: Record<string, unknown>;
 };
 
+type CommunicationChannel = "email" | "linkedin" | "other";
+type CommunicationDirection = "inbound" | "outbound" | "unknown";
+
+type CommunicationMessage = RelatedRecord & {
+  senderLabel: string;
+  recipientLabels: string[];
+};
+
+type CommunicationThread = RelatedRecord & {
+  messages: CommunicationMessage[];
+  unread: boolean;
+};
+
 async function fetchAssociated(
   personRecordId: string,
-  childObject: "transcripts" | "posts",
+  childObject: "transcripts" | "posts" | "communication_threads",
   inverseAttribute: string
 ): Promise<RelatedRecord[]> {
   const result = await api.runQuery(
@@ -2404,10 +2498,159 @@ async function fetchAssociated(
       map.set(id, entry);
     }
     if (row.attr != null) {
-      entry.attrs[String(row.attr)] = parseValueJson(row.val);
+      pushAttrValue(entry.attrs, String(row.attr), parseValueJson(row.val));
     }
   }
   return [...map.values()];
+}
+
+async function fetchCommunicationThreads(personRecordId: string): Promise<CommunicationThread[]> {
+  const threads = await fetchAssociated(
+    personRecordId,
+    "communication_threads",
+    "communication_threads"
+  );
+  return initializeCommunicationThreads(threads);
+}
+
+async function hydrateCommunicationThreads(
+  threads: CommunicationThread[]
+): Promise<CommunicationThread[]> {
+  const loaded = await Promise.all(
+    threads.map(async (thread) => {
+      const messages = await fetchThreadMessages(thread.id);
+      return {
+        ...thread,
+        messages,
+        unread: messages.some(messageIsUnread)
+      };
+    })
+  );
+  return sortCommunicationThreads(loaded);
+}
+
+function initializeCommunicationThreads(threads: RelatedRecord[]): CommunicationThread[] {
+  return sortCommunicationThreads(
+    threads.map((thread) => ({
+      ...thread,
+      messages: [],
+      unread: false
+    }))
+  );
+}
+
+function sortCommunicationThreads(threads: CommunicationThread[]): CommunicationThread[] {
+  return [...threads].sort((a, b) =>
+    communicationThreadSortValue(b).localeCompare(communicationThreadSortValue(a))
+  );
+}
+
+async function fetchThreadMessages(threadRecordId: string): Promise<CommunicationMessage[]> {
+  const result = await api.runQuery(
+    `SELECT v.record_id AS rec_id,
+            mv.attribute_slug AS attr,
+            mv.value_json AS val,
+            mv.ref_object AS ref_object,
+            mv.ref_record_id AS ref_record_id
+       FROM acrm_value v
+       LEFT JOIN acrm_value mv
+         ON mv.object_slug = 'communication_messages'
+        AND mv.record_id = v.record_id
+        AND mv.active_until IS NULL
+      WHERE v.object_slug = 'communication_messages'
+        AND v.attribute_slug = 'thread'
+        AND v.ref_object = 'communication_threads'
+        AND v.ref_record_id = $1
+        AND v.active_until IS NULL`,
+    [threadRecordId]
+  );
+
+  const map = new Map<string, RelatedRecord>();
+  const peopleRefs = new Set<string>();
+  for (const row of result.rows) {
+    const id = row.rec_id == null ? "" : String(row.rec_id);
+    if (!id) continue;
+    let entry = map.get(id);
+    if (!entry) {
+      entry = { id, attrs: {} };
+      map.set(id, entry);
+    }
+    if (row.attr == null) continue;
+    const attr = String(row.attr);
+    const ref = row.ref_record_id && row.ref_object
+      ? { target_object: String(row.ref_object), target_record_id: String(row.ref_record_id) }
+      : null;
+    const parsed = ref ?? parseValueJson(row.val);
+    pushAttrValue(entry.attrs, attr, parsed);
+    if (ref?.target_object === "people") {
+      peopleRefs.add(ref.target_record_id);
+    }
+  }
+
+  const peopleLabels = await fetchRecordLabels("people", [...peopleRefs]);
+  return [...map.values()]
+    .map((item) => {
+      const senderId = getRecordRefIds(item.attrs, "sender")[0] ?? "";
+      const recipientIds = getRecordRefIds(item.attrs, "recipients");
+      const senderFallback =
+        getScalar(item.attrs, "sender") ||
+        getScalar(item.attrs, "from") ||
+        getScalar(item.attrs, "from_email") ||
+        getScalar(item.attrs, "sender_email");
+      return {
+        ...item,
+        senderLabel: peopleLabels.get(senderId) ?? senderFallback,
+        recipientLabels: recipientIds.map((id) => peopleLabels.get(id) ?? id.slice(0, 8))
+      };
+    })
+    .sort((a, b) => getScalar(a.attrs, "sent_at").localeCompare(getScalar(b.attrs, "sent_at")));
+}
+
+async function fetchRecordLabels(objectSlug: "people", recordIds: string[]): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  const unique = [...new Set(recordIds.filter(Boolean))];
+  if (unique.length === 0) return labels;
+  const where = unique.map((_, index) => `record_id = $${index + 1}`).join(" OR ");
+  const result = await api.runQuery(
+    `SELECT record_id, attribute_slug, value_json
+       FROM acrm_value
+      WHERE object_slug = '${objectSlug}'
+        AND active_until IS NULL
+        AND (${where})
+        AND attribute_slug IN ('name', 'email_addresses', 'linkedin_url')`,
+    unique
+  );
+  const grouped = new Map<string, Record<string, unknown>>();
+  for (const row of result.rows) {
+    const id = row.record_id == null ? "" : String(row.record_id);
+    const attr = row.attribute_slug == null ? "" : String(row.attribute_slug);
+    if (!id || !attr) continue;
+    const attrs = grouped.get(id) ?? {};
+    pushAttrValue(attrs, attr, parseValueJson(row.value_json));
+    grouped.set(id, attrs);
+  }
+  for (const id of unique) {
+    const attrs = grouped.get(id) ?? {};
+    labels.set(
+      id,
+      getScalar(attrs, "name") ||
+        getScalar(attrs, "email_addresses") ||
+        stripUrl(getScalar(attrs, "linkedin_url")) ||
+        id.slice(0, 8)
+    );
+  }
+  return labels;
+}
+
+function pushAttrValue(attrs: Record<string, unknown>, key: string, value: unknown) {
+  const existing = attrs[key];
+  if (existing === undefined) {
+    attrs[key] = value;
+  } else if (Array.isArray(existing)) {
+    existing.push(value);
+  } else {
+    attrs[key] = [existing, value];
+  }
 }
 
 function parseValueJson(raw: unknown): unknown {
@@ -2422,15 +2665,68 @@ function parseValueJson(raw: unknown): unknown {
 function getScalar(attrs: Record<string, unknown>, key: string): string {
   const value = attrs[key];
   if (value == null) return "";
+  if (Array.isArray(value)) return value.map((item) => displayUnknown(item)).filter(Boolean).join(", ");
+  return displayUnknown(value);
+}
+
+function displayUnknown(value: unknown): string {
+  if (value == null) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
     const candidate =
-      obj.value ?? obj.title ?? obj.timestamp ?? obj.date ?? obj.text ?? obj.url;
+      obj.full_name ??
+      obj.value ??
+      obj.title ??
+      obj.timestamp ??
+      obj.date ??
+      obj.text ??
+      obj.url ??
+      obj.email_address ??
+      obj.domain ??
+      obj.root_domain;
     if (candidate != null) return String(candidate);
   }
   return "";
+}
+
+function getStringArray(attrs: Record<string, unknown>, key: string): string[] {
+  const value = attrs[key];
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  return values.map(displayUnknown).filter(Boolean);
+}
+
+function getRecordRefIds(attrs: Record<string, unknown>, key: string): string[] {
+  const value = attrs[key];
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  return values.flatMap((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+    const ref = item as Record<string, unknown>;
+    return typeof ref.target_record_id === "string" ? [ref.target_record_id] : [];
+  });
+}
+
+function communicationChannel(attrs: Record<string, unknown>): CommunicationChannel {
+  const channel = getScalar(attrs, "channel").toLowerCase();
+  if (channel === "email" || channel === "linkedin") return channel;
+  return "other";
+}
+
+function communicationDirection(attrs: Record<string, unknown>): CommunicationDirection {
+  const direction = getScalar(attrs, "direction").toLowerCase();
+  if (direction === "inbound" || direction === "outbound") return direction;
+  return "unknown";
+}
+
+function communicationThreadSortValue(thread: CommunicationThread): string {
+  return getScalar(thread.attrs, "last_message_at") ||
+    getScalar(thread.messages.at(-1)?.attrs ?? {}, "sent_at") ||
+    "";
+}
+
+function messageIsUnread(message: CommunicationMessage): boolean {
+  return getStringArray(message.attrs, "label_ids").some((label) => label.toLowerCase() === "unread");
 }
 
 function formatDateDisplay(iso: string): string {
@@ -2442,6 +2738,43 @@ function formatDateDisplay(iso: string): string {
     month: "short",
     day: "numeric"
   });
+}
+
+function formatDateTimeDisplay(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function formatRelativeTime(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return formatDateDisplay(iso);
+  const diffMs = d.getTime() - Date.now();
+  const abs = Math.abs(diffMs);
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["year", 1000 * 60 * 60 * 24 * 365],
+    ["month", 1000 * 60 * 60 * 24 * 30],
+    ["day", 1000 * 60 * 60 * 24],
+    ["hour", 1000 * 60 * 60],
+    ["minute", 1000 * 60]
+  ];
+  const [unit, ms] = units.find(([, unitMs]) => abs >= unitMs) ?? ["minute", 1000 * 60];
+  const value = Math.round(diffMs / ms);
+  if (value === 0) return "now";
+  return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(value, unit);
+}
+
+function truncateText(value: string, max = 160): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1).trim()}…`;
 }
 
 function formatDuration(value: unknown): string {
@@ -2506,15 +2839,38 @@ function PersonDetail({
   const meta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : null;
   const contactRows = buildContactRows(record);
 
+  const [communicationThreads, setCommunicationThreads] = useState<CommunicationThread[]>([]);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [messageChannel, setMessageChannel] = useState<CommunicationChannel | "all" | "unread">("all");
   const [transcripts, setTranscripts] = useState<RelatedRecord[]>([]);
   const [posts, setPosts] = useState<RelatedRecord[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(true);
   const [relatedError, setRelatedError] = useState<string | null>(null);
 
   useEffect(() => {
+    setSelectedThreadId(null);
+  }, [record.record_id, tab]);
+
+  useEffect(() => {
     let cancelled = false;
     setLoadingRelated(true);
     setRelatedError(null);
+    setCommunicationThreads([]);
+
+    fetchCommunicationThreads(record.record_id)
+      .then((threads) => {
+        if (cancelled) return;
+        setCommunicationThreads(threads);
+        return hydrateCommunicationThreads(threads);
+      })
+      .then((hydratedThreads) => {
+        if (cancelled || !hydratedThreads) return;
+        setCommunicationThreads(hydratedThreads);
+      })
+      .catch((err) => {
+        if (!cancelled) setRelatedError(statusFromError(err));
+      });
+
     Promise.all([
       fetchAssociated(record.record_id, "transcripts", "associated_transcripts"),
       fetchAssociated(record.record_id, "posts", "associated_posts")
@@ -2543,6 +2899,14 @@ function PersonDetail({
     };
   }, [record.record_id]);
 
+  const filteredThreads = useMemo(() => {
+    if (messageChannel === "all") return communicationThreads;
+    if (messageChannel === "unread") return communicationThreads.filter((thread) => thread.unread);
+    return communicationThreads.filter((thread) => communicationChannel(thread.attrs) === messageChannel);
+  }, [communicationThreads, messageChannel]);
+  const selectedThread =
+    communicationThreads.find((thread) => thread.id === selectedThreadId) ?? null;
+
   return (
     <div className="detail">
       <header className="detail__header">
@@ -2558,6 +2922,14 @@ function PersonDetail({
           onClick={() => onTabChange("overview")}
         >
           Overview
+        </button>
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "messages"}
+          onClick={() => onTabChange("messages")}
+        >
+          Messages <span className="tab__count">{communicationThreads.length}</span>
         </button>
         <button
           type="button"
@@ -2582,7 +2954,7 @@ function PersonDetail({
           <section className="detail__activity">
             <MonoLabel>Recent activity</MonoLabel>
             <div className="empty-inline">
-              <span>no activity yet · agent runs and transcripts will appear here</span>
+              <span>no activity yet · messages, agent runs, and transcripts will appear here</span>
             </div>
           </section>
 
@@ -2617,6 +2989,23 @@ function PersonDetail({
             <div className="empty-inline"><span>{relatedError}</span></div>
           ) : loadingRelated ? (
             <div className="empty-inline"><span>loading…</span></div>
+          ) : tab === "messages" ? (
+            selectedThread ? (
+              <MessageThreadView
+                person={record}
+                thread={selectedThread}
+                onBack={() => setSelectedThreadId(null)}
+              />
+            ) : (
+              <MessagesList
+                person={record}
+                threads={filteredThreads}
+                allThreads={communicationThreads}
+                active={messageChannel}
+                onActive={setMessageChannel}
+                onSelect={(thread) => setSelectedThreadId(thread.id)}
+              />
+            )
           ) : tab === "transcripts" ? (
             <RelatedList
               items={transcripts}
@@ -2636,6 +3025,442 @@ function PersonDetail({
       )}
     </div>
   );
+}
+
+function MessagesList({
+  person,
+  threads,
+  allThreads,
+  active,
+  onActive,
+  onSelect
+}: {
+  person: RecordPreview;
+  threads: CommunicationThread[];
+  allThreads: CommunicationThread[];
+  active: CommunicationChannel | "all" | "unread";
+  onActive: (next: CommunicationChannel | "all" | "unread") => void;
+  onSelect: (thread: CommunicationThread) => void;
+}) {
+  const segments: Array<{ id: CommunicationChannel | "all" | "unread"; label: string; count: number }> = [
+    { id: "all", label: "All", count: allThreads.length },
+    {
+      id: "email",
+      label: "Email",
+      count: allThreads.filter((thread) => communicationChannel(thread.attrs) === "email").length
+    },
+    {
+      id: "linkedin",
+      label: "LinkedIn",
+      count: allThreads.filter((thread) => communicationChannel(thread.attrs) === "linkedin").length
+    },
+    { id: "unread", label: "Unread", count: allThreads.filter((thread) => thread.unread).length }
+  ];
+
+  return (
+    <div className="messages-panel">
+      <div className="messages-subhead">
+        <div className="messages-segmented" role="tablist" aria-label="Message channel">
+          {segments.map((segment) => (
+            <button
+              key={segment.id}
+              type="button"
+              className="messages-segment"
+              aria-selected={active === segment.id}
+              onClick={() => onActive(segment.id)}
+            >
+              <span>{segment.label}</span>
+              <span className="messages-segment__count">{segment.count}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {threads.length === 0 ? (
+        <div className="empty-inline">
+          <span>no messages linked to this person yet</span>
+        </div>
+      ) : (
+        <div className="messages-list">
+          {threads.map((thread, index) => (
+            <MessageThreadRow
+              key={thread.id}
+              person={person}
+              thread={thread}
+              last={index === threads.length - 1}
+              onClick={() => onSelect(thread)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessageThreadRow({
+  person,
+  thread,
+  last,
+  onClick
+}: {
+  person: RecordPreview;
+  thread: CommunicationThread;
+  last: boolean;
+  onClick: () => void;
+}) {
+  const latest = thread.messages.at(-1);
+  const channel = communicationChannel(thread.attrs);
+  const title =
+    getScalar(thread.attrs, "subject") ||
+    getScalar(latest?.attrs ?? {}, "subject") ||
+    (channel === "linkedin" ? "LinkedIn conversation" : "Email thread");
+  const preview =
+    getScalar(thread.attrs, "snippet") ||
+    getScalar(latest?.attrs ?? {}, "snippet") ||
+    getScalar(latest?.attrs ?? {}, "body_text");
+  const latestAt =
+    getScalar(thread.attrs, "last_message_at") ||
+    getScalar(latest?.attrs ?? {}, "sent_at");
+  const from = latest
+    ? communicationDirection(latest.attrs) === "outbound"
+      ? latest.recipientLabels.length > 0
+        ? `to ${latest.recipientLabels.join(", ")}`
+        : "sent"
+      : latest.senderLabel || person.label
+    : channelLabel(channel);
+
+  return (
+    <button
+      type="button"
+      className="message-row"
+      data-last={last ? "true" : undefined}
+      data-unread={thread.unread ? "true" : undefined}
+      onClick={onClick}
+    >
+      <span className="message-row__unread">
+        {thread.unread && <span />}
+      </span>
+      <ChannelMark channel={channel} />
+      <span className="message-row__content">
+        <span className="message-row__line">
+          <span className="message-row__from">{from}</span>
+          <span className="message-row__dot">·</span>
+          <span className="message-row__subject">{title}</span>
+        </span>
+        <span className="message-row__preview">{truncateText(preview || "no preview available", 180)}</span>
+      </span>
+      <span className="message-row__time">{formatRelativeTime(latestAt)}</span>
+    </button>
+  );
+}
+
+function MessageThreadView({
+  person,
+  thread,
+  onBack
+}: {
+  person: RecordPreview;
+  thread: CommunicationThread;
+  onBack: () => void;
+}) {
+  const channel = communicationChannel(thread.attrs);
+  const count = Number(getScalar(thread.attrs, "message_count")) || thread.messages.length;
+  const title =
+    getScalar(thread.attrs, "subject") ||
+    getScalar(thread.messages[0]?.attrs ?? {}, "subject") ||
+    (channel === "linkedin" ? `LinkedIn conversation with ${person.label}` : "Email thread");
+  const participantLabels = uniqueStrings([
+    person.label,
+    ...thread.messages.flatMap((message) => [messageSenderLabel(message, person), ...message.recipientLabels])
+  ]).slice(0, 6);
+
+  return (
+    <div className="message-thread">
+      <header className="message-thread__header">
+        <button type="button" className="message-thread__back" onClick={onBack}>
+          <ChevronLeft size={13} className="lucide" />
+          Messages
+        </button>
+        <div className="message-thread__eyebrow">
+          <ChannelMark channel={channel} size={18} />
+          <span>
+            {channelLabel(channel)} thread · {count} message{count === 1 ? "" : "s"}
+          </span>
+        </div>
+        <h2 className="message-thread__title display">{title}</h2>
+        {participantLabels.length > 0 && (
+          <div className="message-thread__participants">{participantLabels.join(" · ")}</div>
+        )}
+      </header>
+
+      <div className="message-thread__body">
+        {thread.messages.length === 0 ? (
+          <div className="empty-inline">
+            <span>no messages found for this thread</span>
+          </div>
+        ) : (
+          thread.messages.map((message) => (
+            <ThreadMessageCard key={message.id} message={message} person={person} />
+          ))
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+function ThreadMessageCard({
+  message,
+  person
+}: {
+  message: CommunicationMessage;
+  person: RecordPreview;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const direction = communicationDirection(message.attrs);
+  const from = messageSenderLabel(message, person);
+  const sentAt = getScalar(message.attrs, "sent_at");
+  const body = normalizeEmailBody(getScalar(message.attrs, "body_text") || getScalar(message.attrs, "snippet"));
+  const paragraphs = body ? body.split(/\n{2,}/).filter((paragraph) => paragraph.trim()) : [];
+  const expandable = body.length > 900 || paragraphs.length > 4;
+
+  return (
+    <article className="thread-message" data-direction={direction}>
+      <div className="thread-message__head">
+        <Avatar name={from} size={26} />
+        <div className="thread-message__sender">
+          <span>{from}</span>
+          <span>{direction === "outbound" ? "sent" : "received"}</span>
+        </div>
+        <time className="thread-message__time">{formatDateTimeDisplay(sentAt)}</time>
+      </div>
+      <div
+        className="thread-message__body"
+        data-collapsed={expandable && !expanded ? "true" : undefined}
+      >
+        {body ? (
+          paragraphs.map((paragraph, index) => (
+            <p key={index}>{linkifyText(paragraph)}</p>
+          ))
+        ) : (
+          <p className="thread-message__empty">No body text saved for this message.</p>
+        )}
+      </div>
+      {expandable && (
+        <button
+          type="button"
+          className="thread-message__expand"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Show less" : "Show full message"}
+        </button>
+      )}
+    </article>
+  );
+}
+
+function messageSenderLabel(message: CommunicationMessage, person: RecordPreview): string {
+  const direction = communicationDirection(message.attrs);
+  return message.senderLabel || (direction === "outbound" ? "You" : person.label);
+}
+
+function linkifyText(text: string): ReactNode[] {
+  const htmlAnchorParts = renderHtmlAnchors(text);
+  if (htmlAnchorParts) return htmlAnchorParts;
+
+  const parts: ReactNode[] = [];
+  const parenthesizedUrlPattern = /\((https?:\/\/[^)\s]+)\)/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = parenthesizedUrlPattern.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index);
+    const linkText = extractTrailingLinkText(before);
+    const prefix = linkText ? before.slice(0, before.length - linkText.raw.length) : before;
+    parts.push(...linkifyStandaloneUrls(prefix, parts.length));
+
+    const rawUrl = match[1];
+    const { href } = trimUrlSuffix(rawUrl);
+    parts.push(
+      <a key={`linked-${match.index}`} href={href} target="_blank" rel="noreferrer">
+        {linkText?.label || domainFromUrl(href) || "Open link"}
+      </a>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(...linkifyStandaloneUrls(text.slice(lastIndex), parts.length));
+  }
+  return parts;
+}
+
+function renderHtmlAnchors(text: string): ReactNode[] | null {
+  if (!/<a\s/i.test(text)) return null;
+  const parts: ReactNode[] = [];
+  const anchorPattern = /<a\b[^>]*href=(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = anchorPattern.exec(text)) !== null) {
+    parts.push(...linkifyText(stripHtmlTags(text.slice(lastIndex, match.index))));
+    const href = normalizeLinkHref(decodeHtmlEntities(match[1] ?? match[2] ?? match[3] ?? ""));
+    const label = normalizeEmailBody(stripHtmlTags(match[4])).trim() || domainFromUrl(href) || "Open link";
+    parts.push(
+      <a key={`html-anchor-${match.index}`} href={href} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  parts.push(...linkifyText(stripHtmlTags(text.slice(lastIndex))));
+  return parts;
+}
+
+function linkifyStandaloneUrls(text: string, keyOffset = 0): ReactNode[] {
+  const parts: ReactNode[] = [];
+  const urlPattern = /https?:\/\/[^\s<>"')]+/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = urlPattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    const { href, suffix } = trimUrlSuffix(match[0]);
+    parts.push(
+      <a key={`url-${keyOffset}-${match.index}`} href={href} target="_blank" rel="noreferrer">
+        {domainFromUrl(href) || "Open link"}
+      </a>
+    );
+    if (suffix) parts.push(suffix);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+}
+
+function extractTrailingLinkText(text: string): { raw: string; label: string } | null {
+  const trailing = text.match(/([^\n.!?;:]+?)\s*$/);
+  if (!trailing) return null;
+  const raw = trailing[0];
+  const label = trailing[1].trim();
+  if (!label) return null;
+  if (label.length <= 120) return { raw, label };
+
+  const action = label.match(
+    /(?:^|\s)((?:RSVP|Register|Sign up|Join us|Learn more|Read more|View details|Book now|Apply now|Get tickets|Open|here|this link)(?:\s+now)?)$/i
+  );
+  if (action) return { raw: action[0], label: action[1] };
+  return null;
+}
+
+function trimUrlSuffix(url: string): { href: string; suffix: string } {
+  let href = url;
+  let suffix = "";
+  while (/[),.;:!?]$/.test(href)) {
+    suffix = href[href.length - 1] + suffix;
+    href = href.slice(0, -1);
+  }
+  return { href, suffix };
+}
+
+function normalizeLinkHref(href: string): string {
+  const trimmed = href.trim();
+  if (!trimmed) return "#";
+  if (/^(?:https?:|mailto:|tel:)/i.test(trimmed)) return trimmed;
+  return externalUrl(trimmed);
+}
+
+function normalizeEmailBody(raw: string): string {
+  return decodeHtmlEntities(decodeQuotedPrintable(raw))
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, "\n\n")
+    .replace(/<(?!\/?a\b)[^>]+>/gi, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function decodeQuotedPrintable(raw: string): string {
+  if (!/=[0-9A-F]{2}|=\r?\n/i.test(raw)) return raw;
+  const input = raw.replace(/=\r?\n/g, "");
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let out = "";
+  let bytes: number[] = [];
+  const flush = () => {
+    if (bytes.length === 0) return;
+    out += decoder.decode(new Uint8Array(bytes));
+    bytes = [];
+  };
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    const hex = input.slice(i + 1, i + 3);
+    if (char === "=" && /^[0-9A-F]{2}$/i.test(hex)) {
+      bytes.push(Number.parseInt(hex, 16));
+      i += 2;
+    } else {
+      flush();
+      out += char;
+    }
+  }
+  flush();
+  return out;
+}
+
+function decodeHtmlEntities(raw: string): string {
+  if (!/[&][a-z#0-9]+;/i.test(raw)) return raw;
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = raw;
+  return textarea.value;
+}
+
+function stripHtmlTags(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+}
+
+function ChannelMark({
+  channel,
+  size = 18
+}: {
+  channel: CommunicationChannel;
+  size?: number;
+}) {
+  return (
+    <span
+      className="channel-mark"
+      data-channel={channel}
+      style={{ width: size, height: size, fontSize: Math.max(10, size * 0.55) }}
+      title={channelLabel(channel)}
+    >
+      <span className="channel-mark__glyph">
+        {channel === "linkedin" ? "in" : channel === "email" ? "@" : "?"}
+      </span>
+    </span>
+  );
+}
+
+function channelLabel(channel: CommunicationChannel): string {
+  if (channel === "email") return "Email";
+  if (channel === "linkedin") return "LinkedIn";
+  return "Message";
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 function RelatedList({

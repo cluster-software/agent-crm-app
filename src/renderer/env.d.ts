@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import type { AppBridge, TerminalBridge } from "../shared/types";
 
 declare global {

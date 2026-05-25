@@ -116,6 +116,7 @@ function getSignalsDir(): string {
 }
 
 async function listSignalDefinitions() {
+  if (!workspacePath) return [];
   const definitions = await loadSignalDefinitions(getSignalsDir());
   return definitions.map((definition) => ({
     slug: definition.slug,
@@ -503,6 +504,8 @@ function primaryLabelAttributeSlugs(objectSlug: string): string[] {
     people: ["name", "email_addresses", "linkedin_url"],
     companies: ["name", "domains", "linkedin_url"],
     deals: ["name", "stage"],
+    communication_threads: ["subject", "snippet", "provider_thread_id"],
+    communication_messages: ["subject", "snippet", "body_text"],
     posts: ["content", "url"],
     transcripts: ["title", "source_id"]
   };
@@ -514,6 +517,8 @@ function secondaryLabelAttributeSlugs(objectSlug: string): string[] {
     people: ["job_title", "company"],
     companies: ["description", "domains"],
     deals: ["value", "close_date", "next_step"],
+    communication_threads: ["channel", "last_message_at", "message_count"],
+    communication_messages: ["channel", "direction", "sent_at"],
     posts: ["platform", "posted_at", "author"],
     transcripts: ["source", "started_at", "duration_seconds"]
   };
@@ -876,7 +881,17 @@ let queue = Promise.resolve();
 
 rl.on("line", (line) => {
   queue = queue.then(async () => {
-    const request = JSON.parse(line) as RpcRequest;
+    let request: RpcRequest;
+    try {
+      request = JSON.parse(line) as RpcRequest;
+    } catch (error) {
+      send({
+        id: 0,
+        error: serializeError(new Error(`Invalid SDK service request: ${serializeError(error).message}`))
+      });
+      return;
+    }
+
     try {
       const result = await dispatch(request.method, request.params);
       send({ id: request.id, result });
