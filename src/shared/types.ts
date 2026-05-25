@@ -8,11 +8,13 @@ export type WorkspaceSummary = {
   recent: RecordPreview[];
 };
 
+export type CloudSyncProvider = "gmail" | "linkedin";
+
 export type CloudSyncStatus =
   | { state: "idle" }
   | { state: "checking" }
   | { state: "disconnected" }
-  | { state: "syncing" }
+  | { state: "syncing"; providers?: CloudSyncProvider[] }
   | {
       state: "synced";
       lastSyncedAt: string;
@@ -33,6 +35,16 @@ export type IntegrationAccountSummary = {
   lastSyncedAt?: string;
 };
 
+export type IntegrationSyncStatus = {
+  state: "idle" | "pending" | "running" | "succeeded" | "failed";
+  startedAt?: string;
+  finishedAt?: string;
+  errorMessage?: string;
+  peopleSeen?: number;
+  communicationThreadsSeen?: number;
+  communicationMessagesSeen?: number;
+};
+
 export type IntegrationProviderStatus = {
   connected: boolean;
   accountEmail?: string;
@@ -40,6 +52,7 @@ export type IntegrationProviderStatus = {
   providerAccountId?: string;
   lastSyncedAt?: string;
   accounts?: IntegrationAccountSummary[];
+  sync?: IntegrationSyncStatus;
 };
 
 export type CloudIntegrationsStatus =

@@ -12,6 +12,7 @@ import * as nodePty from "node-pty";
 import type {
   CloudIntegrationsStatus,
   CloudSyncStatus,
+  CloudSyncProvider,
   CreateRecordPayload,
   ImportCsvPayload,
   IntegrationAccountSummary,
@@ -42,6 +43,8 @@ let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudSyncWorkspace: WorkspaceSummary | null = null;
 let cloudSyncInFlight: Promise<CloudSyncStatus> | null = null;
+const CLOUD_SYNC_IDLE_INTERVAL_MS = 60_000;
+const CLOUD_SYNC_ACTIVE_INTERVAL_MS = 5_000;
 
 type CommunicationImportStats = {
   people_created: number;
@@ -367,12 +370,12 @@ function startCloudSync(summary: WorkspaceSummary) {
   void runCloudSync();
 }
 
-function scheduleCloudSync() {
+function scheduleCloudSync(delayMs = CLOUD_SYNC_IDLE_INTERVAL_MS) {
   if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => {
     cloudSyncTimer = null;
     void runCloudSync();
-  }, 60_000);
+  }, delayMs);
 }
 
 async function runCloudSync(): Promise<CloudSyncStatus> {
@@ -404,6 +407,11 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
           connected: boolean;
           accountEmail?: string;
           lastSyncedAt?: string;
+          sync?: {
+            state?: string;
+            errorMessage?: string;
+            error_message?: string;
+          };
         };
         linkedin?: {
           connected: boolean;
@@ -418,33 +426,47 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
       };
     }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
 
-    setCloudSyncStatus({ state: "syncing" });
+    const gmailStatus = status.integrations.gmail;
+    const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
+    const connectedProviders: CloudSyncProvider[] = [];
+    if (gmailStatus?.connected) connectedProviders.push("gmail");
+    if (linkedInStatus?.connected) connectedProviders.push("linkedin");
+
+    if (connectedProviders.length === 0) {
+      return setCloudSyncStatus({ state: "disconnected" });
+    }
+
+    const gmailSyncState = gmailStatus?.sync?.state;
+    if (gmailStatus?.connected && (gmailSyncState === "pending" || gmailSyncState === "running")) {
+      scheduleCloudSync(CLOUD_SYNC_ACTIVE_INTERVAL_MS);
+      return setCloudSyncStatus({ state: "syncing", providers: ["gmail"] });
+    }
+    if (gmailStatus?.connected && gmailSyncState === "failed") {
+      return setCloudSyncStatus({
+        state: "error",
+        message: gmailStatus.sync?.errorMessage ?? gmailStatus.sync?.error_message ?? "Gmail sync failed."
+      });
+    }
+
+    setCloudSyncStatus({ state: "syncing", providers: connectedProviders });
     const aggregateStats: CommunicationImportStats = {
       people_created: 0,
       communication_threads_created: 0,
       communication_messages_created: 0
     };
-    let syncedProviders = 0;
 
-    if (status.integrations.gmail?.connected) {
+    if (gmailStatus?.connected) {
       const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail");
       addCommunicationStats(aggregateStats, stats);
-      syncedProviders += 1;
     }
 
-const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
     if (linkedInStatus?.connected) {
       const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "linkedin", {
         ignoreMissingEndpoint: true
       });
       if (stats) {
         addCommunicationStats(aggregateStats, stats);
-        syncedProviders += 1;
       }
-    }
-
-    if (syncedProviders === 0) {
-      return setCloudSyncStatus({ state: "disconnected" });
     }
 
     sendToMainWindow("workspace:changed");
@@ -529,6 +551,14 @@ function stringField(source: Record<string, unknown>, ...keys: string[]): string
   return undefined;
 }
 
+function numberField(source: Record<string, unknown>, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
 function normalizeIntegrationProvider(value: unknown): IntegrationProviderStatus {
   const source = isRecord(value) ? value : {};
   const accountEmail = stringField(source, "accountEmail", "account_email");
@@ -566,7 +596,47 @@ function normalizeIntegrationProvider(value: unknown): IntegrationProviderStatus
     ...(displayName ? { displayName } : {}),
     ...(providerAccountId ? { providerAccountId } : {}),
     ...(lastSyncedAt ? { lastSyncedAt } : {}),
-    ...(accounts.length > 0 ? { accounts } : {})
+    ...(accounts.length > 0 ? { accounts } : {}),
+    ...normalizeIntegrationSync(source.sync)
+  };
+}
+
+function normalizeIntegrationSync(value: unknown): Pick<IntegrationProviderStatus, "sync"> {
+  const source = isRecord(value) ? value : {};
+  const state = stringField(source, "state");
+  if (
+    state !== "idle" &&
+    state !== "pending" &&
+    state !== "running" &&
+    state !== "succeeded" &&
+    state !== "failed"
+  ) {
+    return {};
+  }
+  const peopleSeen = numberField(source, "peopleSeen", "people_seen");
+  const communicationThreadsSeen = numberField(
+    source,
+    "communicationThreadsSeen",
+    "communication_threads_seen"
+  );
+  const communicationMessagesSeen = numberField(
+    source,
+    "communicationMessagesSeen",
+    "communication_messages_seen"
+  );
+  const startedAt = stringField(source, "startedAt", "started_at");
+  const finishedAt = stringField(source, "finishedAt", "finished_at");
+  const errorMessage = stringField(source, "errorMessage", "error_message");
+  return {
+    sync: {
+      state,
+      ...(startedAt ? { startedAt } : {}),
+      ...(finishedAt ? { finishedAt } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
+      ...(peopleSeen != null ? { peopleSeen } : {}),
+      ...(communicationThreadsSeen != null ? { communicationThreadsSeen } : {}),
+      ...(communicationMessagesSeen != null ? { communicationMessagesSeen } : {})
+    }
   };
 }
 
