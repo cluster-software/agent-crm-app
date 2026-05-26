@@ -379,14 +379,17 @@ async function loadAgentWorkspaceInstructions(): Promise<AgentWorkspaceInstructi
   return agentWorkspaceInstructionsPromise;
 }
 
-async function ensureAgentInstructionFiles(workspaceFile: string): Promise<void> {
-  const workspaceDir = path.dirname(workspaceFile);
+async function ensureAgentInstructionFilesInDir(workspaceDir: string): Promise<void> {
   const instructions = await loadAgentWorkspaceInstructions();
   await Promise.all(
     instructions.filenames.map((filename) =>
       upsertAgentInstructionBlock(path.join(workspaceDir, filename), instructions)
     )
   );
+}
+
+async function ensureAgentInstructionFiles(workspaceFile: string): Promise<void> {
+  await ensureAgentInstructionFilesInDir(path.dirname(workspaceFile));
 }
 
 async function upsertAgentInstructionBlock(
@@ -809,20 +812,6 @@ async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
 
 const claudeJsonPath = path.join(os.homedir(), ".claude.json");
 const trustLocks = new Map<string, Promise<void>>();
-const agentWorkspaceGuideNames = ["CLAUDE.md", "AGENTS.md"];
-const agentWorkspaceGuideStart = "<!-- agent-crm-app:start -->";
-const agentWorkspaceGuideEnd = "<!-- agent-crm-app:end -->";
-const agentWorkspaceGuide = `${agentWorkspaceGuideStart}
-## Agent CRM Workspace
-
-This directory is managed by Agent CRM.
-
-Before using \`acrm\`, Agent CRM skills, or any local \`.acrm\` workflow:
-- Run \`acrm --version\`.
-- If \`acrm\` is missing or reports that a newer \`@agent-crm/cli\` is available, run \`npm install -g @agent-crm/cli@latest\`.
-- After updating, run \`acrm --version\` again, then continue with the user's original request.
-- Only ask the user to install or update the CLI themselves if npm requires credentials or permissions you cannot satisfy.
-${agentWorkspaceGuideEnd}`;
 
 // Mark `cwd` as trusted in `~/.claude.json` so Claude Code skips its first-run
 // "Do you trust this folder?" prompt. Best-effort: callers should swallow errors.
@@ -866,38 +855,8 @@ async function ensureClaudeTrust(cwd: string): Promise<void> {
   }
 }
 
-async function ensureAgentWorkspaceGuide(cwd: string, guideName: string): Promise<void> {
-  const guidePath = path.join(cwd, guideName);
-  let existing = "";
-  try {
-    existing = await fs.readFile(guidePath, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
-
-  let next: string;
-  const start = existing.indexOf(agentWorkspaceGuideStart);
-  const end = existing.indexOf(agentWorkspaceGuideEnd);
-  if (start >= 0 && end > start) {
-    next =
-      existing.slice(0, start).trimEnd() +
-      "\n\n" +
-      agentWorkspaceGuide +
-      "\n" +
-      existing.slice(end + agentWorkspaceGuideEnd.length).trimStart();
-  } else {
-    next = existing.trimEnd();
-    next += `${next ? "\n\n" : ""}${agentWorkspaceGuide}\n`;
-  }
-
-  if (next === existing) return;
-  await fs.writeFile(guidePath, next, "utf8");
-}
-
 async function ensureAgentWorkspaceGuides(cwd: string): Promise<void> {
-  await Promise.all(
-    agentWorkspaceGuideNames.map((guideName) => ensureAgentWorkspaceGuide(cwd, guideName))
-  );
+  await ensureAgentInstructionFilesInDir(cwd);
 }
 
 function appendToBuffer(session: PtySession, data: string) {

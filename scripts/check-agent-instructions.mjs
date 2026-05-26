@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 const sdk = await import("@agent-crm/sdk");
 
 const instructions = sdk.AGENT_WORKSPACE_INSTRUCTIONS;
@@ -37,6 +39,20 @@ if (!instructions.block.includes(instructions.endMarker)) {
 
 if (!instructions.block.includes("## Agent CRM Workspace")) {
   fail("AGENT_WORKSPACE_INSTRUCTIONS.block must include the Agent CRM workspace heading.");
+}
+
+const mainSource = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
+const forbiddenMainSourceSnippets = [
+  "const agentWorkspaceGuideNames",
+  "const agentWorkspaceGuideStart",
+  "const agentWorkspaceGuideEnd",
+  "const agentWorkspaceGuide =",
+  "This directory is managed by Agent CRM."
+];
+for (const snippet of forbiddenMainSourceSnippets) {
+  if (mainSource.includes(snippet)) {
+    fail("src/main.ts contains the legacy hardcoded workspace guide; use the SDK-backed instruction writer instead.");
+  }
 }
 
 console.log("[agent-instructions] SDK export is available.");
