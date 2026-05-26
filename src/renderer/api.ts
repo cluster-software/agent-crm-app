@@ -218,7 +218,6 @@ const sampleRecordsByObject: Record<string, RecordPreview[]> = {
 const previewWorkspace: WorkspaceSummary = {
   path: "/Users/preview/workspace.acrm",
   filename: "workspace.acrm",
-  activeValues: 184,
   counts: {
     companies: 18,
     people: 42,
@@ -228,7 +227,6 @@ const previewWorkspace: WorkspaceSummary = {
     posts: 27,
     transcripts: 6
   },
-  recent: sampleRecords,
   objects: [
     {
       object_slug: "companies",

@@ -95,16 +95,12 @@ async function getWorkspaceSummary(): Promise<WorkspaceSummary> {
   const current = assertWorkspace();
   const objects = await getSchemaObjects();
   const counts = await countRecords(current);
-  const activeValues = await countActiveValues(current);
-  const recent = await listRecentRecords(current, objects);
 
   return {
     path: workspacePath ?? "",
     filename: workspacePath ? path.basename(workspacePath) : "Untitled workspace",
     objects,
-    counts,
-    activeValues,
-    recent
+    counts
   };
 }
 
@@ -369,25 +365,6 @@ async function countRecords(current: Workspace): Promise<Record<string, number>>
   );
 }
 
-async function countActiveValues(current: Workspace) {
-  const result = await query(
-    current,
-    "SELECT COUNT(*) AS count FROM acrm_value WHERE active_until IS NULL"
-  );
-  return Number(result.rows[0]?.count ?? 0);
-}
-
-async function listRecentRecords(current: Workspace, objects: SchemaObject[]) {
-  const result = await query(
-    current,
-    `SELECT object_slug, record_id
-       FROM acrm_record
-      ORDER BY record_id DESC
-      LIMIT 8`
-  );
-  return inflateRecords(current, objects, result.rows as Array<{ object_slug: string; record_id: string }>);
-}
-
 async function listRecordsForObject(
   objectSlug: string,
   options: RecordListOptions = {}
@@ -397,7 +374,11 @@ async function listRecordsForObject(
   const limit = normalizeRecordLimit(options.limit);
   const cursor = normalizeCursor(options.cursor);
   const fetchLimit = limit + 1;
-  const attributeSlugs = relevantAttributeSlugs(objectSlug, options.valueAttributes);
+  const attributeSlugs = relevantAttributeSlugs(
+    objectSlug,
+    options.valueAttributes,
+    options.includeSecondaryLabels ?? true
+  );
   const params = [
     objectSlug,
     ...(cursor ? [cursor] : []),
@@ -422,17 +403,13 @@ async function listRecordsForObject(
         LIMIT ${fetchLimit}
      )
      SELECT s.object_slug, s.record_id, v.attribute_slug, v.value_json,
-            v.source, v.provenance_json,
-            a.title, a.attribute_type, v.active_from
+            v.source, v.provenance_json, v.active_from
        FROM selected s
        LEFT JOIN acrm_value v
          ON v.object_slug = s.object_slug
         AND v.record_id = s.record_id
         AND v.active_until IS NULL
         ${attributeFilter}
-       LEFT JOIN acrm_attribute a
-         ON a.object_slug = v.object_slug
-        AND a.attribute_slug = v.attribute_slug
       ORDER BY s.record_id DESC, v.active_from DESC`,
     params
   );
@@ -443,8 +420,6 @@ async function listRecordsForObject(
     value_json?: unknown;
     source?: unknown;
     provenance_json?: unknown;
-    title?: string | null;
-    attribute_type?: string | null;
   }>;
   const selectedRows: Array<{ object_slug: string; record_id: string }> = [];
   const seenRecords = new Set<string>();
@@ -486,10 +461,14 @@ function normalizeCursor(cursor: unknown) {
   return typeof cursor === "string" && cursor.length > 0 ? cursor : null;
 }
 
-function relevantAttributeSlugs(objectSlug: string, valueAttributes: unknown): string[] {
+function relevantAttributeSlugs(
+  objectSlug: string,
+  valueAttributes: unknown,
+  includeSecondaryLabels: boolean
+): string[] {
   const attrs = new Set([
     ...primaryLabelAttributeSlugs(objectSlug),
-    ...secondaryLabelAttributeSlugs(objectSlug)
+    ...(includeSecondaryLabels ? secondaryLabelAttributeSlugs(objectSlug) : [])
   ]);
   if (Array.isArray(valueAttributes)) {
     for (const attr of valueAttributes) {
@@ -544,12 +523,8 @@ async function inflateRecords(
   const values = await query(
     current,
     `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json,
-            v.source, v.provenance_json,
-            a.title, a.attribute_type
+            v.source, v.provenance_json
        FROM acrm_value v
-       JOIN acrm_attribute a
-         ON a.object_slug = v.object_slug
-        AND a.attribute_slug = v.attribute_slug
       WHERE v.active_until IS NULL
         AND (${records.map((_, index) => `(v.object_slug = $${index * 2 + 1} AND v.record_id = $${index * 2 + 2})`).join(" OR ")})
         ${attributeFilter}
@@ -571,8 +546,6 @@ async function inflateRecords(
       value_json?: unknown;
       source?: unknown;
       provenance_json?: unknown;
-      title?: unknown;
-      attribute_type?: unknown;
     }>
   );
 }
@@ -594,15 +567,23 @@ async function inflateRecordValueRows(
 ): Promise<RecordPreview[]> {
   const schemaByObject = new Map(objects.map((object) => [object.object_slug, object]));
   const grouped = new Map<string, RecordValue[]>();
+  const attributeByObject = new Map(
+    objects.map((object) => [
+      object.object_slug,
+      new Map(object.attributes.map((attribute) => [attribute.attribute_slug, attribute]))
+    ])
+  );
 
   for (const row of valueRows) {
     if (row.attribute_slug == null) continue;
     const key = `${row.object_slug}:${row.record_id}`;
+    const attributeSlug = String(row.attribute_slug);
+    const attribute = attributeByObject.get(String(row.object_slug))?.get(attributeSlug);
     const parsed = parseValue(row.value_json);
     const value: RecordValue = {
-      attribute_slug: String(row.attribute_slug),
-      title: String(row.title ?? row.attribute_slug),
-      type: String(row.attribute_type),
+      attribute_slug: attributeSlug,
+      title: attribute?.title ?? attributeSlug,
+      type: attribute?.attribute_type ?? "",
       display: displayValue(parsed),
       raw: parsed,
       values: [parsed],

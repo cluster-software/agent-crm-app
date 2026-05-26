@@ -1068,10 +1068,13 @@ function RecordsView({
         api.listSignalRuns()
       ]);
       const requestedColumns = pickValueColumns(object, [], nextSignals);
+      const requestedAttributes = requestedColumns.map((column) => column.slug);
+      if (object.object_slug === "people") requestedAttributes.push("job_title");
       const result = await api.listRecords(object.object_slug, {
         limit: pageSize,
         cursor: pageCursors[pageIndex] ?? null,
-        valueAttributes: requestedColumns.map((column) => column.slug)
+        valueAttributes: requestedAttributes,
+        includeSecondaryLabels: !COLUMNS_BY_OBJECT[object.object_slug]
       });
       if (requestId !== requestIdRef.current) return;
       if (result.objectSlug !== object.object_slug) return;
@@ -2946,7 +2949,9 @@ function PersonDetail({
   tab: PersonTab;
   onTabChange: (tab: PersonTab) => void;
 }) {
-  const meta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : null;
+  const baseMeta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : "";
+  const [companyName, setCompanyName] = useState("");
+  const meta = uniqueNonEmpty([baseMeta, companyName]).join(" · ") || null;
   const contactRows = buildContactRows(record);
 
   const [communicationThreads, setCommunicationThreads] = useState<CommunicationThread[]>([]);
@@ -2960,6 +2965,21 @@ function PersonDetail({
   useEffect(() => {
     setSelectedThreadId(null);
   }, [record.record_id, tab]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCompanyName("");
+    fetchPersonCompanyName(record.record_id)
+      .then((name) => {
+        if (!cancelled) setCompanyName(name);
+      })
+      .catch(() => {
+        if (!cancelled) setCompanyName("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record.record_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3606,6 +3626,37 @@ function RelatedList({
   );
 }
 
+async function fetchPersonCompanyName(personRecordId: string): Promise<string> {
+  const result = await api.runQuery(
+    `SELECT cv.value_json AS company_name
+       FROM acrm_value pv
+       LEFT JOIN acrm_value cv
+         ON cv.object_slug = 'companies'
+        AND cv.record_id = pv.ref_record_id
+        AND cv.attribute_slug = 'name'
+        AND cv.active_until IS NULL
+      WHERE pv.object_slug = 'people'
+        AND pv.record_id = $1
+        AND pv.attribute_slug = 'company'
+        AND pv.active_until IS NULL
+      LIMIT 1`,
+    [personRecordId]
+  );
+  return scalarText(parseValueJson(result.rows[0]?.company_name));
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 type ContactRow = {
   Icon: ComponentType<{ size?: number; className?: string }>;
   value: string;
@@ -3668,6 +3719,10 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
     }
   }
   return rows;
+}
+
+function scalarText(value: unknown): string {
+  return getScalar({ value }, "value");
 }
 
 function stripUrl(url: string): string {
