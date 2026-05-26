@@ -596,6 +596,14 @@ function clearEmptyStateSyncForRun(run: CloudSyncRunContext): void {
   cloudSyncShowInEmptyState = false;
 }
 
+function updateCloudSyncWorkspace(summary: WorkspaceSummary): void {
+  if (!cloudSyncWorkspace || cloudSyncWorkspace.path !== summary.path) return;
+  cloudSyncWorkspace = summary;
+  if (!isDefaultRecordsWorkspaceEmpty(summary)) {
+    cloudSyncShowInEmptyState = false;
+  }
+}
+
 function stopCloudSync() {
   cloudSyncGeneration++;
   if (cloudSyncTimer) {
@@ -692,20 +700,21 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
     const gmailStatus = status.integrations.gmail;
     const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
     const gmailSyncState = gmailStatus?.sync?.state;
+    const gmailSyncActive = gmailSyncState === "pending" || gmailSyncState === "running";
+    const gmailSyncFailed = gmailSyncState === "failed";
     const gmailImportable = gmailStatus?.connected === true && gmailSyncState === "succeeded";
     const connectedProviders: CloudSyncProvider[] = [];
     const importableProviders: CloudSyncProvider[] = [];
-    if (gmailStatus?.connected) connectedProviders.push("gmail");
+    if (gmailStatus?.connected || gmailSyncActive || gmailSyncFailed) connectedProviders.push("gmail");
     if (linkedInStatus?.connected) connectedProviders.push("linkedin");
     if (gmailImportable) importableProviders.push("gmail");
     if (linkedInStatus?.connected) importableProviders.push("linkedin");
 
     if (connectedProviders.length === 0) {
-      clearEmptyStateSyncForRun(run);
       return setCloudSyncStatusForRun(run, { state: "disconnected" });
     }
 
-    if (gmailStatus?.connected && (gmailSyncState === "pending" || gmailSyncState === "running")) {
+    if (gmailSyncActive) {
       scheduleCloudSyncForRun(run, CLOUD_SYNC_ACTIVE_INTERVAL_MS);
       return setCloudSyncStatusForRun(run, {
         state: "syncing",
@@ -713,11 +722,11 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
         showInEmptyState: cloudSyncShowInEmptyState
       });
     }
-    if (gmailStatus?.connected && gmailSyncState === "failed") {
+    if (gmailSyncFailed) {
       clearEmptyStateSyncForRun(run);
       return setCloudSyncStatusForRun(run, {
         state: "error",
-        message: gmailStatus.sync?.errorMessage ?? gmailStatus.sync?.error_message ?? "Gmail sync failed."
+        message: gmailStatus?.sync?.errorMessage ?? gmailStatus?.sync?.error_message ?? "Gmail sync failed."
       });
     }
     if (importableProviders.length === 0) {
@@ -1282,8 +1291,14 @@ handle("workspace:get", async () => {
   const summary = await getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
   if (!summary) return null;
   const withCloud = await withCloudWorkspace(summary);
-  if (!cloudSyncWorkspace || cloudSyncWorkspace.path !== withCloud.path) {
+  if (
+    !cloudSyncWorkspace ||
+    cloudSyncWorkspace.path !== withCloud.path ||
+    cloudSyncWorkspace.cloudWorkspaceId !== withCloud.cloudWorkspaceId
+  ) {
     startCloudSync(withCloud);
+  } else {
+    updateCloudSyncWorkspace(withCloud);
   }
   return withCloud;
 });

@@ -76,6 +76,7 @@ const sdkObjectOrder = [
   "transcripts"
 ];
 const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
+const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const appVersion = packageJson.version;
 const appDisplayVersion = displayVersion(appVersion);
 
@@ -102,6 +103,13 @@ function formatNumber(value: number) {
 function statusFromError(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isDefaultRecordsWorkspaceEmpty(summary: WorkspaceSummary | null): boolean {
+  if (!summary) return false;
+  return DEFAULT_EMPTY_RECORD_OBJECTS.every((objectSlug) =>
+    (summary.counts[objectSlug] ?? 0) === 0
+  );
 }
 
 export function App() {
@@ -227,7 +235,12 @@ export function App() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        refreshWorkspace().catch((err) => setError(statusFromError(err)));
+        refreshWorkspace()
+          .then((summary) => {
+            if (!isDefaultRecordsWorkspaceEmpty(summary)) return;
+            return api.triggerCloudSync();
+          })
+          .catch((err) => setError(statusFromError(err)));
         setDataVersion((v) => v + 1);
       }, 150);
     };
