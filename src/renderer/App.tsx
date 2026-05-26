@@ -1892,6 +1892,13 @@ function ValueCell({
     );
   }
   if (looksLikeStage(value)) return <Badge kind={stageKind(value.display)} dot>{value.display}</Badge>;
+  if (value.attribute_slug === "linkedin_url") {
+    return (
+      <a className="table__cell--mono table__cell-link" href={externalUrl(value.display)} target="_blank" rel="noreferrer">
+        {value.display}
+      </a>
+    );
+  }
   if (looksMono(value)) return <span className="table__cell--mono">{value.display}</span>;
   return <span className="table__cell--muted">{value.display}</span>;
 }
