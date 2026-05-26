@@ -6,7 +6,6 @@ import {
   Workspace,
   createRecord,
   dumpSchema,
-  ensureWorkspaceIdentity as ensureSdkWorkspaceIdentity,
   ensureSignalAttributes,
   finishSignalJob,
   importCsv,
@@ -17,6 +16,7 @@ import {
   runSignals,
   writeSignalJobState
 } from "@agent-crm/sdk";
+import { ensureWorkspaceIdentity as ensureSdkWorkspaceIdentity } from "@agent-crm/sdk/workspace/identity.js";
 import type {
   CreateRecordPayload,
   ImportCsvPayload,
