@@ -4,8 +4,6 @@ export type WorkspaceSummary = {
   cloudWorkspaceId?: string;
   objects: SchemaObject[];
   counts: Record<string, number>;
-  activeValues: number;
-  recent: RecordPreview[];
 };
 
 export type CloudSyncProvider = "gmail" | "linkedin";
@@ -106,6 +104,7 @@ export type RecordListOptions = {
   limit?: number;
   cursor?: string | null;
   valueAttributes?: string[];
+  includeSecondaryLabels?: boolean;
 };
 
 export type RecordListResult = {
