@@ -274,6 +274,34 @@ function defaultCwd() {
 const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
 const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
 
+type AgentWorkspaceInstructions = {
+  filenames: readonly string[];
+  startMarker: string;
+  endMarker: string;
+  block: string;
+};
+
+const EMERGENCY_AGENT_WORKSPACE_INSTRUCTIONS = {
+  filenames: ["CLAUDE.md", "AGENTS.md"],
+  startMarker: "<!-- agent-crm-app:start -->",
+  endMarker: "<!-- agent-crm-app:end -->",
+  block: [
+    "<!-- agent-crm-app:start -->",
+    "## Agent CRM Workspace",
+    "",
+    "The shared Agent CRM SDK instructions were unavailable when this workspace was created.",
+    "",
+    "Before using `acrm`:",
+    "- Run `acrm --version`.",
+    "- If `acrm` is missing or reports that a newer `@agent-crm/cli` is available, run `npm install -g @agent-crm/cli@latest`.",
+    "- Run `acrm --help` and `acrm execute --help` for current workspace guidance.",
+    "<!-- agent-crm-app:end -->",
+    "",
+  ].join("\n")
+} as const;
+
+let agentWorkspaceInstructionsPromise: Promise<AgentWorkspaceInstructions> | null = null;
+
 function slugifyWorkspaceName(name: string): string {
   const cleaned = name
     .toLowerCase()
@@ -300,6 +328,94 @@ async function allocateWorkspaceDir(slug: string, parentDir = AGENT_CRM_ROOT): P
     }
   }
   throw new Error(`Could not allocate a directory for workspace "${slug}"`);
+}
+
+function normalizeAgentWorkspaceInstructions(input: unknown): AgentWorkspaceInstructions | null {
+  if (!input || typeof input !== "object") return null;
+  const candidate = input as Partial<AgentWorkspaceInstructions>;
+  if (
+    !Array.isArray(candidate.filenames) ||
+    typeof candidate.startMarker !== "string" ||
+    typeof candidate.endMarker !== "string" ||
+    typeof candidate.block !== "string"
+  ) {
+    return null;
+  }
+  if (!candidate.filenames.every((filename) => typeof filename === "string")) {
+    return null;
+  }
+  return {
+    filenames: candidate.filenames,
+    startMarker: candidate.startMarker,
+    endMarker: candidate.endMarker,
+    block: candidate.block
+  };
+}
+
+async function loadAgentWorkspaceInstructions(): Promise<AgentWorkspaceInstructions> {
+  if (!agentWorkspaceInstructionsPromise) {
+    agentWorkspaceInstructionsPromise = (async () => {
+      const message =
+        "@agent-crm/sdk is missing AGENT_WORKSPACE_INSTRUCTIONS. Update @agent-crm/sdk before generating workspace agent files.";
+      let cause: unknown;
+      try {
+        const sdk = (await import("@agent-crm/sdk")) as unknown as {
+          AGENT_WORKSPACE_INSTRUCTIONS?: unknown;
+        };
+        const instructions = normalizeAgentWorkspaceInstructions(
+          sdk.AGENT_WORKSPACE_INSTRUCTIONS
+        );
+        if (instructions) return instructions;
+      } catch (error) {
+        cause = error;
+      }
+      if (!app.isPackaged || process.env.CI) {
+        throw new Error(cause instanceof Error ? `${message} ${cause.message}` : message);
+      }
+      console.warn(`[agent-instructions] ${message} Falling back to emergency instructions.`);
+      return EMERGENCY_AGENT_WORKSPACE_INSTRUCTIONS;
+    })();
+  }
+  return agentWorkspaceInstructionsPromise;
+}
+
+async function ensureAgentInstructionFiles(workspaceFile: string): Promise<void> {
+  const workspaceDir = path.dirname(workspaceFile);
+  const instructions = await loadAgentWorkspaceInstructions();
+  await Promise.all(
+    instructions.filenames.map((filename) =>
+      upsertAgentInstructionBlock(path.join(workspaceDir, filename), instructions)
+    )
+  );
+}
+
+async function upsertAgentInstructionBlock(
+  filePath: string,
+  instructions: AgentWorkspaceInstructions
+): Promise<void> {
+  let existing = "";
+  try {
+    existing = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") throw error;
+  }
+
+  const start = existing.indexOf(instructions.startMarker);
+  const end = existing.indexOf(instructions.endMarker);
+  let next: string;
+
+  if (start >= 0 && end >= start) {
+    const afterEnd = end + instructions.endMarker.length;
+    next = `${existing.slice(0, start)}${instructions.block}${existing.slice(afterEnd)}`;
+  } else if (existing.trim().length === 0) {
+    next = instructions.block;
+  } else {
+    next = `${existing.replace(/\s*$/, "")}\n\n${instructions.block}`;
+  }
+
+  if (next === existing) return;
+  await fs.writeFile(filePath, next, "utf8");
 }
 
 // The PTY runs in the folder that holds the `.acrm` so Claude Code sees the
@@ -1016,6 +1132,7 @@ handle("workspace:create", async (name: string, parentDir?: string) => {
   const summary = await withCloudWorkspace(
     await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath)
   );
+  await ensureAgentInstructionFiles(filePath);
   if (summary?.path) workspaceWatcher.start(summary.path);
   startCloudSync(summary);
   return summary;
