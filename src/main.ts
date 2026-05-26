@@ -42,14 +42,23 @@ const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-cr
 let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudSyncWorkspace: WorkspaceSummary | null = null;
-let cloudSyncInFlight: Promise<CloudSyncStatus> | null = null;
+let cloudSyncInFlight: { generation: number; promise: Promise<CloudSyncStatus> } | null = null;
+let cloudSyncGeneration = 0;
+let cloudSyncShowInEmptyState = false;
 const CLOUD_SYNC_IDLE_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_ACTIVE_INTERVAL_MS = 5_000;
+const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 
 type CommunicationImportStats = {
   people_created: number;
   communication_threads_created: number;
   communication_messages_created: number;
+};
+
+type CloudSyncRunContext = {
+  generation: number;
+  workspacePath: string;
+  cloudWorkspaceId: string;
 };
 
 function sendToMainWindow(channel: string, ...args: unknown[]) {
@@ -302,6 +311,14 @@ const EMERGENCY_AGENT_WORKSPACE_INSTRUCTIONS = {
 
 let agentWorkspaceInstructionsPromise: Promise<AgentWorkspaceInstructions> | null = null;
 
+type CloudMetadata = {
+  workspaceId?: string;
+  clientToken?: string;
+  clusterOrgId?: string;
+  localWorkspaceId?: string;
+  createdAt?: string;
+};
+
 function slugifyWorkspaceName(name: string): string {
   const cleaned = name
     .toLowerCase()
@@ -435,36 +452,40 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
   if (!summary.path) return summary;
   const cwd = path.dirname(summary.path);
   const metadataPath = path.join(cwd, CLOUD_METADATA_FILENAME);
-  let workspaceId: string | undefined;
-  let clientToken: string | undefined;
+  const localWorkspaceId = await getSdkClient().request<string>("ensureWorkspaceIdentity");
+  let metadata = await readCloudMetadata(metadataPath);
 
-  try {
-    const parsed = JSON.parse(await fs.readFile(metadataPath, "utf8")) as {
-      workspaceId?: unknown;
-      clientToken?: unknown;
-    };
-    if (typeof parsed.workspaceId === "string" && parsed.workspaceId.length > 0) {
-      workspaceId = parsed.workspaceId;
-    }
-    if (typeof parsed.clientToken === "string" && parsed.clientToken.length > 0) {
-      clientToken = parsed.clientToken;
-    }
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code !== "ENOENT") {
-      console.warn(`[cloud-workspace] failed to read ${metadataPath}: ${(error as Error).message}`);
+  if (metadata.workspaceId && metadata.clientToken) {
+    if (metadata.localWorkspaceId && metadata.localWorkspaceId !== localWorkspaceId) {
+      await archiveCloudMetadata(metadataPath);
+      metadata = {};
+    } else if (!metadata.localWorkspaceId && await shouldRotateLegacySidecar(metadata, metadataPath, summary.path)) {
+      await archiveCloudMetadata(metadataPath);
+      metadata = {};
     }
   }
+
+  let workspaceId = metadata.workspaceId;
+  let clientToken = metadata.clientToken;
 
   if (!workspaceId || !clientToken) {
     workspaceId = workspaceId ?? randomUUID();
     clientToken = clientToken ?? randomUUID();
+  }
+
+  if (
+    workspaceId !== metadata.workspaceId ||
+    clientToken !== metadata.clientToken ||
+    localWorkspaceId !== metadata.localWorkspaceId
+  ) {
     await fs.writeFile(
       metadataPath,
       `${JSON.stringify({
+        ...metadata,
         workspaceId,
         clientToken,
-        createdAt: new Date().toISOString()
+        localWorkspaceId,
+        createdAt: metadata.createdAt ?? new Date().toISOString()
       }, null, 2)}\n`,
       "utf8"
     );
@@ -478,23 +499,118 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
   };
 }
 
+async function readCloudMetadata(metadataPath: string): Promise<CloudMetadata> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(metadataPath, "utf8")) as Record<string, unknown>;
+    return {
+      ...(typeof parsed.workspaceId === "string" && parsed.workspaceId.length > 0
+        ? { workspaceId: parsed.workspaceId }
+        : {}),
+      ...(typeof parsed.clientToken === "string" && parsed.clientToken.length > 0
+        ? { clientToken: parsed.clientToken }
+        : {}),
+      ...(typeof parsed.clusterOrgId === "string" && parsed.clusterOrgId.length > 0
+        ? { clusterOrgId: parsed.clusterOrgId }
+        : {}),
+      ...(typeof parsed.localWorkspaceId === "string" && parsed.localWorkspaceId.length > 0
+        ? { localWorkspaceId: parsed.localWorkspaceId }
+        : {}),
+      ...(typeof parsed.createdAt === "string" && parsed.createdAt.length > 0
+        ? { createdAt: parsed.createdAt }
+        : {})
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      console.warn(`[cloud-workspace] failed to read ${metadataPath}: ${(error as Error).message}`);
+    }
+    return {};
+  }
+}
+
+async function shouldRotateLegacySidecar(
+  metadata: CloudMetadata,
+  metadataPath: string,
+  workspacePath: string
+): Promise<boolean> {
+  const sidecarCreatedAt = Date.parse(metadata.createdAt ?? "");
+  try {
+    const [sidecarStat, workspaceStat] = await Promise.all([
+      fs.stat(metadataPath),
+      fs.stat(workspacePath)
+    ]);
+    const sidecarTimestamp = Number.isNaN(sidecarCreatedAt)
+      ? Math.max(sidecarStat.birthtimeMs, sidecarStat.mtimeMs)
+      : sidecarCreatedAt;
+    const workspaceTimestamp = Math.max(workspaceStat.birthtimeMs, workspaceStat.mtimeMs);
+    return sidecarStat.isFile() && workspaceTimestamp > sidecarTimestamp;
+  } catch {
+    return false;
+  }
+}
+
+async function archiveCloudMetadata(metadataPath: string): Promise<void> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  let target = `${metadataPath}.stale-${timestamp}`;
+  let suffix = 1;
+  while (true) {
+    try {
+      await fs.rename(metadataPath, target);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return;
+      if (code !== "EEXIST") throw error;
+      target = `${metadataPath}.stale-${timestamp}-${suffix}`;
+      suffix++;
+    }
+  }
+}
+
 function setCloudSyncStatus(status: CloudSyncStatus): CloudSyncStatus {
   cloudSyncStatus = status;
   sendToMainWindow("cloud-sync:status", status);
   return status;
 }
 
+function isCurrentCloudSyncRun(run: CloudSyncRunContext): boolean {
+  return (
+    cloudSyncGeneration === run.generation &&
+    cloudSyncWorkspace?.path === run.workspacePath &&
+    cloudSyncWorkspace?.cloudWorkspaceId === run.cloudWorkspaceId
+  );
+}
+
+function setCloudSyncStatusForRun(run: CloudSyncRunContext, status: CloudSyncStatus): CloudSyncStatus {
+  if (!isCurrentCloudSyncRun(run)) return status;
+  return setCloudSyncStatus(status);
+}
+
+function scheduleCloudSyncForRun(run: CloudSyncRunContext, delayMs?: number): void {
+  if (!isCurrentCloudSyncRun(run)) return;
+  scheduleCloudSync(delayMs);
+}
+
+function clearEmptyStateSyncForRun(run: CloudSyncRunContext): void {
+  if (!isCurrentCloudSyncRun(run)) return;
+  cloudSyncShowInEmptyState = false;
+}
+
 function stopCloudSync() {
+  cloudSyncGeneration++;
   if (cloudSyncTimer) {
     clearTimeout(cloudSyncTimer);
     cloudSyncTimer = null;
   }
   cloudSyncWorkspace = null;
+  cloudSyncShowInEmptyState = false;
   setCloudSyncStatus({ state: "idle" });
 }
 
 function startCloudSync(summary: WorkspaceSummary) {
+  cloudSyncGeneration++;
   cloudSyncWorkspace = summary;
+  cloudSyncShowInEmptyState = isDefaultRecordsWorkspaceEmpty(summary);
   if (cloudSyncTimer) {
     clearTimeout(cloudSyncTimer);
     cloudSyncTimer = null;
@@ -511,27 +627,41 @@ function scheduleCloudSync(delayMs = CLOUD_SYNC_IDLE_INTERVAL_MS) {
 }
 
 async function runCloudSync(): Promise<CloudSyncStatus> {
-  if (cloudSyncInFlight) return cloudSyncInFlight;
-  cloudSyncInFlight = runCloudSyncOnce().finally(() => {
-    cloudSyncInFlight = null;
+  const generation = cloudSyncGeneration;
+  if (cloudSyncInFlight?.generation === generation) return cloudSyncInFlight.promise;
+  const promise = runCloudSyncOnce(generation);
+  cloudSyncInFlight = { generation, promise };
+  promise.finally(() => {
+    if (cloudSyncInFlight?.promise === promise) {
+      cloudSyncInFlight = null;
+    }
   });
-  return cloudSyncInFlight;
+  return promise;
 }
 
-async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
+async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
   const summary = cloudSyncWorkspace;
   if (!summary?.path || !summary.cloudWorkspaceId) {
-    return setCloudSyncStatus({ state: "idle" });
+    if (cloudSyncGeneration === generation) {
+      cloudSyncShowInEmptyState = false;
+      return setCloudSyncStatus({ state: "idle" });
+    }
+    return { state: "idle" };
   }
+  const run = {
+    generation,
+    workspacePath: summary.path,
+    cloudWorkspaceId: summary.cloudWorkspaceId
+  };
 
   const cwd = path.dirname(summary.path);
   const clientToken = cloudWorkspaceTokensByCwd.get(cwd);
   if (!clientToken) {
-    return setCloudSyncStatus({ state: "error", message: "Cloud workspace token is missing." });
+    return setCloudSyncStatusForRun(run, { state: "error", message: "Cloud workspace token is missing." });
   }
 
   try {
-    setCloudSyncStatus({ state: "checking" });
+    setCloudSyncStatusForRun(run, { state: "checking" });
     const status = await fetchJson<{
       ok: true;
       integrations: {
@@ -557,70 +687,113 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
         };
       };
     }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
+    if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
 
     const gmailStatus = status.integrations.gmail;
     const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
+    const gmailSyncState = gmailStatus?.sync?.state;
+    const gmailImportable = gmailStatus?.connected === true && gmailSyncState === "succeeded";
     const connectedProviders: CloudSyncProvider[] = [];
+    const importableProviders: CloudSyncProvider[] = [];
     if (gmailStatus?.connected) connectedProviders.push("gmail");
     if (linkedInStatus?.connected) connectedProviders.push("linkedin");
+    if (gmailImportable) importableProviders.push("gmail");
+    if (linkedInStatus?.connected) importableProviders.push("linkedin");
 
     if (connectedProviders.length === 0) {
-      return setCloudSyncStatus({ state: "disconnected" });
+      clearEmptyStateSyncForRun(run);
+      return setCloudSyncStatusForRun(run, { state: "disconnected" });
     }
 
-    const gmailSyncState = gmailStatus?.sync?.state;
     if (gmailStatus?.connected && (gmailSyncState === "pending" || gmailSyncState === "running")) {
-      scheduleCloudSync(CLOUD_SYNC_ACTIVE_INTERVAL_MS);
-      return setCloudSyncStatus({ state: "syncing", providers: ["gmail"] });
+      scheduleCloudSyncForRun(run, CLOUD_SYNC_ACTIVE_INTERVAL_MS);
+      return setCloudSyncStatusForRun(run, {
+        state: "syncing",
+        providers: ["gmail"],
+        showInEmptyState: cloudSyncShowInEmptyState
+      });
     }
     if (gmailStatus?.connected && gmailSyncState === "failed") {
-      return setCloudSyncStatus({
+      clearEmptyStateSyncForRun(run);
+      return setCloudSyncStatusForRun(run, {
         state: "error",
         message: gmailStatus.sync?.errorMessage ?? gmailStatus.sync?.error_message ?? "Gmail sync failed."
       });
     }
+    if (importableProviders.length === 0) {
+      scheduleCloudSyncForRun(run);
+      clearEmptyStateSyncForRun(run);
+      return setCloudSyncStatusForRun(run, {
+        state: "synced",
+        lastSyncedAt: new Date().toISOString(),
+        stats: {
+          people_created: 0,
+          communication_threads_created: 0,
+          communication_messages_created: 0
+        }
+      });
+    }
 
-    setCloudSyncStatus({ state: "syncing", providers: connectedProviders });
+    setCloudSyncStatusForRun(run, {
+      state: "syncing",
+      providers: importableProviders,
+      showInEmptyState: cloudSyncShowInEmptyState
+    });
     const aggregateStats: CommunicationImportStats = {
       people_created: 0,
       communication_threads_created: 0,
       communication_messages_created: 0
     };
 
-    if (gmailStatus?.connected) {
-      const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail");
+    if (gmailImportable) {
+      if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
+      const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail", {
+        expectedWorkspacePath: summary.path
+      });
       addCommunicationStats(aggregateStats, stats);
     }
 
     if (linkedInStatus?.connected) {
+      if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
       const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "linkedin", {
-        ignoreMissingEndpoint: true
+        ignoreMissingEndpoint: true,
+        expectedWorkspacePath: summary.path
       });
       if (stats) {
         addCommunicationStats(aggregateStats, stats);
       }
     }
 
-    sendToMainWindow("workspace:changed");
-    scheduleCloudSync();
-    return setCloudSyncStatus({
+    if (isCurrentCloudSyncRun(run)) {
+      sendToMainWindow("workspace:changed");
+    }
+    scheduleCloudSyncForRun(run);
+    clearEmptyStateSyncForRun(run);
+    return setCloudSyncStatusForRun(run, {
       state: "synced",
       lastSyncedAt: new Date().toISOString(),
       stats: aggregateStats
     });
   } catch (error) {
-    return setCloudSyncStatus({
+    clearEmptyStateSyncForRun(run);
+    return setCloudSyncStatusForRun(run, {
       state: "error",
       message: error instanceof Error ? error.message : String(error)
     });
   }
 }
 
+function isDefaultRecordsWorkspaceEmpty(summary: WorkspaceSummary): boolean {
+  return DEFAULT_EMPTY_RECORD_OBJECTS.every((objectSlug) =>
+    (summary.counts[objectSlug] ?? 0) === 0
+  );
+}
+
 async function importCloudCommunicationExport(
   workspaceId: string,
   clientToken: string,
   provider: "gmail" | "linkedin",
-  options: { ignoreMissingEndpoint?: boolean } = {}
+  options: { ignoreMissingEndpoint?: boolean; expectedWorkspacePath?: string } = {}
 ): Promise<CommunicationImportStats | undefined> {
   try {
     const exported = await fetchJson<{
@@ -629,7 +802,7 @@ async function importCloudCommunicationExport(
     }>(`/workspaces/${encodeURIComponent(workspaceId)}/integrations/${provider}/export`, clientToken);
     const result = await getSdkClient().request<{
       stats?: Partial<CommunicationImportStats>;
-    }>("importCommunicationBatch", exported.data);
+    }>("importCommunicationBatch", exported.data, options.expectedWorkspacePath);
     return {
       people_created: result.stats?.people_created ?? 0,
       communication_threads_created: result.stats?.communication_threads_created ?? 0,
