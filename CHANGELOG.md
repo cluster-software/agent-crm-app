@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.9-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.8-295b305...v0.14.9-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* open company LinkedIn URLs in browser tab ([d71f561](https://github.com/cluster-software/agent-crm-app/commit/d71f561ce84f025448f86655bbba2514403d2c3f))
+* open company LinkedIn URLs in browser tab ([00a7a33](https://github.com/cluster-software/agent-crm-app/commit/00a7a338287319ef0513ae9d37b945139e492dd1))
+* polish record table loading states ([3862815](https://github.com/cluster-software/agent-crm-app/commit/3862815aebc658942a9a03ea1bf8335bf9399007))
+* polish record table loading states ([793c3bc](https://github.com/cluster-software/agent-crm-app/commit/793c3bc855d589234b52d42f9e3067cc5f630aa5))
+
 ## [0.14.8-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.7-295b305...v0.14.8-295b305) (2026-05-26)
 
 
