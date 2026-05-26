@@ -1190,12 +1190,13 @@ function RecordsView({
 
   const pageStart = records.length === 0 ? 0 : pageIndex * pageSize + 1;
   const pageEnd = pageIndex * pageSize + records.length;
+  const showLoadingMeta = loadingRecords && records.length === 0;
 
   return (
     <div className="table">
       <div className="table-toolbar">
         <div className="table-toolbar__meta">
-          {loadingRecords ? (
+          {showLoadingMeta ? (
             <>
               <Loader2 size={13} className="lucide spin" />
               <span>Loading {object.plural_name.toLowerCase()}</span>
@@ -1816,7 +1817,7 @@ function TableSkeleton({ columnCount }: { columnCount: number }) {
       {Array.from({ length: 10 }).map((_, rowIndex) => (
         <div key={rowIndex} className="table__row table__row--skeleton">
           {Array.from({ length: columnCount }).map((__, columnIndex) => (
-            <span key={columnIndex}>
+            <span key={columnIndex} className="table__cell table__cell--skeleton">
               <span
                 className="table-skeleton-bar"
                 data-column={columnIndex === 0 ? "select" : undefined}
