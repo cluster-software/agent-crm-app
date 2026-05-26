@@ -586,6 +586,12 @@ function setCloudSyncStatusForRun(run: CloudSyncRunContext, status: CloudSyncSta
   return setCloudSyncStatus(status);
 }
 
+function setCloudSyncCheckingForRun(run: CloudSyncRunContext): CloudSyncStatus {
+  if (!isCurrentCloudSyncRun(run)) return { state: "checking" };
+  if (cloudSyncStatus.state === "syncing") return cloudSyncStatus;
+  return setCloudSyncStatus({ state: "checking" });
+}
+
 function scheduleCloudSyncForRun(run: CloudSyncRunContext, delayMs?: number): void {
   if (!isCurrentCloudSyncRun(run)) return;
   scheduleCloudSync(delayMs);
@@ -601,6 +607,12 @@ function updateCloudSyncWorkspace(summary: WorkspaceSummary): void {
   cloudSyncWorkspace = summary;
   if (!isDefaultRecordsWorkspaceEmpty(summary)) {
     cloudSyncShowInEmptyState = false;
+    if (cloudSyncStatus.state === "syncing" && cloudSyncStatus.showInEmptyState === true) {
+      setCloudSyncStatus({
+        ...cloudSyncStatus,
+        showInEmptyState: false
+      });
+    }
   }
 }
 
@@ -669,7 +681,7 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
   }
 
   try {
-    setCloudSyncStatusForRun(run, { state: "checking" });
+    setCloudSyncCheckingForRun(run);
     const status = await fetchJson<{
       ok: true;
       integrations: {
