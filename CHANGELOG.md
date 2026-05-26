@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.3-295b305...v0.14.4-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* gate gmail sync UI and sidecar reuse ([40b123c](https://github.com/cluster-software/agent-crm-app/commit/40b123ccaa7a0c4bcd69cccb11a82ebb34692261))
+
 ## [0.14.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.2-295b305...v0.14.3-295b305) (2026-05-26)
 
 
