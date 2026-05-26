@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.7-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.6-295b305...v0.14.7-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* restore initial gmail sync empty state ([7a37872](https://github.com/cluster-software/agent-crm-app/commit/7a3787245bad4595ff466c6c73f3bde40d7aaa16))
+* restore initial Gmail sync empty state ([8f9623a](https://github.com/cluster-software/agent-crm-app/commit/8f9623a165080e6f589b913c2ca48562ec926df7))
+
 ## [0.14.6-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.5-295b305...v0.14.6-295b305) (2026-05-26)
 
 
