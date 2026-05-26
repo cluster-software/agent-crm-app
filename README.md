@@ -111,9 +111,14 @@ The app stores hosted-sync metadata next to the workspace in `.agent-crm-cloud.j
 {
   "workspaceId": "...",
   "clientToken": "...",
+  "clusterOrgId": "...",
   "createdAt": "..."
 }
 ```
+
+`clusterOrgId` is optional and may be written by CLI connect flows that pin
+a workspace to a specific Cluster organization. The app preserves it when it
+repairs or backfills workspace metadata.
 
 ## Browser Preview
 
