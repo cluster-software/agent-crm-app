@@ -1759,12 +1759,32 @@ body.resizing-terminal * { cursor: col-resize !important; }
   color: var(--text-muted);
   font-size: 12.5px;
 }
+.modal-path {
+  color: var(--text-muted);
+}
 .modal__body {
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   overflow: auto;
+}
+.workspace-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-name-row__input {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-directory-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  background: var(--bg);
+  border-color: var(--border);
+  box-shadow: var(--input-shadow);
 }
 .modal__actions {
   display: flex;

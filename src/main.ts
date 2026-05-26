@@ -283,15 +283,15 @@ function slugifyWorkspaceName(name: string): string {
   return cleaned;
 }
 
-// Allocate a fresh workspace directory under `~/agent-crm/` keyed off the
-// user's chosen name. The `.acrm` file and the Claude Code PTY share this
+// Allocate a fresh workspace directory under the chosen parent keyed off the
+// user's workspace name. The `.acrm` file and the Claude Code PTY share this
 // directory so they don't diverge. If `<slug>` is taken, append `-2`, `-3`,
 // etc. until we find a free one.
-async function allocateWorkspaceDir(slug: string): Promise<string> {
-  await fs.mkdir(AGENT_CRM_ROOT, { recursive: true });
+async function allocateWorkspaceDir(slug: string, parentDir = AGENT_CRM_ROOT): Promise<string> {
+  await fs.mkdir(parentDir, { recursive: true });
   for (let attempt = 0; attempt < 100; attempt++) {
     const candidate = attempt === 0 ? slug : `${slug}-${attempt + 1}`;
-    const dir = path.join(AGENT_CRM_ROOT, candidate);
+    const dir = path.join(parentDir, candidate);
     try {
       await fs.mkdir(dir);
       return dir;
@@ -945,12 +945,25 @@ handle("workspace:open-dialog", async () => {
   return openAndWatch(result.filePaths[0]);
 });
 
-handle("workspace:create", async (name: string) => {
+handle("workspace:choose-directory", async () => {
+  await fs.mkdir(AGENT_CRM_ROOT, { recursive: true });
+  const result = await dialog.showOpenDialog({
+    title: "Choose workspace directory",
+    defaultPath: AGENT_CRM_ROOT,
+    properties: ["openDirectory", "createDirectory"]
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
+handle("workspace:create", async (name: string, parentDir?: string) => {
   const slug = slugifyWorkspaceName(name ?? "");
   if (slug.length === 0) {
     throw new Error("Workspace name must include at least one letter or number.");
   }
-  const dir = await allocateWorkspaceDir(slug);
+  const dir = await allocateWorkspaceDir(slug, parentDir || AGENT_CRM_ROOT);
   const filePath = path.join(dir, `${slug}.acrm`);
   const summary = await withCloudWorkspace(
     await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath)
