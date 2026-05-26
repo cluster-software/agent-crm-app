@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.1-295b305...v0.14.2-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* generate workspace agent instructions ([7465470](https://github.com/cluster-software/agent-crm-app/commit/7465470cf395d71f33b0c63c88fdccfe8e06c50e))
+* generate workspace agent instructions ([08e5dad](https://github.com/cluster-software/agent-crm-app/commit/08e5dad1ad3d2938f99e27e3ec13e76523e56cd6))
+
 ## [0.14.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.0-295b305...v0.14.1-295b305) (2026-05-26)
 
 
