@@ -1097,6 +1097,12 @@ body.resizing-terminal * { cursor: col-resize !important; }
   font-size: 11px;
   color: var(--text-dim);
 }
+.table__cell-link {
+  text-decoration: none;
+}
+.table__cell-link:hover {
+  color: var(--accent);
+}
 .signal-column-head {
   display: inline-flex;
   align-items: center;
