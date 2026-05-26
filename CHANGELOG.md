@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.6-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.5-295b305...v0.14.6-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* use SDK workspace identity helper ([6563512](https://github.com/cluster-software/agent-crm-app/commit/6563512534d4d5cd6888e5d7c411e7a091d6fdfb))
+* use SDK workspace identity helper ([7c23ec2](https://github.com/cluster-software/agent-crm-app/commit/7c23ec220ca9c5fe61e23abfd6e4d4cbef15bffa))
+
 ## [0.14.5-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.4-295b305...v0.14.5-295b305) (2026-05-26)
 
 
