@@ -1012,13 +1012,13 @@ body.resizing-terminal * { cursor: col-resize !important; }
   cursor: default;
   pointer-events: none;
 }
-.table__row--skeleton > span {
-  padding-right: 12px;
+.table__row--skeleton .table__cell--skeleton {
+  cursor: default;
 }
 .table-skeleton-bar {
   display: block;
-  width: min(100%, 180px);
-  height: 10px;
+  width: min(88%, 180px);
+  height: 14px;
   border-radius: var(--radius-xs);
   background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
   opacity: .7;
