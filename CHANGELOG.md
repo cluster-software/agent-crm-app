@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.2-295b305...v0.14.3-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* prevent agent instructions overwrite ([3998aed](https://github.com/cluster-software/agent-crm-app/commit/3998aed1f9d085f0db7469c684a985d9b7809fb6))
+* prevent agent instructions overwrite ([ac82079](https://github.com/cluster-software/agent-crm-app/commit/ac82079d4f9176088f1563146cd5a8297ed3a349))
+* speed up people list loading ([6631ac4](https://github.com/cluster-software/agent-crm-app/commit/6631ac413dd4d9f491022b122dc29420b274dde6))
+* speed up people list loading ([ccd3055](https://github.com/cluster-software/agent-crm-app/commit/ccd3055c1a45b1cef8ddd2d547d1289ba6451917))
+
 ## [0.14.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.1-295b305...v0.14.2-295b305) (2026-05-26)
 
 
