@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.13.2-295b305...v0.14.0-295b305) (2026-05-26)
+
+
+### Features
+
+* choose workspace creation directory ([bb87dff](https://github.com/cluster-software/agent-crm-app/commit/bb87dff50870388336efdfc66f7964a626863f13))
+* choose workspace creation directory ([30fbb0e](https://github.com/cluster-software/agent-crm-app/commit/30fbb0ece5d409ea2982a916b2278910fafb6422))
+
 ## [0.13.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.13.1-295b305...v0.13.2-295b305) (2026-05-25)
 
 
