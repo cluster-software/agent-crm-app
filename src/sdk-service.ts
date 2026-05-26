@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline";
@@ -63,6 +64,68 @@ function assertWorkspace(): Workspace {
     throw new Error("No .acrm workspace is open.");
   }
   return workspace;
+}
+
+const METADATA_SCHEMA = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  "x-lix-key": "acrm_metadata",
+  "x-lix-primary-key": ["/key"],
+  type: "object",
+  required: ["key", "value"],
+  properties: {
+    key: { type: "string" },
+    value: { type: "string" }
+  },
+  additionalProperties: false
+};
+
+async function ensureWorkspaceIdentity(): Promise<string> {
+  const current = assertWorkspace();
+  await ensureMetadataSchema(current);
+
+  const existing = await current.lix.execute(
+    "SELECT value FROM acrm_metadata WHERE key = $1 LIMIT 1",
+    ["local_workspace_id"]
+  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+  const existingValue = existing.rows[0]?.value;
+  if (typeof existingValue === "string" && existingValue.length > 0) return existingValue;
+
+  const localWorkspaceId = randomUUID();
+  try {
+    await current.lix.execute(
+      "INSERT INTO acrm_metadata (key, value) VALUES ($1, $2)",
+      ["local_workspace_id", localWorkspaceId]
+    );
+    return localWorkspaceId;
+  } catch (error) {
+    const reread = await current.lix.execute(
+      "SELECT value FROM acrm_metadata WHERE key = $1 LIMIT 1",
+      ["local_workspace_id"]
+    ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+    const value = reread.rows[0]?.value;
+    if (typeof value === "string" && value.length > 0) return value;
+    throw error;
+  }
+}
+
+async function ensureMetadataSchema(current: Workspace): Promise<void> {
+  const existing = await current.lix.execute("SELECT value FROM lix_registered_schema")
+    .catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+  for (const row of existing.rows) {
+    const value = row.value;
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed["x-lix-key"] === "acrm_metadata") {
+      return;
+    }
+  }
+  await current.lix.execute(
+    "INSERT INTO lix_registered_schema (value) VALUES (lix_json($1))",
+    [JSON.stringify(METADATA_SCHEMA)]
+  ).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already|exists|duplicate|unique/i.test(message)) return;
+    throw error;
+  });
 }
 
 async function openWorkspaceAt(filePath: string) {
@@ -803,6 +866,8 @@ async function dispatch(method: string, params: unknown[] = []) {
       return closeWorkspaceHandle();
     case "getWorkspace":
       return workspace ? getWorkspaceSummary() : null;
+    case "ensureWorkspaceIdentity":
+      return ensureWorkspaceIdentity();
     case "listRecords":
       return listRecordsForObject(String(params[0]), (params[1] ?? {}) as RecordListOptions);
     case "createRecord":
@@ -816,6 +881,10 @@ async function dispatch(method: string, params: unknown[] = []) {
       return importTranscript(assertWorkspace(), params[0] as TranscriptPayload);
     case "importCommunicationBatch": {
       schemaObjectsCache = null;
+      const expectedWorkspacePath = typeof params[1] === "string" ? normalizePath(params[1]) : null;
+      if (expectedWorkspacePath && workspacePath !== expectedWorkspacePath) {
+        throw new Error("Workspace changed before communication import could run.");
+      }
       const sdk = await import("@agent-crm/sdk") as unknown as {
         importCommunicationBatch: (workspace: Workspace, batch: unknown) => Promise<unknown>;
       };

@@ -12,7 +12,7 @@ export type CloudSyncStatus =
   | { state: "idle" }
   | { state: "checking" }
   | { state: "disconnected" }
-  | { state: "syncing"; providers?: CloudSyncProvider[] }
+  | { state: "syncing"; providers?: CloudSyncProvider[]; showInEmptyState?: boolean }
   | {
       state: "synced";
       lastSyncedAt: string;

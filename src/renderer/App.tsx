@@ -1320,7 +1320,7 @@ function RecordsEmptySyncStatus({ status }: { status: CloudSyncStatus | null }) 
 function cloudSyncStatusText(status: CloudSyncStatus | null): string | null {
   if (!status) return null;
   if (status.state === "error") return status.message || "Gmail sync failed";
-  if (status.state !== "syncing") return null;
+  if (status.state !== "syncing" || status.showInEmptyState !== true) return null;
   const providers = status.providers ?? [];
   const hasGmail = providers.includes("gmail");
   const hasLinkedIn = providers.includes("linkedin");
