@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.5-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.4-295b305...v0.14.5-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* release electron app with sdk 0.7.5 ([d81ecf8](https://github.com/cluster-software/agent-crm-app/commit/d81ecf865509bc1a7ee28d5dafcad542f0779be8))
+* release Electron app with SDK 0.7.5 ([89fa3e4](https://github.com/cluster-software/agent-crm-app/commit/89fa3e49ee954d262a38fffedac8de5f17db0b03))
+
 ## [0.14.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.3-295b305...v0.14.4-295b305) (2026-05-26)
 
 
