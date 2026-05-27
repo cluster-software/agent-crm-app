@@ -52,6 +52,35 @@ export function Kbd({ children }: { children: ReactNode }) {
   return <span className="kbd">{children}</span>;
 }
 
+export function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string; icon?: ReactNode }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="segmented-control" role="group" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="segmented-control__button"
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.icon && <span className="segmented-control__icon">{option.icon}</span>}
+          <span>{option.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function MonoLabel({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
     <div className="mono-label" style={style}>

@@ -1,11 +1,13 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from "electron";
 import type {
   AgentCliPreflightStatus,
   AppBridge,
   CreateRecordPayload,
   ImportCsvPayload,
   SignalRunRequest,
+  TerminalDroppedFilePayload,
   TranscriptPayload,
+  UpdateRecordPayload,
   UpdateStatus
 } from "./shared/types.js";
 
@@ -37,10 +39,12 @@ const bridge: AppBridge = {
   openWorkspacePath: (filePath: string) => invoke("workspace:open-path", filePath),
   closeWorkspace: () => invoke("workspace:close"),
   getWorkspace: () => invoke("workspace:get"),
+  listRecentWorkspaces: () => invoke("workspace:list-recent"),
   listRecords: (objectSlug: string, options) => invoke("records:list", objectSlug, options),
   importCsv: (payload: ImportCsvPayload) => invoke("import:csv", payload),
   importTranscript: (payload: TranscriptPayload) => invoke("import:transcript", payload),
   createRecord: (payload: CreateRecordPayload) => invoke("records:create", payload),
+  updateRecord: (payload: UpdateRecordPayload) => invoke("records:update", payload),
   runQuery: (sql: string, params?: unknown[]) => invoke("query:run", sql, params),
   listSignals: () => invoke("signals:list"),
   listSignalFailures: () => invoke("signals:failures"),
@@ -74,6 +78,15 @@ const terminal = {
   subscribe: (id: string, cols: number, rows: number, cwd?: string) =>
     invoke<string>("pty:subscribe", id, cols, rows, cwd),
   send: (id: string, data: string) => ipcRenderer.send("pty:input", id, data),
+  getPathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
+  persistDroppedFile: (payload: TerminalDroppedFilePayload) =>
+    invoke<string>("pty:persist-dropped-file", payload),
   resize: (id: string, cols: number, rows: number) =>
     ipcRenderer.send("pty:resize", id, cols, rows),
   kill: (id: string) => ipcRenderer.send("pty:kill", id),

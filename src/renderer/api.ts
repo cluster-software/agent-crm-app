@@ -6,9 +6,11 @@ import type {
   RecordListOptions,
   RecordListResult,
   RecordPreview,
+  RecentWorkspaceSummary,
   SignalDefinitionSummary,
   SignalRunRequest,
   TranscriptPayload,
+  UpdateRecordPayload,
   WorkspaceSummary
 } from "../shared/types";
 
@@ -218,7 +220,6 @@ const sampleRecordsByObject: Record<string, RecordPreview[]> = {
 const previewWorkspace: WorkspaceSummary = {
   path: "/Users/preview/workspace.acrm",
   filename: "workspace.acrm",
-  activeValues: 184,
   counts: {
     companies: 18,
     people: 42,
@@ -228,7 +229,6 @@ const previewWorkspace: WorkspaceSummary = {
     posts: 27,
     transcripts: 6
   },
-  recent: sampleRecords,
   objects: [
     {
       object_slug: "companies",
@@ -410,27 +410,169 @@ const previewWorkspace: WorkspaceSummary = {
   ]
 };
 
+const previewRecentWorkspaces: RecentWorkspaceSummary[] = [
+  {
+    path: "/Users/example/workspaces/cluster.acrm",
+    filename: "cluster.acrm",
+    lastOpenedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
+    timestampSource: "opened"
+  },
+  {
+    path: "/Users/example/workspaces/anthropic-design.acrm",
+    filename: "anthropic-design.acrm",
+    lastOpenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    timestampSource: "opened"
+  },
+  {
+    path: "/Users/example/Downloads/yc-w26-leads.acrm",
+    filename: "yc-w26-leads.acrm",
+    lastOpenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+    timestampSource: "opened"
+  }
+];
+const forceWelcomePreview =
+  typeof window !== "undefined" && new URLSearchParams(window.location.search).has("welcome");
+
 function listPreviewRecords(
   objectSlug: string,
   options: RecordListOptions = {}
 ): RecordListResult {
   const limit = Math.min(250, Math.max(1, Math.floor(options.limit ?? 100)));
   const allRecords = sampleRecordsByObject[objectSlug] ?? [];
+  const searchTerms = normalizePreviewSearchTerms(options.searchQuery);
+  const matchingRecords =
+    searchTerms.length > 0
+      ? allRecords.filter((record) => previewRecordMatchesSearch(record, searchTerms))
+      : allRecords;
   const cursorIndex =
     typeof options.cursor === "string"
-      ? allRecords.findIndex((record) => record.record_id === options.cursor)
+      ? matchingRecords.findIndex((record) => record.record_id === options.cursor)
       : -1;
   const start = cursorIndex >= 0 ? cursorIndex + 1 : 0;
-  const page = allRecords.slice(start, start + limit);
-  const hasMore = start + limit < allRecords.length;
+  const page = matchingRecords.slice(start, start + limit);
+  const hasMore = start + limit < matchingRecords.length;
   return {
     objectSlug,
     records: page,
     limit,
     cursor: options.cursor ?? null,
     nextCursor: hasMore ? page[page.length - 1]?.record_id ?? null : null,
-    hasMore
+    hasMore,
+    ...(searchTerms.length > 0 ? { totalMatches: matchingRecords.length } : {})
   };
+}
+
+function normalizePreviewSearchTerms(query: unknown): string[] {
+  if (typeof query !== "string") return [];
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+}
+
+function previewRecordMatchesSearch(record: RecordPreview, terms: string[]): boolean {
+  const haystack = [
+    record.label,
+    record.subtitle,
+    ...record.values.flatMap((value) => [
+      value.title,
+      value.display,
+      ...value.values.map((item) => previewDisplayUnknown(item))
+    ])
+  ]
+    .join(" ")
+    .toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+function previewDisplayUnknown(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) return value.map(previewDisplayUnknown).filter(Boolean).join(" ");
+  if (typeof value === "object") {
+    const item = value as Record<string, unknown>;
+    const candidate =
+      item.full_name ??
+      item.value ??
+      item.title ??
+      item.email_address ??
+      item.domain ??
+      item.root_domain ??
+      item.date ??
+      item.timestamp;
+    if (candidate != null) return String(candidate);
+  }
+  return "";
+}
+
+function updatePreviewRecord(payload: UpdateRecordPayload) {
+  const records = sampleRecordsByObject[payload.object_slug] ?? [];
+  const record = records.find((item) => item.record_id === payload.record_id);
+  if (!record) {
+    throw new Error(`record not found: ${payload.object_slug}/${payload.record_id}`);
+  }
+
+  let changed = 0;
+  for (const field of payload.fields) {
+    const index = field.indexOf("=");
+    if (index <= 0) continue;
+    const attributeSlug = field.slice(0, index).trim();
+    const rawValue = field.slice(index + 1).trim();
+    const display = previewDisplayValue(payload.object_slug, attributeSlug, rawValue);
+    const existing = record.values.find((value) => value.attribute_slug === attributeSlug);
+    const next = {
+      attribute_slug: attributeSlug,
+      title: previewAttributeTitle(payload.object_slug, attributeSlug),
+      type: previewAttributeType(payload.object_slug, attributeSlug),
+      display,
+      raw: rawValue,
+      values: [rawValue]
+    };
+    if (existing) {
+      Object.assign(existing, next);
+    } else {
+      record.values.push(next);
+    }
+    changed += 1;
+  }
+
+  return {
+    updated: true as const,
+    object_slug: payload.object_slug,
+    record_id: payload.record_id,
+    values_changed: changed
+  };
+}
+
+function previewAttribute(objectSlug: string, attributeSlug: string) {
+  return previewWorkspace.objects
+    .find((object) => object.object_slug === objectSlug)
+    ?.attributes.find((attribute) => attribute.attribute_slug === attributeSlug);
+}
+
+function previewAttributeTitle(objectSlug: string, attributeSlug: string) {
+  return previewAttribute(objectSlug, attributeSlug)?.title ?? attributeSlug;
+}
+
+function previewAttributeType(objectSlug: string, attributeSlug: string) {
+  return previewAttribute(objectSlug, attributeSlug)?.attribute_type ?? "text";
+}
+
+function previewDisplayValue(objectSlug: string, attributeSlug: string, rawValue: string) {
+  const config = previewAttribute(objectSlug, attributeSlug)?.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return rawValue;
+  const options = (config as { options?: unknown }).options;
+  if (!Array.isArray(options)) return rawValue;
+  const needle = rawValue.trim().toLowerCase();
+  for (const option of options) {
+    if (!option || typeof option !== "object" || Array.isArray(option)) continue;
+    const item = option as Record<string, unknown>;
+    const id = typeof item.id === "string" ? item.id : "";
+    const title = typeof item.title === "string" ? item.title : "";
+    if (id.toLowerCase() === needle || title.toLowerCase() === needle) {
+      return title || id || rawValue;
+    }
+  }
+  return rawValue;
 }
 
 const browserPreview: AppBridge = {
@@ -441,7 +583,8 @@ const browserPreview: AppBridge = {
   createWorkspace: async (_name: string, _parentDir?: string) => previewWorkspace,
   openWorkspacePath: async () => previewWorkspace,
   closeWorkspace: async () => undefined,
-  getWorkspace: async () => previewWorkspace,
+  getWorkspace: async () => (forceWelcomePreview ? null : previewWorkspace),
+  listRecentWorkspaces: async () => previewRecentWorkspaces,
   listRecords: async (objectSlug: string, options?: RecordListOptions) =>
     listPreviewRecords(objectSlug, options),
   importCsv: async (_payload: ImportCsvPayload) => ({
@@ -471,6 +614,7 @@ const browserPreview: AppBridge = {
     record_id: "preview-created",
     values_inserted: 3
   }),
+  updateRecord: async (payload: UpdateRecordPayload) => updatePreviewRecord(payload),
   runQuery: async (sql: string, params?: unknown[]) => {
     if (sql.includes("v.object_slug = 'people'") && params?.[1] === "communication_threads") {
       return {

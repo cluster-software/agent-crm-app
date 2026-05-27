@@ -4,6 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,18 +13,24 @@ import * as nodePty from "node-pty";
 import type {
   AgentCliPreflightStatus,
   CloudIntegrationsStatus,
+  GmailSyncProgress,
   CloudSyncStatus,
   CloudSyncProvider,
   CreateRecordPayload,
   ImportCsvPayload,
   IntegrationAccountSummary,
   IntegrationProviderStatus,
+  IntegrationSyncStatus,
   QueryResult,
   RecordListOptions,
   RecordListResult,
+  RecentWorkspaceSummary,
   SignalRunRequest,
+  TerminalDroppedFilePayload,
   TranscriptImportResult,
   TranscriptPayload,
+  UpdateRecordPayload,
+  UpdateRecordResult,
   UpdateStatus,
   WorkspaceSummary
 } from "./shared/types.js";
@@ -43,16 +50,45 @@ const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-cr
 let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudSyncWorkspace: WorkspaceSummary | null = null;
-let cloudSyncInFlight: Promise<CloudSyncStatus> | null = null;
+let cloudSyncInFlight: { generation: number; promise: Promise<CloudSyncStatus> } | null = null;
+let cloudSyncGeneration = 0;
+let cloudSyncShowInEmptyState = false;
+let authFlowWindow: BrowserWindow | null = null;
+let authUrlOpenServer: Server | null = null;
+let authUrlOpenBridge:
+  | {
+      port: number;
+      token: string;
+      helperDir: string;
+      helperPath: string;
+    }
+  | null = null;
 const CLOUD_SYNC_IDLE_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_ACTIVE_INTERVAL_MS = 5_000;
 const AGENT_CLI_COMMAND_TIMEOUT_MS = 30 * 1000;
 const AGENT_CLI_INSTALL_TIMEOUT_MS = 120 * 1000;
+const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
+const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
+const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
+const gmailPartialImportsByWorkspace = new Map<string, GmailPartialImportState>();
+const gmailCompletedImportsByWorkspace = new Map<string, string>();
 
 type CommunicationImportStats = {
   people_created: number;
   communication_threads_created: number;
   communication_messages_created: number;
+};
+
+type GmailPartialImportState = {
+  importedWrittenThreads: number;
+  importedWrittenMessages: number;
+  lastImportAtMs: number;
+};
+
+type CloudSyncRunContext = {
+  generation: number;
+  workspacePath: string;
+  cloudWorkspaceId: string;
 };
 
 function sendToMainWindow(channel: string, ...args: unknown[]) {
@@ -61,13 +97,273 @@ function sendToMainWindow(channel: string, ...args: unknown[]) {
   window.webContents.send(channel, ...args);
 }
 
+function isHostedAuthEntryUrl(value: string): boolean {
+  let url: URL;
+  let syncUrl: URL;
+  try {
+    url = new URL(value);
+    syncUrl = new URL(syncEngineUrl);
+  } catch {
+    return false;
+  }
+  if (url.origin !== syncUrl.origin) return false;
+  return [
+    "/auth/",
+    "/integrations/gmail/",
+    "/integrations/linkedin/"
+  ].some((prefix) => url.pathname.startsWith(prefix));
+}
+
+function isExternalGoogleOAuthUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "accounts.google.com" || hostname.endsWith(".accounts.google.com")) return true;
+  return url.protocol === "https:" && (url.pathname === "/google/login" || url.pathname.startsWith("/google/login/"));
+}
+
+function openAuthFlowWindow(url: string): void {
+  if (!isHostedAuthEntryUrl(url)) {
+    void shell.openExternal(url);
+    return;
+  }
+
+  const existingWindow = authFlowWindow && !authFlowWindow.isDestroyed()
+    ? authFlowWindow
+    : null;
+  const window = existingWindow ?? createAuthFlowWindow();
+
+  void window.loadURL(url);
+  if (window.isMinimized()) window.restore();
+  window.focus();
+}
+
+function createAuthFlowWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 980,
+    height: 860,
+    minWidth: 420,
+    minHeight: 560,
+    title: "Agent CRM Auth",
+    backgroundColor: "#11100f",
+    parent: mainWindow ?? undefined,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: "persist:agent-crm-auth"
+    }
+  });
+
+  authFlowWindow = window;
+  window.once("ready-to-show", () => {
+    if (!window.isDestroyed()) window.show();
+  });
+  window.on("closed", () => {
+    if (authFlowWindow === window) authFlowWindow = null;
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (!isExternalGoogleOAuthUrl(url)) return;
+    event.preventDefault();
+    openExternalGoogleOAuth(window, url);
+  });
+  window.webContents.on("will-redirect", (event, url) => {
+    if (!isExternalGoogleOAuthUrl(url)) return;
+    event.preventDefault();
+    openExternalGoogleOAuth(window, url);
+  });
+  window.webContents.setWindowOpenHandler((details) => {
+    if (isExternalGoogleOAuthUrl(details.url)) {
+      openExternalGoogleOAuth(window, details.url);
+    } else if (details.url.startsWith("http://") || details.url.startsWith("https://")) {
+      void window.loadURL(details.url);
+    } else {
+      void shell.openExternal(details.url);
+    }
+    return { action: "deny" };
+  });
+
+  return window;
+}
+
+function openExternalGoogleOAuth(window: BrowserWindow, url: string): void {
+  void shell.openExternal(url);
+  void window.loadURL(externalGoogleOAuthNoticeUrl());
+}
+
+function externalGoogleOAuthNoticeUrl(): string {
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Finish Google sign-in</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #11100f; color: #f7f4ef; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(420px, calc(100vw - 48px)); }
+      h1 { font-size: 28px; line-height: 1.1; margin: 0 0 12px; }
+      p { margin: 0; color: #b9b2a8; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Finish Google sign-in in your browser</h1>
+      <p>Agent CRM opened Google in your default browser. Complete the sign-in there, then return to Agent CRM.</p>
+    </main>
+  </body>
+</html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function authUrlOpenBridgeEnv(): Record<string, string> {
+  if (!authUrlOpenBridge) return {};
+  return {
+    ACRM_OPEN_URL_COMMAND: authUrlOpenBridge.helperPath,
+    AGENT_CRM_AUTH_OPEN_PORT: String(authUrlOpenBridge.port),
+    AGENT_CRM_AUTH_OPEN_TOKEN: authUrlOpenBridge.token
+  };
+}
+
 const workspaceWatcher = createWorkspaceWatcher(() => {
   sendToMainWindow("workspace:changed");
 });
 
+async function ensureAuthUrlOpenBridge(): Promise<void> {
+  if (authUrlOpenBridge) return;
+
+  const token = randomUUID();
+  const server = createServer((request, response) => {
+    void handleAuthUrlOpenRequest(request, response, token).catch(() => {
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Could not start Agent CRM auth URL opener.");
+  }
+
+  const helperDir = path.join(app.getPath("userData"), "bin");
+  const helperPath = path.join(helperDir, process.platform === "win32" ? "agent-crm-open-url.cmd" : "agent-crm-open-url");
+  await writeAuthUrlOpenHelper(helperDir, helperPath);
+
+  authUrlOpenServer = server;
+  authUrlOpenBridge = {
+    port: address.port,
+    token,
+    helperDir,
+    helperPath
+  };
+}
+
+async function handleAuthUrlOpenRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  token: string
+): Promise<void> {
+  if (request.method !== "POST" || request.url !== "/open-url") {
+    response.writeHead(404).end();
+    return;
+  }
+  if (request.headers.authorization !== `Bearer ${token}`) {
+    response.writeHead(401).end();
+    return;
+  }
+
+  const body = await readRequestBody(request);
+  const targetUrl = new URLSearchParams(body).get("url");
+  if (!targetUrl || !isHostedAuthEntryUrl(targetUrl)) {
+    response.writeHead(400).end();
+    return;
+  }
+
+  openAuthFlowWindow(targetUrl);
+  response.writeHead(204).end();
+}
+
+function readRequestBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 16_384) {
+        reject(new Error("Request body too large."));
+        request.destroy();
+      }
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
+}
+
+async function writeAuthUrlOpenHelper(helperDir: string, helperPath: string): Promise<void> {
+  await fs.mkdir(helperDir, { recursive: true });
+  if (process.platform === "win32") {
+    await fs.writeFile(helperPath, authUrlOpenWindowsHelper(), { mode: 0o700 });
+  } else {
+    await fs.writeFile(helperPath, authUrlOpenPosixHelper(), { mode: 0o700 });
+    await fs.chmod(helperPath, 0o700);
+  }
+}
+
+function authUrlOpenPosixHelper(): string {
+  return `#!/bin/sh
+set -u
+if [ "$#" -lt 1 ]; then
+  echo "usage: agent-crm-open-url <url>" >&2
+  exit 2
+fi
+if [ -n "\${AGENT_CRM_AUTH_OPEN_PORT:-}" ] && [ -n "\${AGENT_CRM_AUTH_OPEN_TOKEN:-}" ] && command -v curl >/dev/null 2>&1; then
+  if curl -fsS -X POST \\
+    -H "Authorization: Bearer \${AGENT_CRM_AUTH_OPEN_TOKEN}" \\
+    --data-urlencode "url=$1" \\
+    "http://127.0.0.1:\${AGENT_CRM_AUTH_OPEN_PORT}/open-url" >/dev/null; then
+    exit 0
+  fi
+fi
+if command -v open >/dev/null 2>&1; then
+  open "$1"
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "$1"
+else
+  echo "$1"
+fi
+`;
+}
+
+function authUrlOpenWindowsHelper(): string {
+  return `@echo off
+if "%~1"=="" (
+  echo usage: agent-crm-open-url ^<url^> 1>&2
+  exit /b 2
+)
+if not "%AGENT_CRM_AUTH_OPEN_PORT%"=="" if not "%AGENT_CRM_AUTH_OPEN_TOKEN%"=="" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$headers=@{Authorization='Bearer '+$env:AGENT_CRM_AUTH_OPEN_TOKEN}; $body=@{url=$args[0]}; Invoke-WebRequest -UseBasicParsing -Method Post -Headers $headers -Body $body ('http://127.0.0.1:'+$env:AGENT_CRM_AUTH_OPEN_PORT+'/open-url') | Out-Null" "%~1"
+  if not errorlevel 1 exit /b 0
+)
+start "" "%~1"
+`;
+}
+
 type RpcResponse<T> =
   | { id: number; result: T }
   | { id: number; error: { message: string; name?: string; stack?: string } };
+type RpcEvent = { event: string; workspacePath?: string };
 
 class SdkServiceClient {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -177,11 +473,18 @@ class SdkServiceClient {
   }
 
   private handleLine(line: string) {
-    let message: RpcResponse<unknown>;
+    let message: RpcResponse<unknown> | RpcEvent;
     try {
-      message = JSON.parse(line) as RpcResponse<unknown>;
+      message = JSON.parse(line) as RpcResponse<unknown> | RpcEvent;
     } catch {
       console.warn(`[sdk-service] ${line}`);
+      return;
+    }
+
+    if ("event" in message) {
+      if (message.event === "recordIndexChanged") {
+        sendToMainWindow("workspace:changed");
+      }
       return;
     }
 
@@ -223,6 +526,7 @@ type PtySession = {
 const ptySessions = new Map<string, PtySession>();
 const MAX_BUFFER_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
+const MAX_DROPPED_FILE_BYTES = 50 * 1024 * 1024;
 
 type ShellCandidate = {
   command: string;
@@ -448,6 +752,17 @@ async function ensureAgentCliPreflight(): Promise<void> {
 
 const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
 const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
+const RECENT_WORKSPACES_FILENAME = "recent-workspaces.json";
+const RECENT_WORKSPACE_DIRS = [
+  { dir: AGENT_CRM_ROOT, depth: 2 },
+  { dir: path.join(os.homedir(), "workspaces"), depth: 1 },
+  { dir: path.join(os.homedir(), "Downloads"), depth: 1 }
+] as const;
+
+type PersistedRecentWorkspace = {
+  path: string;
+  openedAt: string;
+};
 
 type AgentWorkspaceInstructions = {
   filenames: readonly string[];
@@ -475,6 +790,14 @@ const EMERGENCY_AGENT_WORKSPACE_INSTRUCTIONS = {
 } as const;
 
 let agentWorkspaceInstructionsPromise: Promise<AgentWorkspaceInstructions> | null = null;
+
+type CloudMetadata = {
+  workspaceId?: string;
+  clientToken?: string;
+  clusterOrgId?: string;
+  localWorkspaceId?: string;
+  createdAt?: string;
+};
 
 function slugifyWorkspaceName(name: string): string {
   const cleaned = name
@@ -553,14 +876,17 @@ async function loadAgentWorkspaceInstructions(): Promise<AgentWorkspaceInstructi
   return agentWorkspaceInstructionsPromise;
 }
 
-async function ensureAgentInstructionFiles(workspaceFile: string): Promise<void> {
-  const workspaceDir = path.dirname(workspaceFile);
+async function ensureAgentInstructionFilesInDir(workspaceDir: string): Promise<void> {
   const instructions = await loadAgentWorkspaceInstructions();
   await Promise.all(
     instructions.filenames.map((filename) =>
       upsertAgentInstructionBlock(path.join(workspaceDir, filename), instructions)
     )
   );
+}
+
+async function ensureAgentInstructionFiles(workspaceFile: string): Promise<void> {
+  await ensureAgentInstructionFilesInDir(path.dirname(workspaceFile));
 }
 
 async function upsertAgentInstructionBlock(
@@ -606,36 +932,40 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
   if (!summary.path) return summary;
   const cwd = path.dirname(summary.path);
   const metadataPath = path.join(cwd, CLOUD_METADATA_FILENAME);
-  let workspaceId: string | undefined;
-  let clientToken: string | undefined;
+  const localWorkspaceId = await getSdkClient().request<string>("ensureWorkspaceIdentity");
+  let metadata = await readCloudMetadata(metadataPath);
 
-  try {
-    const parsed = JSON.parse(await fs.readFile(metadataPath, "utf8")) as {
-      workspaceId?: unknown;
-      clientToken?: unknown;
-    };
-    if (typeof parsed.workspaceId === "string" && parsed.workspaceId.length > 0) {
-      workspaceId = parsed.workspaceId;
-    }
-    if (typeof parsed.clientToken === "string" && parsed.clientToken.length > 0) {
-      clientToken = parsed.clientToken;
-    }
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code !== "ENOENT") {
-      console.warn(`[cloud-workspace] failed to read ${metadataPath}: ${(error as Error).message}`);
+  if (metadata.workspaceId && metadata.clientToken) {
+    if (metadata.localWorkspaceId && metadata.localWorkspaceId !== localWorkspaceId) {
+      await archiveCloudMetadata(metadataPath);
+      metadata = {};
+    } else if (!metadata.localWorkspaceId && await shouldRotateLegacySidecar(metadata, metadataPath, summary.path)) {
+      await archiveCloudMetadata(metadataPath);
+      metadata = {};
     }
   }
+
+  let workspaceId = metadata.workspaceId;
+  let clientToken = metadata.clientToken;
 
   if (!workspaceId || !clientToken) {
     workspaceId = workspaceId ?? randomUUID();
     clientToken = clientToken ?? randomUUID();
+  }
+
+  if (
+    workspaceId !== metadata.workspaceId ||
+    clientToken !== metadata.clientToken ||
+    localWorkspaceId !== metadata.localWorkspaceId
+  ) {
     await fs.writeFile(
       metadataPath,
       `${JSON.stringify({
+        ...metadata,
         workspaceId,
         clientToken,
-        createdAt: new Date().toISOString()
+        localWorkspaceId,
+        createdAt: metadata.createdAt ?? new Date().toISOString()
       }, null, 2)}\n`,
       "utf8"
     );
@@ -649,23 +979,139 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
   };
 }
 
+async function readCloudMetadata(metadataPath: string): Promise<CloudMetadata> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(metadataPath, "utf8")) as Record<string, unknown>;
+    return {
+      ...(typeof parsed.workspaceId === "string" && parsed.workspaceId.length > 0
+        ? { workspaceId: parsed.workspaceId }
+        : {}),
+      ...(typeof parsed.clientToken === "string" && parsed.clientToken.length > 0
+        ? { clientToken: parsed.clientToken }
+        : {}),
+      ...(typeof parsed.clusterOrgId === "string" && parsed.clusterOrgId.length > 0
+        ? { clusterOrgId: parsed.clusterOrgId }
+        : {}),
+      ...(typeof parsed.localWorkspaceId === "string" && parsed.localWorkspaceId.length > 0
+        ? { localWorkspaceId: parsed.localWorkspaceId }
+        : {}),
+      ...(typeof parsed.createdAt === "string" && parsed.createdAt.length > 0
+        ? { createdAt: parsed.createdAt }
+        : {})
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      console.warn(`[cloud-workspace] failed to read ${metadataPath}: ${(error as Error).message}`);
+    }
+    return {};
+  }
+}
+
+async function shouldRotateLegacySidecar(
+  metadata: CloudMetadata,
+  metadataPath: string,
+  workspacePath: string
+): Promise<boolean> {
+  const sidecarCreatedAt = Date.parse(metadata.createdAt ?? "");
+  try {
+    const [sidecarStat, workspaceStat] = await Promise.all([
+      fs.stat(metadataPath),
+      fs.stat(workspacePath)
+    ]);
+    const sidecarTimestamp = Number.isNaN(sidecarCreatedAt)
+      ? Math.max(sidecarStat.birthtimeMs, sidecarStat.mtimeMs)
+      : sidecarCreatedAt;
+    const workspaceTimestamp = Math.max(workspaceStat.birthtimeMs, workspaceStat.mtimeMs);
+    return sidecarStat.isFile() && workspaceTimestamp > sidecarTimestamp;
+  } catch {
+    return false;
+  }
+}
+
+async function archiveCloudMetadata(metadataPath: string): Promise<void> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  let target = `${metadataPath}.stale-${timestamp}`;
+  let suffix = 1;
+  while (true) {
+    try {
+      await fs.rename(metadataPath, target);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return;
+      if (code !== "EEXIST") throw error;
+      target = `${metadataPath}.stale-${timestamp}-${suffix}`;
+      suffix++;
+    }
+  }
+}
+
 function setCloudSyncStatus(status: CloudSyncStatus): CloudSyncStatus {
   cloudSyncStatus = status;
   sendToMainWindow("cloud-sync:status", status);
   return status;
 }
 
+function isCurrentCloudSyncRun(run: CloudSyncRunContext): boolean {
+  return (
+    cloudSyncGeneration === run.generation &&
+    cloudSyncWorkspace?.path === run.workspacePath &&
+    cloudSyncWorkspace?.cloudWorkspaceId === run.cloudWorkspaceId
+  );
+}
+
+function setCloudSyncStatusForRun(run: CloudSyncRunContext, status: CloudSyncStatus): CloudSyncStatus {
+  if (!isCurrentCloudSyncRun(run)) return status;
+  return setCloudSyncStatus(status);
+}
+
+function setCloudSyncCheckingForRun(run: CloudSyncRunContext): CloudSyncStatus {
+  if (!isCurrentCloudSyncRun(run)) return { state: "checking" };
+  if (cloudSyncStatus.state === "syncing") return cloudSyncStatus;
+  return setCloudSyncStatus({ state: "checking" });
+}
+
+function scheduleCloudSyncForRun(run: CloudSyncRunContext, delayMs?: number): void {
+  if (!isCurrentCloudSyncRun(run)) return;
+  scheduleCloudSync(delayMs);
+}
+
+function clearEmptyStateSyncForRun(run: CloudSyncRunContext): void {
+  if (!isCurrentCloudSyncRun(run)) return;
+  cloudSyncShowInEmptyState = false;
+}
+
+function updateCloudSyncWorkspace(summary: WorkspaceSummary): void {
+  if (!cloudSyncWorkspace || cloudSyncWorkspace.path !== summary.path) return;
+  cloudSyncWorkspace = summary;
+  if (!isDefaultRecordsWorkspaceEmpty(summary)) {
+    cloudSyncShowInEmptyState = false;
+    if (cloudSyncStatus.state === "syncing" && cloudSyncStatus.showInEmptyState === true) {
+      setCloudSyncStatus({
+        ...cloudSyncStatus,
+        showInEmptyState: false
+      });
+    }
+  }
+}
+
 function stopCloudSync() {
+  cloudSyncGeneration++;
   if (cloudSyncTimer) {
     clearTimeout(cloudSyncTimer);
     cloudSyncTimer = null;
   }
   cloudSyncWorkspace = null;
+  cloudSyncShowInEmptyState = false;
+  gmailPartialImportsByWorkspace.clear();
   setCloudSyncStatus({ state: "idle" });
 }
 
 function startCloudSync(summary: WorkspaceSummary) {
+  cloudSyncGeneration++;
   cloudSyncWorkspace = summary;
+  cloudSyncShowInEmptyState = isDefaultRecordsWorkspaceEmpty(summary);
   if (cloudSyncTimer) {
     clearTimeout(cloudSyncTimer);
     cloudSyncTimer = null;
@@ -682,27 +1128,41 @@ function scheduleCloudSync(delayMs = CLOUD_SYNC_IDLE_INTERVAL_MS) {
 }
 
 async function runCloudSync(): Promise<CloudSyncStatus> {
-  if (cloudSyncInFlight) return cloudSyncInFlight;
-  cloudSyncInFlight = runCloudSyncOnce().finally(() => {
-    cloudSyncInFlight = null;
+  const generation = cloudSyncGeneration;
+  if (cloudSyncInFlight?.generation === generation) return cloudSyncInFlight.promise;
+  const promise = runCloudSyncOnce(generation);
+  cloudSyncInFlight = { generation, promise };
+  promise.finally(() => {
+    if (cloudSyncInFlight?.promise === promise) {
+      cloudSyncInFlight = null;
+    }
   });
-  return cloudSyncInFlight;
+  return promise;
 }
 
-async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
+async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
   const summary = cloudSyncWorkspace;
   if (!summary?.path || !summary.cloudWorkspaceId) {
-    return setCloudSyncStatus({ state: "idle" });
+    if (cloudSyncGeneration === generation) {
+      cloudSyncShowInEmptyState = false;
+      return setCloudSyncStatus({ state: "idle" });
+    }
+    return { state: "idle" };
   }
+  const run = {
+    generation,
+    workspacePath: summary.path,
+    cloudWorkspaceId: summary.cloudWorkspaceId
+  };
 
   const cwd = path.dirname(summary.path);
   const clientToken = cloudWorkspaceTokensByCwd.get(cwd);
   if (!clientToken) {
-    return setCloudSyncStatus({ state: "error", message: "Cloud workspace token is missing." });
+    return setCloudSyncStatusForRun(run, { state: "error", message: "Cloud workspace token is missing." });
   }
 
   try {
-    setCloudSyncStatus({ state: "checking" });
+    setCloudSyncCheckingForRun(run);
     const status = await fetchJson<{
       ok: true;
       integrations: {
@@ -710,10 +1170,35 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
           connected: boolean;
           accountEmail?: string;
           lastSyncedAt?: string;
+          last_synced_at?: string;
           sync?: {
             state?: string;
             errorMessage?: string;
             error_message?: string;
+            peopleSeen?: number;
+            people_seen?: number;
+            communicationThreadsSeen?: number;
+            communication_threads_seen?: number;
+            communicationMessagesSeen?: number;
+            communication_messages_seen?: number;
+            backfillStatus?: string;
+            backfill_status?: string;
+            listedThreads?: number;
+            listed_threads?: number;
+            fetchedThreads?: number;
+            fetched_threads?: number;
+            filteredThreads?: number;
+            filtered_threads?: number;
+            writtenThreads?: number;
+            written_threads?: number;
+            writtenMessages?: number;
+            written_messages?: number;
+            pageCount?: number;
+            page_count?: number;
+            resultSizeEstimate?: number;
+            result_size_estimate?: number;
+            resumeAfter?: string;
+            resume_after?: string;
           };
         };
         linkedin?: {
@@ -728,79 +1213,240 @@ async function runCloudSyncOnce(): Promise<CloudSyncStatus> {
         };
       };
     }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
+    if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
 
     const gmailStatus = status.integrations.gmail;
     const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
+    const gmailSync = normalizeIntegrationSync(gmailStatus?.sync).sync;
+    const gmailSyncState = gmailSync?.state;
+    const gmailLastSyncedAt = gmailStatus?.lastSyncedAt ?? gmailStatus?.last_synced_at;
+    const gmailSyncActive = gmailSyncState === "pending" || gmailSyncState === "running";
+    const gmailSyncFailed = gmailSyncState === "failed";
+    const gmailImportable =
+      gmailStatus?.connected === true &&
+      gmailSyncState === "succeeded" &&
+      !hasCompletedGmailImported(summary.cloudWorkspaceId, gmailSync, gmailLastSyncedAt);
     const connectedProviders: CloudSyncProvider[] = [];
-    if (gmailStatus?.connected) connectedProviders.push("gmail");
+    const importableProviders: CloudSyncProvider[] = [];
+    if (gmailStatus?.connected || gmailSyncActive || gmailSyncFailed) connectedProviders.push("gmail");
     if (linkedInStatus?.connected) connectedProviders.push("linkedin");
+    if (gmailImportable) importableProviders.push("gmail");
+    if (linkedInStatus?.connected) importableProviders.push("linkedin");
 
     if (connectedProviders.length === 0) {
-      return setCloudSyncStatus({ state: "disconnected" });
+      return setCloudSyncStatusForRun(run, { state: "disconnected" });
     }
 
-    const gmailSyncState = gmailStatus?.sync?.state;
-    if (gmailStatus?.connected && (gmailSyncState === "pending" || gmailSyncState === "running")) {
-      scheduleCloudSync(CLOUD_SYNC_ACTIVE_INTERVAL_MS);
-      return setCloudSyncStatus({ state: "syncing", providers: ["gmail"] });
+    if (gmailSyncActive) {
+      const progress = gmailSyncProgress(gmailSync);
+      const syncingStatus: CloudSyncStatus = {
+        state: "syncing",
+        providers: ["gmail"],
+        showInEmptyState: cloudSyncShowInEmptyState,
+        ...(progress ? { progress } : {})
+      };
+      setCloudSyncStatusForRun(run, syncingStatus);
+
+      if (gmailSyncState === "running" && shouldImportPartialGmail(summary.cloudWorkspaceId, gmailSync)) {
+        try {
+          const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail", {
+            expectedWorkspacePath: summary.path,
+            partial: true
+          });
+          markPartialGmailImported(summary.cloudWorkspaceId, gmailSync);
+          if (isCurrentCloudSyncRun(run) && stats) {
+            sendToMainWindow("workspace:changed");
+          }
+        } catch (error) {
+          console.warn(`[cloud-sync] partial Gmail import failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      scheduleCloudSyncForRun(run, CLOUD_SYNC_ACTIVE_INTERVAL_MS);
+      return cloudSyncStatus;
     }
-    if (gmailStatus?.connected && gmailSyncState === "failed") {
-      return setCloudSyncStatus({
+    if (gmailSyncFailed) {
+      clearEmptyStateSyncForRun(run);
+      return setCloudSyncStatusForRun(run, {
         state: "error",
-        message: gmailStatus.sync?.errorMessage ?? gmailStatus.sync?.error_message ?? "Gmail sync failed."
+        message: gmailSync?.errorMessage ?? "Gmail sync failed."
+      });
+    }
+    if (importableProviders.length === 0) {
+      scheduleCloudSyncForRun(run);
+      clearEmptyStateSyncForRun(run);
+      return setCloudSyncStatusForRun(run, {
+        state: "synced",
+        lastSyncedAt: new Date().toISOString(),
+        stats: {
+          people_created: 0,
+          communication_threads_created: 0,
+          communication_messages_created: 0
+        }
       });
     }
 
-    setCloudSyncStatus({ state: "syncing", providers: connectedProviders });
+    setCloudSyncStatusForRun(run, { state: "checking" });
     const aggregateStats: CommunicationImportStats = {
       people_created: 0,
       communication_threads_created: 0,
       communication_messages_created: 0
     };
 
-    if (gmailStatus?.connected) {
-      const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail");
+    if (gmailImportable) {
+      if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
+      const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail", {
+        expectedWorkspacePath: summary.path
+      });
       addCommunicationStats(aggregateStats, stats);
+      markPartialGmailImported(summary.cloudWorkspaceId, gmailSync);
+      markCompletedGmailImported(summary.cloudWorkspaceId, gmailSync, gmailLastSyncedAt);
     }
 
     if (linkedInStatus?.connected) {
+      if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
       const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "linkedin", {
-        ignoreMissingEndpoint: true
+        ignoreMissingEndpoint: true,
+        expectedWorkspacePath: summary.path
       });
       if (stats) {
         addCommunicationStats(aggregateStats, stats);
       }
     }
 
-    sendToMainWindow("workspace:changed");
-    scheduleCloudSync();
-    return setCloudSyncStatus({
+    if (isCurrentCloudSyncRun(run)) {
+      sendToMainWindow("workspace:changed");
+    }
+    scheduleCloudSyncForRun(run);
+    clearEmptyStateSyncForRun(run);
+    return setCloudSyncStatusForRun(run, {
       state: "synced",
       lastSyncedAt: new Date().toISOString(),
       stats: aggregateStats
     });
   } catch (error) {
-    return setCloudSyncStatus({
+    clearEmptyStateSyncForRun(run);
+    return setCloudSyncStatusForRun(run, {
       state: "error",
       message: error instanceof Error ? error.message : String(error)
     });
   }
 }
 
+function isDefaultRecordsWorkspaceEmpty(summary: WorkspaceSummary): boolean {
+  return DEFAULT_EMPTY_RECORD_OBJECTS.every((objectSlug) =>
+    (summary.counts[objectSlug] ?? 0) === 0
+  );
+}
+
+function gmailSyncProgress(sync: IntegrationSyncStatus | undefined): GmailSyncProgress | undefined {
+  if (!sync) return undefined;
+  const progress: GmailSyncProgress = {
+    ...(sync.backfillStatus ? { backfillStatus: sync.backfillStatus } : {}),
+    ...(sync.listedThreads != null ? { listedThreads: sync.listedThreads } : {}),
+    ...(sync.fetchedThreads != null ? { fetchedThreads: sync.fetchedThreads } : {}),
+    ...(sync.filteredThreads != null ? { filteredThreads: sync.filteredThreads } : {}),
+    ...(sync.writtenThreads != null ? { writtenThreads: sync.writtenThreads } : {}),
+    ...(sync.writtenMessages != null ? { writtenMessages: sync.writtenMessages } : {}),
+    ...(sync.pageCount != null ? { pageCount: sync.pageCount } : {}),
+    ...(sync.resultSizeEstimate != null ? { resultSizeEstimate: sync.resultSizeEstimate } : {}),
+    ...(sync.resumeAfter ? { resumeAfter: sync.resumeAfter } : {})
+  };
+  return Object.keys(progress).length > 0 ? progress : undefined;
+}
+
+function shouldImportPartialGmail(workspaceId: string, sync: IntegrationSyncStatus | undefined): boolean {
+  if (!sync) return false;
+  const writtenThreads = sync.writtenThreads ?? sync.communicationThreadsSeen ?? 0;
+  const writtenMessages = sync.writtenMessages ?? sync.communicationMessagesSeen ?? 0;
+  if (writtenThreads <= 0 && writtenMessages <= 0) return false;
+
+  const previous = gmailPartialImportsByWorkspace.get(workspaceId);
+  if (!previous) return true;
+  if (
+    writtenThreads < previous.importedWrittenThreads ||
+    writtenMessages < previous.importedWrittenMessages
+  ) {
+    return true;
+  }
+  if (
+    writtenThreads === previous.importedWrittenThreads &&
+    writtenMessages === previous.importedWrittenMessages
+  ) {
+    return false;
+  }
+
+  const threadDelta = writtenThreads - previous.importedWrittenThreads;
+  const messageDelta = writtenMessages - previous.importedWrittenMessages;
+  return (
+    threadDelta >= GMAIL_PARTIAL_IMPORT_MIN_DELTA ||
+    messageDelta >= GMAIL_PARTIAL_IMPORT_MIN_DELTA ||
+    Date.now() - previous.lastImportAtMs >= GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS
+  );
+}
+
+function markPartialGmailImported(workspaceId: string, sync: IntegrationSyncStatus | undefined): void {
+  if (!sync) return;
+  gmailPartialImportsByWorkspace.set(workspaceId, {
+    importedWrittenThreads: sync.writtenThreads ?? sync.communicationThreadsSeen ?? 0,
+    importedWrittenMessages: sync.writtenMessages ?? sync.communicationMessagesSeen ?? 0,
+    lastImportAtMs: Date.now()
+  });
+}
+
+function hasCompletedGmailImported(
+  workspaceId: string,
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): boolean {
+  const fingerprint = gmailCompletedSyncFingerprint(sync, lastSyncedAt);
+  return fingerprint != null && gmailCompletedImportsByWorkspace.get(workspaceId) === fingerprint;
+}
+
+function markCompletedGmailImported(
+  workspaceId: string,
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): void {
+  const fingerprint = gmailCompletedSyncFingerprint(sync, lastSyncedAt);
+  if (!fingerprint) return;
+  gmailCompletedImportsByWorkspace.set(workspaceId, fingerprint);
+}
+
+function gmailCompletedSyncFingerprint(
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): string | null {
+  if (!sync || sync.state !== "succeeded") return null;
+  const fingerprint = {
+    lastSyncedAt,
+    startedAt: sync.startedAt,
+    finishedAt: sync.finishedAt,
+    peopleSeen: sync.peopleSeen,
+    communicationThreadsSeen: sync.communicationThreadsSeen,
+    communicationMessagesSeen: sync.communicationMessagesSeen,
+    writtenThreads: sync.writtenThreads,
+    writtenMessages: sync.writtenMessages
+  };
+  if (Object.values(fingerprint).every((value) => value == null || value === "")) return null;
+  return JSON.stringify(fingerprint);
+}
+
 async function importCloudCommunicationExport(
   workspaceId: string,
   clientToken: string,
   provider: "gmail" | "linkedin",
-  options: { ignoreMissingEndpoint?: boolean } = {}
+  options: { ignoreMissingEndpoint?: boolean; expectedWorkspacePath?: string; partial?: boolean } = {}
 ): Promise<CommunicationImportStats | undefined> {
   try {
+    const exportPath = `/workspaces/${encodeURIComponent(workspaceId)}/integrations/${provider}/export${options.partial ? "?mode=partial" : ""}`;
     const exported = await fetchJson<{
       ok: true;
       data: unknown;
-    }>(`/workspaces/${encodeURIComponent(workspaceId)}/integrations/${provider}/export`, clientToken);
+    }>(exportPath, clientToken);
     const result = await getSdkClient().request<{
       stats?: Partial<CommunicationImportStats>;
-    }>("importCommunicationBatch", exported.data);
+    }>("importCommunicationBatch", exported.data, options.expectedWorkspacePath);
     return {
       people_created: result.stats?.people_created ?? 0,
       communication_threads_created: result.stats?.communication_threads_created ?? 0,
@@ -833,13 +1479,23 @@ async function fetchJson<T>(pathname: string, clientToken: string): Promise<T> {
   });
   const payload = await response.json().catch(() => undefined) as T | undefined;
   if (!response.ok) {
-    const error = payload && typeof payload === "object" && "error" in payload
-      ? String((payload as { error?: unknown }).error)
-      : `Cloud sync request failed (${response.status})`;
-    throw new Error(error);
+    throw new Error(cloudSyncErrorMessage(payload, `Cloud sync request failed (${response.status})`));
   }
   if (!payload) throw new Error("Cloud sync response was empty.");
   return payload;
+}
+
+function cloudSyncErrorMessage(payload: unknown, fallback: string): string {
+  if (!isRecord(payload) || !("error" in payload)) return fallback;
+  const error = payload.error;
+  if (typeof error === "string" && error.length > 0) return error;
+  if (isRecord(error)) {
+    const message = stringField(error, "message");
+    if (message) return message;
+    const code = stringField(error, "code");
+    if (code) return code;
+  }
+  return fallback;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -930,6 +1586,15 @@ function normalizeIntegrationSync(value: unknown): Pick<IntegrationProviderStatu
   const startedAt = stringField(source, "startedAt", "started_at");
   const finishedAt = stringField(source, "finishedAt", "finished_at");
   const errorMessage = stringField(source, "errorMessage", "error_message");
+  const backfillStatus = stringField(source, "backfillStatus", "backfill_status");
+  const listedThreads = numberField(source, "listedThreads", "listed_threads");
+  const fetchedThreads = numberField(source, "fetchedThreads", "fetched_threads");
+  const filteredThreads = numberField(source, "filteredThreads", "filtered_threads");
+  const writtenThreads = numberField(source, "writtenThreads", "written_threads");
+  const writtenMessages = numberField(source, "writtenMessages", "written_messages");
+  const pageCount = numberField(source, "pageCount", "page_count");
+  const resultSizeEstimate = numberField(source, "resultSizeEstimate", "result_size_estimate");
+  const resumeAfter = stringField(source, "resumeAfter", "resume_after");
   return {
     sync: {
       state,
@@ -938,7 +1603,16 @@ function normalizeIntegrationSync(value: unknown): Pick<IntegrationProviderStatu
       ...(errorMessage ? { errorMessage } : {}),
       ...(peopleSeen != null ? { peopleSeen } : {}),
       ...(communicationThreadsSeen != null ? { communicationThreadsSeen } : {}),
-      ...(communicationMessagesSeen != null ? { communicationMessagesSeen } : {})
+      ...(communicationMessagesSeen != null ? { communicationMessagesSeen } : {}),
+      ...(backfillStatus ? { backfillStatus } : {}),
+      ...(listedThreads != null ? { listedThreads } : {}),
+      ...(fetchedThreads != null ? { fetchedThreads } : {}),
+      ...(filteredThreads != null ? { filteredThreads } : {}),
+      ...(writtenThreads != null ? { writtenThreads } : {}),
+      ...(writtenMessages != null ? { writtenMessages } : {}),
+      ...(pageCount != null ? { pageCount } : {}),
+      ...(resultSizeEstimate != null ? { resultSizeEstimate } : {}),
+      ...(resumeAfter ? { resumeAfter } : {})
     }
   };
 }
@@ -983,14 +1657,6 @@ async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
 
 const claudeJsonPath = path.join(os.homedir(), ".claude.json");
 const trustLocks = new Map<string, Promise<void>>();
-const agentWorkspaceGuideNames = ["CLAUDE.md", "AGENTS.md"];
-const agentWorkspaceGuideStart = "<!-- agent-crm-app:start -->";
-const agentWorkspaceGuideEnd = "<!-- agent-crm-app:end -->";
-const agentWorkspaceGuide = `${agentWorkspaceGuideStart}
-## Agent CRM Workspace
-
-This directory is managed by Agent CRM.
-${agentWorkspaceGuideEnd}`;
 
 // Mark `cwd` as trusted in `~/.claude.json` so Claude Code skips its first-run
 // "Do you trust this folder?" prompt. Best-effort: callers should swallow errors.
@@ -1034,38 +1700,8 @@ async function ensureClaudeTrust(cwd: string): Promise<void> {
   }
 }
 
-async function ensureAgentWorkspaceGuide(cwd: string, guideName: string): Promise<void> {
-  const guidePath = path.join(cwd, guideName);
-  let existing = "";
-  try {
-    existing = await fs.readFile(guidePath, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
-
-  let next: string;
-  const start = existing.indexOf(agentWorkspaceGuideStart);
-  const end = existing.indexOf(agentWorkspaceGuideEnd);
-  if (start >= 0 && end > start) {
-    next =
-      existing.slice(0, start).trimEnd() +
-      "\n\n" +
-      agentWorkspaceGuide +
-      "\n" +
-      existing.slice(end + agentWorkspaceGuideEnd.length).trimStart();
-  } else {
-    next = existing.trimEnd();
-    next += `${next ? "\n\n" : ""}${agentWorkspaceGuide}\n`;
-  }
-
-  if (next === existing) return;
-  await fs.writeFile(guidePath, next, "utf8");
-}
-
 async function ensureAgentWorkspaceGuides(cwd: string): Promise<void> {
-  await Promise.all(
-    agentWorkspaceGuideNames.map((guideName) => ensureAgentWorkspaceGuide(cwd, guideName))
-  );
+  await ensureAgentInstructionFilesInDir(cwd);
 }
 
 function appendToBuffer(session: PtySession, data: string) {
@@ -1106,6 +1742,11 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   env.COLORTERM = "truecolor";
   env.TERM_PROGRAM = "agent-crm";
   env.ACRM_SYNC_ENGINE_URL = syncEngineUrl;
+  const openBridgeEnv = authUrlOpenBridgeEnv();
+  Object.assign(env, openBridgeEnv);
+  if (authUrlOpenBridge) {
+    env.PATH = `${authUrlOpenBridge.helperDir}${path.delimiter}${env.PATH ?? ""}`;
+  }
   const cloudWorkspaceId = cloudWorkspaceIdsByCwd.get(cwd);
   if (cloudWorkspaceId) {
     env.ACRM_CLOUD_WORKSPACE_ID = cloudWorkspaceId;
@@ -1183,6 +1824,12 @@ function killAllPtys() {
   for (const id of [...ptySessions.keys()]) killPtySession(id);
 }
 
+function safeDroppedFileName(name: string): string {
+  const basename = path.basename(name || "dropped-file");
+  const sanitized = basename.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized || "dropped-file";
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
@@ -1219,7 +1866,11 @@ function createWindow() {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isHostedAuthEntryUrl(url)) {
+      openAuthFlowWindow(url);
+    } else {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 
@@ -1258,9 +1909,150 @@ async function openAndWatch(filePath: string): Promise<WorkspaceSummary> {
   const summary = await withCloudWorkspace(
     await getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath)
   );
-  if (summary?.path) workspaceWatcher.start(summary.path);
+  if (summary?.path) {
+    workspaceWatcher.start(summary.path);
+    app.addRecentDocument(summary.path);
+    await recordRecentWorkspace(summary.path);
+  }
   startCloudSync(summary);
   return summary;
+}
+
+function recentWorkspacesPath(): string {
+  return path.join(app.getPath("userData"), RECENT_WORKSPACES_FILENAME);
+}
+
+function normalizeRecentWorkspace(input: unknown): PersistedRecentWorkspace | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const candidate = input as Partial<PersistedRecentWorkspace>;
+  if (typeof candidate.path !== "string" || !candidate.path.endsWith(".acrm")) return null;
+  if (typeof candidate.openedAt !== "string" || Number.isNaN(new Date(candidate.openedAt).getTime())) {
+    return null;
+  }
+  return {
+    path: candidate.path,
+    openedAt: candidate.openedAt
+  };
+}
+
+async function readRecentWorkspaces(): Promise<PersistedRecentWorkspace[]> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(recentWorkspacesPath(), "utf8"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizeRecentWorkspace).filter((item): item is PersistedRecentWorkspace => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
+async function writeRecentWorkspaces(workspaces: PersistedRecentWorkspace[]): Promise<void> {
+  const filePath = recentWorkspacesPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(workspaces, null, 2)}\n`);
+}
+
+async function recordRecentWorkspace(filePath: string): Promise<void> {
+  const resolvedPath = path.resolve(filePath);
+  const next: PersistedRecentWorkspace = {
+    path: resolvedPath,
+    openedAt: new Date().toISOString()
+  };
+  const seen = new Set<string>();
+  const workspaces = [next, ...await readRecentWorkspaces()]
+    .filter((workspace) => {
+      const key = path.resolve(workspace.path);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 20);
+  await writeRecentWorkspaces(workspaces);
+}
+
+async function findWorkspaceFiles(dir: string, depth: number): Promise<RecentWorkspaceSummary[]> {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: RecentWorkspaceSummary[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (depth > 0) {
+        files.push(...await findWorkspaceFiles(entryPath, depth - 1));
+      }
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".acrm")) continue;
+    try {
+      const stat = await fs.stat(entryPath);
+      files.push({
+        path: entryPath,
+        filename: entry.name,
+        lastOpenedAt: stat.mtime.toISOString(),
+        timestampSource: "modified"
+      });
+    } catch {
+      // Ignore files that disappear while scanning.
+    }
+  }
+  return files;
+}
+
+async function listRecentWorkspaces(): Promise<RecentWorkspaceSummary[]> {
+  const seen = new Set<string>();
+  const isRecentWorkspace = (item: RecentWorkspaceSummary | null): item is RecentWorkspaceSummary =>
+    item !== null;
+  const persisted: Array<Promise<RecentWorkspaceSummary | null>> = (await readRecentWorkspaces()).map(async (workspace) => {
+    try {
+      await fs.stat(workspace.path);
+      return {
+        path: workspace.path,
+        filename: path.basename(workspace.path),
+        lastOpenedAt: workspace.openedAt,
+        timestampSource: "opened" as const
+      };
+    } catch {
+      return null;
+    }
+  });
+  const recentDocuments: Array<Promise<RecentWorkspaceSummary | null>> = app.getRecentDocuments()
+    .filter((filePath) => filePath.endsWith(".acrm"))
+    .map(async (filePath) => {
+      try {
+        const stat = await fs.stat(filePath);
+        return {
+          path: filePath,
+          filename: path.basename(filePath),
+          lastOpenedAt: stat.mtime.toISOString(),
+          timestampSource: "modified" as const
+        };
+      } catch {
+        return null;
+      }
+    });
+
+  const scanned = await Promise.all(RECENT_WORKSPACE_DIRS.map(({ dir, depth }) =>
+    findWorkspaceFiles(dir, depth)
+  ));
+
+  return [
+    ...(await Promise.all(persisted)).filter(isRecentWorkspace),
+    ...(await Promise.all(recentDocuments)).filter(isRecentWorkspace),
+    ...scanned.flat()
+  ]
+    .filter((workspace) => {
+      const key = path.resolve(workspace.path);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
+    .slice(0, 3);
 }
 
 handle("workspace:open-dialog", async () => {
@@ -1301,7 +2093,11 @@ handle("workspace:create", async (name: string, parentDir?: string) => {
     await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath)
   );
   await ensureAgentInstructionFiles(filePath);
-  if (summary?.path) workspaceWatcher.start(summary.path);
+  if (summary?.path) {
+    workspaceWatcher.start(summary.path);
+    app.addRecentDocument(summary.path);
+    await recordRecentWorkspace(summary.path);
+  }
   startCloudSync(summary);
   return summary;
 });
@@ -1318,16 +2114,28 @@ handle("workspace:get", async () => {
   const summary = await getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
   if (!summary) return null;
   const withCloud = await withCloudWorkspace(summary);
-  if (!cloudSyncWorkspace || cloudSyncWorkspace.path !== withCloud.path) {
+  if (
+    !cloudSyncWorkspace ||
+    cloudSyncWorkspace.path !== withCloud.path ||
+    cloudSyncWorkspace.cloudWorkspaceId !== withCloud.cloudWorkspaceId
+  ) {
     startCloudSync(withCloud);
+  } else {
+    updateCloudSyncWorkspace(withCloud);
   }
   return withCloud;
 });
+handle("workspace:list-recent", listRecentWorkspaces);
 handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
   return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);
 });
 handle("records:create", (payload: CreateRecordPayload) => {
   return getSdkClient().request("createRecord", payload);
+});
+handle("records:update", async (payload: UpdateRecordPayload) => {
+  const result = await getSdkClient().request<UpdateRecordResult>("updateRecord", payload);
+  sendToMainWindow("workspace:changed");
+  return result;
 });
 handle("import:csv", (payload: ImportCsvPayload) => {
   return getSdkClient().request("importCsv", payload);
@@ -1411,6 +2219,21 @@ ipcMain.on("pty:kill", (_event, id: string) => {
 
 handle("agent-cli-preflight:get-status", async () => agentCliPreflightStatus);
 
+handle("pty:persist-dropped-file", async (payload: TerminalDroppedFilePayload) => {
+  const bytes = payload.bytes;
+  if (!(bytes instanceof Uint8Array)) {
+    throw new Error("Dropped file payload must include bytes.");
+  }
+  if (bytes.byteLength > MAX_DROPPED_FILE_BYTES) {
+    throw new Error("Dropped file is too large.");
+  }
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-crm-drop-"));
+  const filePath = path.join(dir, safeDroppedFileName(payload.name));
+  await fs.writeFile(filePath, Buffer.from(bytes));
+  return filePath;
+});
+
 let latestUpdateStatus: UpdateStatus = { state: "idle" };
 
 function publishUpdateStatus(status: UpdateStatus) {
@@ -1463,7 +2286,10 @@ ipcMain.handle("update:install", () => {
 
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
+    await ensureAuthUrlOpenBridge().catch((error) => {
+      console.warn("Agent CRM auth URL opener is unavailable.", error);
+    });
     if (isDev && process.platform === "darwin") app.dock?.setIcon(devIconPath);
     createWindow();
     setupAutoUpdater();
@@ -1489,5 +2315,6 @@ app.on("before-quit", () => {
   workspaceWatcher.stop();
   stopCloudSync();
   killAllPtys();
+  authUrlOpenServer?.close();
   void sdkClient?.dispose();
 });

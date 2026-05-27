@@ -1,5 +1,138 @@
 # Changelog
 
+## [0.19.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.18.1-295b305...v0.19.0-295b305) (2026-05-27)
+
+
+### Features
+
+* open hosted auth flows in app ([4f7baab](https://github.com/cluster-software/agent-crm-app/commit/4f7baabc7f5dd066dc81f67908591169b0aad238))
+* open hosted auth flows inside Agent CRM ([f6bc09b](https://github.com/cluster-software/agent-crm-app/commit/f6bc09bf0f9d7e721fca29a016f29fe2e515874e))
+
+## [0.18.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.18.0-295b305...v0.18.1-295b305) (2026-05-27)
+
+
+### Bug Fixes
+
+* cache record previews in sqlite ([d6146b3](https://github.com/cluster-software/agent-crm-app/commit/d6146b3be815ad0f8242f915f4237dafc01a4529))
+* cache record previews in sqlite ([0e2f6ff](https://github.com/cluster-software/agent-crm-app/commit/0e2f6ff630e8af14ee18326e7ea67b132921bff1))
+* hide Gmail sync pill during local refresh ([28b3b20](https://github.com/cluster-software/agent-crm-app/commit/28b3b204b37231450a23653c47e5b704a1da6bc7))
+* hide Gmail sync pill during local refresh ([bd048b2](https://github.com/cluster-software/agent-crm-app/commit/bd048b2ca2db1bbf2a78877a93bbcc368a4e4408))
+
+## [0.18.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.17.0-295b305...v0.18.0-295b305) (2026-05-27)
+
+
+### Features
+
+* animate Gmail sync status pill ([117a0d9](https://github.com/cluster-software/agent-crm-app/commit/117a0d9312b8be90f03acf10e5ee3addc1837abd))
+* animate Gmail sync status pill ([c17a79b](https://github.com/cluster-software/agent-crm-app/commit/c17a79bb556e48226f8902b9de28fc61d73ddd0f))
+
+## [0.17.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.16.1-295b305...v0.17.0-295b305) (2026-05-27)
+
+
+### Features
+
+* show progressive Gmail sync progress ([729263c](https://github.com/cluster-software/agent-crm-app/commit/729263c3fd0b94de5b377cb769ebeb1b363928da))
+* show progressive Gmail sync progress ([03d80f6](https://github.com/cluster-software/agent-crm-app/commit/03d80f6b3ac30026f084d91e77260993c6f67820))
+
+## [0.16.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.16.0-295b305...v0.16.1-295b305) (2026-05-27)
+
+
+### Bug Fixes
+
+* restore app display version ([38ef6f1](https://github.com/cluster-software/agent-crm-app/commit/38ef6f109912f22e4b5c5afb0a52ea8b65e6e337))
+* restore app display version ([014dc5a](https://github.com/cluster-software/agent-crm-app/commit/014dc5a2a53432f3839ba1c2b8b9e360efdd8491))
+
+## [0.16.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.15.0-295b305...v0.16.0-295b305) (2026-05-27)
+
+
+### Features
+
+* add record filtering and keyboard navigation ([202e349](https://github.com/cluster-software/agent-crm-app/commit/202e3492b4169d8f49204f39dc805df6a7047e32))
+* add record filtering and keyboard navigation ([1570e4b](https://github.com/cluster-software/agent-crm-app/commit/1570e4bb86f758a824158973da36bd6452cfaee3))
+* redesign welcome page ([9b9e39a](https://github.com/cluster-software/agent-crm-app/commit/9b9e39a8ccfd51475980aa9cd8e6a244d7a31f14))
+* redesign welcome page ([130ef50](https://github.com/cluster-software/agent-crm-app/commit/130ef5085ca6e78d27bba89f27732a55882cfcf4))
+
+## [0.15.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.10-295b305...v0.15.0-295b305) (2026-05-27)
+
+
+### Features
+
+* add deals kanban pipeline view ([6656ae5](https://github.com/cluster-software/agent-crm-app/commit/6656ae577ca65da66db9282dc5eb0e5ab1fe04e3))
+* add deals kanban pipeline view ([67d6a4d](https://github.com/cluster-software/agent-crm-app/commit/67d6a4d12061e28cb173aab1e31625e3d34f3b94))
+
+
+### Bug Fixes
+
+* remove expanded deals preview fixture ([1411a86](https://github.com/cluster-software/agent-crm-app/commit/1411a86e0356f236e2fa02d3a3194e0326f9347a))
+* remove expanded deals preview fixture ([6f7ba6c](https://github.com/cluster-software/agent-crm-app/commit/6f7ba6cac18cfe91fec3f7afdff784e0f6f28a55))
+
+## [0.14.10-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.9-295b305...v0.14.10-295b305) (2026-05-27)
+
+
+### Bug Fixes
+
+* support image drops in embedded terminal ([df75feb](https://github.com/cluster-software/agent-crm-app/commit/df75feb0625ee1dd6989668354d48f68eefa4d29))
+* support image drops in embedded terminal ([14e582b](https://github.com/cluster-software/agent-crm-app/commit/14e582bdc9bc3e5d4bd9ca388a62636b17c2e102))
+
+## [0.14.9-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.8-295b305...v0.14.9-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* open company LinkedIn URLs in browser tab ([d71f561](https://github.com/cluster-software/agent-crm-app/commit/d71f561ce84f025448f86655bbba2514403d2c3f))
+* open company LinkedIn URLs in browser tab ([00a7a33](https://github.com/cluster-software/agent-crm-app/commit/00a7a338287319ef0513ae9d37b945139e492dd1))
+* polish record table loading states ([3862815](https://github.com/cluster-software/agent-crm-app/commit/3862815aebc658942a9a03ea1bf8335bf9399007))
+* polish record table loading states ([793c3bc](https://github.com/cluster-software/agent-crm-app/commit/793c3bc855d589234b52d42f9e3067cc5f630aa5))
+
+## [0.14.8-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.7-295b305...v0.14.8-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* stabilize Gmail sync empty state ([ec29318](https://github.com/cluster-software/agent-crm-app/commit/ec293186a1519a1aa2efdc4b02791d32a963d18a))
+* stabilize Gmail sync empty state ([7beaa35](https://github.com/cluster-software/agent-crm-app/commit/7beaa35b62a2fb404a64ef1a33460720a283e5eb))
+
+## [0.14.7-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.6-295b305...v0.14.7-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* restore initial gmail sync empty state ([7a37872](https://github.com/cluster-software/agent-crm-app/commit/7a3787245bad4595ff466c6c73f3bde40d7aaa16))
+* restore initial Gmail sync empty state ([8f9623a](https://github.com/cluster-software/agent-crm-app/commit/8f9623a165080e6f589b913c2ca48562ec926df7))
+
+## [0.14.6-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.5-295b305...v0.14.6-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* use SDK workspace identity helper ([6563512](https://github.com/cluster-software/agent-crm-app/commit/6563512534d4d5cd6888e5d7c411e7a091d6fdfb))
+* use SDK workspace identity helper ([7c23ec2](https://github.com/cluster-software/agent-crm-app/commit/7c23ec220ca9c5fe61e23abfd6e4d4cbef15bffa))
+
+## [0.14.5-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.4-295b305...v0.14.5-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* release electron app with sdk 0.7.5 ([d81ecf8](https://github.com/cluster-software/agent-crm-app/commit/d81ecf865509bc1a7ee28d5dafcad542f0779be8))
+* release Electron app with SDK 0.7.5 ([89fa3e4](https://github.com/cluster-software/agent-crm-app/commit/89fa3e49ee954d262a38fffedac8de5f17db0b03))
+
+## [0.14.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.3-295b305...v0.14.4-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* gate gmail sync UI and sidecar reuse ([40b123c](https://github.com/cluster-software/agent-crm-app/commit/40b123ccaa7a0c4bcd69cccb11a82ebb34692261))
+
+## [0.14.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.2-295b305...v0.14.3-295b305) (2026-05-26)
+
+
+### Bug Fixes
+
+* prevent agent instructions overwrite ([3998aed](https://github.com/cluster-software/agent-crm-app/commit/3998aed1f9d085f0db7469c684a985d9b7809fb6))
+* prevent agent instructions overwrite ([ac82079](https://github.com/cluster-software/agent-crm-app/commit/ac82079d4f9176088f1563146cd5a8297ed3a349))
+* speed up people list loading ([6631ac4](https://github.com/cluster-software/agent-crm-app/commit/6631ac413dd4d9f491022b122dc29420b274dde6))
+* speed up people list loading ([ccd3055](https://github.com/cluster-software/agent-crm-app/commit/ccd3055c1a45b1cef8ddd2d547d1289ba6451917))
+
 ## [0.14.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.1-295b305...v0.14.2-295b305) (2026-05-26)
 
 

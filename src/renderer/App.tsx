@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Columns3,
   Database,
   FileText,
   FilePlus2,
@@ -15,7 +16,9 @@ import {
   Mail,
   Newspaper,
   Phone,
+  Search,
   Settings,
+  Table2,
   Terminal,
   Users,
   X,
@@ -25,8 +28,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ComponentType,
   Dispatch,
+  DragEvent as ReactDragEvent,
   FormEvent as ReactFormEvent,
   PointerEvent as ReactPointerEvent,
+  RefObject,
   ReactNode,
   SetStateAction
 } from "react";
@@ -48,6 +53,7 @@ import type {
   IntegrationProviderStatus,
   RecordPreview,
   RecordValue,
+  RecentWorkspaceSummary,
   SchemaObject,
   SignalDefinitionSummary,
   SignalRunFailureSummary,
@@ -62,9 +68,11 @@ import {
   GitHubIcon,
   LinkedInIcon,
   MonoLabel,
+  SegmentedControl,
   XIcon
 } from "./primitives";
 import agentCrmLogo from "./assets/agent-crm-bg.png";
+import agentCrmWhiteLogo from "./assets/white-logo.png";
 import packageJson from "../../package.json";
 
 const sdkObjectOrder = [
@@ -77,6 +85,7 @@ const sdkObjectOrder = [
   "transcripts"
 ];
 const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
+const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const appVersion = packageJson.version;
 const appDisplayVersion = displayVersion(appVersion);
 
@@ -84,6 +93,11 @@ type PersonTab = "overview" | "messages" | "transcripts" | "posts";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
+type DealsViewMode = "table" | "kanban";
+
+const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"];
+const RECORD_TABLE_PAGE_SIZE = 100;
+const DEAL_RECORD_PAGE_SIZE = 250;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -96,6 +110,20 @@ function isTerminalTarget(target: EventTarget | null): boolean {
   return target.closest(".terminal") !== null;
 }
 
+function isTableRowNavigationTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (isTerminalTarget(target)) return false;
+  if (target.closest(".table-filter")) return true;
+  if (isEditableTarget(target)) return false;
+
+  const row = target.closest(".table__row:not(.table__row--skeleton), .deals-table__row");
+  if (!row) {
+    return !target.closest("button, a, input, textarea, select, [contenteditable='true']");
+  }
+  const interactive = target.closest("button, a, input, textarea, select, [contenteditable='true']");
+  return !interactive || interactive === row;
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
 }
@@ -103,6 +131,24 @@ function formatNumber(value: number) {
 function statusFromError(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+
+  return debounced;
+}
+
+function isDefaultRecordsWorkspaceEmpty(summary: WorkspaceSummary | null): boolean {
+  if (!summary) return false;
+  return DEFAULT_EMPTY_RECORD_OBJECTS.every((objectSlug) =>
+    (summary.counts[objectSlug] ?? 0) === 0
+  );
 }
 
 export function App() {
@@ -118,7 +164,11 @@ export function App() {
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
+  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspaceSummary[]>([]);
   const previousWorkspacePathRef = useRef<string | null>(null);
+  const sidebarItemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [recordsFocusRequest, setRecordsFocusRequest] = useState(0);
+  const [detailFocusRequest, setDetailFocusRequest] = useState(0);
 
   useEffect(() => {
     return api.onUpdateStatus(setUpdateStatus);
@@ -164,23 +214,6 @@ export function App() {
   }, [terminalWidth]);
 
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const mod = event.metaKey || event.ctrlKey;
-      if (!mod || event.altKey || event.shiftKey) return;
-      const key = event.key.toLowerCase();
-      if (key === "j") {
-        event.preventDefault();
-        setTerminalOpen((open) => !open);
-      } else if (key === "b") {
-        event.preventDefault();
-        setSidebarOpen((open) => !open);
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
     function onEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
@@ -223,12 +256,32 @@ export function App() {
   }, [refreshWorkspace]);
 
   useEffect(() => {
+    if (workspace) return;
+    let cancelled = false;
+    api.listRecentWorkspaces()
+      .then((workspaces) => {
+        if (!cancelled) setRecentWorkspaces(workspaces);
+      })
+      .catch(() => {
+        if (!cancelled) setRecentWorkspaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace]);
+
+  useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const trigger = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        refreshWorkspace().catch((err) => setError(statusFromError(err)));
+        refreshWorkspace()
+          .then((summary) => {
+            if (!isDefaultRecordsWorkspaceEmpty(summary)) return;
+            return api.triggerCloudSync();
+          })
+          .catch((err) => setError(statusFromError(err)));
         setDataVersion((v) => v + 1);
       }, 150);
     };
@@ -250,6 +303,10 @@ export function App() {
     () => orderSchemaObjects(workspace?.objects ?? []),
     [workspace]
   );
+  const sidebarObjects = useMemo(
+    () => schemaObjects.filter((object) => SIDEBAR_VISIBLE_OBJECTS.has(object.object_slug)),
+    [schemaObjects],
+  );
   const selectedObject =
     schemaObjects.find((object) => object.object_slug === selectedObjectSlug) ??
     schemaObjects[0];
@@ -260,6 +317,48 @@ export function App() {
       setSelectedObjectSlug(defaultObjectSlug(schemaObjects));
     }
   }, [schemaObjects, selectedObjectSlug, workspace]);
+
+  const selectSidebarObject = useCallback((objectSlug: string, focus = false) => {
+    setSelectedObjectSlug(objectSlug);
+    setMainView("records");
+    setDetailRecord(null);
+    setPersonTab("overview");
+    if (focus) {
+      window.requestAnimationFrame(() => {
+        sidebarItemRefs.current.get(objectSlug)?.focus();
+      });
+    }
+  }, []);
+
+  const moveSidebarSelection = useCallback((delta: -1 | 1) => {
+    if (sidebarObjects.length === 0) return;
+    const currentIndex = Math.max(
+      0,
+      sidebarObjects.findIndex((object) => object.object_slug === selectedObjectSlug),
+    );
+    const nextIndex = Math.min(sidebarObjects.length - 1, Math.max(0, currentIndex + delta));
+    const nextObject = sidebarObjects[nextIndex];
+    if (!nextObject) return;
+    selectSidebarObject(nextObject.object_slug, true);
+  }, [selectSidebarObject, selectedObjectSlug, sidebarObjects]);
+
+  useEffect(() => {
+    if (!workspace || !sidebarOpen || mainView !== "records") return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "ArrowLeft") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditableTarget(event.target) || isTerminalTarget(event.target)) return;
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest(".sidebar")) return;
+      if (!selectedObject || !SIDEBAR_VISIBLE_OBJECTS.has(selectedObject.object_slug)) return;
+      if (detailRecord && selectedObject.object_slug === "people" && personTab !== "overview") return;
+
+      event.preventDefault();
+      sidebarItemRefs.current.get(selectedObject.object_slug)?.focus();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [detailRecord, mainView, personTab, selectedObject, sidebarOpen, workspace]);
 
   async function runWorkspaceAction(action: () => Promise<WorkspaceSummary | null>) {
     setError(null);
@@ -275,7 +374,146 @@ export function App() {
     }
   }
 
+  async function handleCreateWorkspace(name: string, parentDir?: string) {
+    setError(null);
+    const summary = await api.createWorkspace(name, parentDir);
+    if (summary) {
+      setWorkspace(summary);
+      setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
+      setMainView("records");
+    }
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "j") {
+        event.preventDefault();
+        setTerminalOpen((open) => !open);
+      } else if (key === "b") {
+        event.preventDefault();
+        setSidebarOpen((open) => !open);
+      } else if (key === "n") {
+        if (createOpen || isEditableTarget(event.target)) return;
+        event.preventDefault();
+        setCreateOpen(true);
+      } else if (key === "o") {
+        if (createOpen || isEditableTarget(event.target)) return;
+        event.preventDefault();
+        void runWorkspaceAction(api.openWorkspaceDialog);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [createOpen]);
+
   const workspaceLabel = workspace?.filename ?? "No workspace";
+  const createWorkspaceModal = createOpen && (
+    <CreateWorkspaceModal
+      onClose={() => setCreateOpen(false)}
+      onPickDirectory={api.chooseWorkspaceDirectory}
+      onCreate={handleCreateWorkspace}
+    />
+  );
+
+  if (!workspace) {
+    return (
+      <div className="welcome-page" data-screen-label="Welcome">
+        <div className="welcome-page__drag" aria-hidden="true" />
+
+        {(error || loading) && (
+          <div className="welcome-page__status">
+            {error && (
+              <div className="strip strip--error">
+                <span>{error}</span>
+                <button className="strip__close" type="button" onClick={() => setError(null)}>
+                  <X size={14} className="lucide" />
+                </button>
+              </div>
+            )}
+            {loading && (
+              <div className="strip strip--loading">
+                <Loader2 size={14} className="lucide spin" />
+                <span>{loading}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <main className="welcome-page__main" aria-labelledby="welcome-title">
+          <section className="welcome-hero">
+            <img className="welcome-logo" src={agentCrmWhiteLogo} alt="Agent CRM" />
+
+            <h1 id="welcome-title">Open a workspace</h1>
+            <p className="welcome-hero__sub">
+              Pick up an existing <span className="welcome-pill mono">.acrm</span> file, or seed a new one from the SDK.
+            </p>
+
+            <div className="welcome-actions" aria-label="Workspace actions">
+              <button
+                className="welcome-action"
+                type="button"
+                onClick={() => runWorkspaceAction(api.openWorkspaceDialog)}
+              >
+                <span className="welcome-action__icon">
+                  <FolderOpen size={24} className="lucide" />
+                </span>
+                <span className="welcome-action__copy">
+                  <span className="welcome-action__title">Open workspace</span>
+                  <span className="welcome-action__sub">Browse for an existing .acrm file.</span>
+                </span>
+                <span className="welcome-action__kbd mono">⌘O</span>
+              </button>
+
+              <button
+                className="welcome-action welcome-action--primary"
+                type="button"
+                onClick={() => setCreateOpen(true)}
+              >
+                <span className="welcome-action__icon">
+                  <FilePlus2 size={24} className="lucide" />
+                </span>
+                <span className="welcome-action__copy">
+                  <span className="welcome-action__title">Create workspace</span>
+                  <span className="welcome-action__sub">Seed a fresh .acrm from the SDK.</span>
+                </span>
+                <span className="welcome-action__kbd mono">⌘N</span>
+              </button>
+            </div>
+
+            {recentWorkspaces.length > 0 && (
+              <div className="welcome-recents" aria-label="Recent workspaces">
+                {recentWorkspaces.map((recent) => (
+                  <button
+                    className="welcome-recent"
+                    key={recent.path}
+                    type="button"
+                    onClick={() => runWorkspaceAction(() => api.openWorkspacePath(recent.path))}
+                  >
+                    <span className="welcome-recent__icon">
+                      <FolderOpen size={18} className="lucide" />
+                    </span>
+                    <span className="welcome-recent__copy">
+                      <span className="welcome-recent__title">{recent.filename}</span>
+                      <span className="welcome-recent__path mono">{formatWorkspacePath(recent.path)}</span>
+                    </span>
+                    <span className="welcome-recent__time mono">{formatCompactRelativeTime(recent.lastOpenedAt)}</span>
+                    <ChevronRight size={20} className="welcome-recent__chevron lucide" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        </main>
+
+        <footer className="welcome-footer mono">agent-crm v{appDisplayVersion}</footer>
+
+        {createWorkspaceModal}
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell" data-sidebar-open={sidebarOpen}>
@@ -286,10 +524,8 @@ export function App() {
         </div>
 
         <div className="sidebar-section">
-          {schemaObjects.length > 0 ? (
-            schemaObjects
-              .filter((object) => SIDEBAR_VISIBLE_OBJECTS.has(object.object_slug))
-              .map((object) => {
+          {sidebarObjects.length > 0 ? (
+            sidebarObjects.map((object) => {
               const Icon = iconForObject(object.object_slug);
               const active = mainView === "records" && selectedObject?.object_slug === object.object_slug;
               const count = workspace?.counts[object.object_slug] ?? 0;
@@ -299,11 +535,27 @@ export function App() {
                   className="nav-item"
                   aria-current={active}
                   key={object.object_slug}
-                  onClick={() => {
-                    setSelectedObjectSlug(object.object_slug);
-                    setMainView("records");
-                    setDetailRecord(null);
-                    setPersonTab("overview");
+                  ref={(element) => {
+                    if (element) sidebarItemRefs.current.set(object.object_slug, element);
+                    else sidebarItemRefs.current.delete(object.object_slug);
+                  }}
+                  onClick={() => selectSidebarObject(object.object_slug)}
+                  onKeyDown={(event) => {
+                    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      moveSidebarSelection(1);
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveSidebarSelection(-1);
+                    } else if (event.key === "ArrowRight") {
+                      event.preventDefault();
+                      if (detailRecord) {
+                        setDetailFocusRequest((request) => request + 1);
+                      } else {
+                        setRecordsFocusRequest((request) => request + 1);
+                      }
+                    }
                   }}
                 >
                   <span className="nav-item__icon">
@@ -343,7 +595,7 @@ export function App() {
                 className="sidebar-footer__dot"
                 data-state={workspace ? "live" : "idle"}
               />
-              <span>agent-crm v{appDisplayVersion}</span>
+              <span className="sidebar-footer__workspace">{workspaceLabel}</span>
             </div>
             <UpdateBanner status={updateStatus} appVersion={appVersion} />
           </div>
@@ -385,32 +637,41 @@ export function App() {
           <div className="toolbar__spacer" />
           <div className="toolbar__actions">
             <button
-              className="icon-btn"
+              className="icon-btn toolbar-tooltip"
               type="button"
-              title="Open workspace"
               aria-label="Open workspace"
               onClick={() => runWorkspaceAction(api.openWorkspaceDialog)}
             >
               <FolderOpen size={14} className="lucide" />
+              <span className="toolbar-tooltip__bubble" role="tooltip">
+                <kbd><span>⌘</span><span>O</span></kbd>
+                <span>Open workspace</span>
+              </span>
             </button>
             <button
-              className="icon-btn"
+              className="icon-btn toolbar-tooltip"
               type="button"
-              title="Create workspace"
               aria-label="Create workspace"
               onClick={() => setCreateOpen(true)}
             >
               <FilePlus2 size={14} className="lucide" />
+              <span className="toolbar-tooltip__bubble" role="tooltip">
+                <kbd><span>⌘</span><span>N</span></kbd>
+                <span>Create workspace</span>
+              </span>
             </button>
             <button
-              className="icon-btn"
+              className="icon-btn toolbar-tooltip"
               type="button"
-              title="Terminal"
               aria-label="Terminal"
               aria-pressed={terminalOpen}
               onClick={() => setTerminalOpen((open) => !open)}
             >
               <Terminal size={14} className="lucide" />
+              <span className="toolbar-tooltip__bubble" role="tooltip">
+                <kbd><span>⌘</span><span>J</span></kbd>
+                <span>Toggle shell</span>
+              </span>
             </button>
           </div>
         </header>
@@ -433,17 +694,21 @@ export function App() {
 
         <div className="main__body">
           <div className="main__content">
-            {!workspace ? (
-              <EmptyWorkspace
-                onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
-                onCreate={() => setCreateOpen(true)}
-              />
-            ) : mainView === "settings" ? (
+            {mainView === "settings" ? (
               <SettingsView dataVersion={dataVersion} setError={setError} />
             ) : detailRecord && selectedObject?.object_slug === "people" ? (
-              <PersonDetail record={detailRecord} tab={personTab} onTabChange={setPersonTab} />
+              <PersonDetail
+                record={detailRecord}
+                tab={personTab}
+                focusRequest={detailFocusRequest}
+                onTabChange={setPersonTab}
+              />
             ) : detailRecord && selectedObject ? (
-              <RecordDetail object={selectedObject} record={detailRecord} />
+              <RecordDetail
+                object={selectedObject}
+                record={detailRecord}
+                focusRequest={detailFocusRequest}
+              />
             ) : selectedObject ? (
               <RecordsView
                 key={selectedObject.object_slug}
@@ -452,6 +717,7 @@ export function App() {
                 totalRecords={workspace.counts[selectedObject.object_slug] ?? 0}
                 cloudSyncStatus={cloudSyncStatus}
                 onRowClick={setDetailRecord}
+                focusRequest={recordsFocusRequest}
                 setError={setError}
               />
             ) : null}
@@ -469,21 +735,7 @@ export function App() {
         </div>
 
       </main>
-      {createOpen && (
-        <CreateWorkspaceModal
-          onClose={() => setCreateOpen(false)}
-          onPickDirectory={api.chooseWorkspaceDirectory}
-          onCreate={async (name, parentDir) => {
-            setError(null);
-            const summary = await api.createWorkspace(name, parentDir);
-            if (summary) {
-              setWorkspace(summary);
-              setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
-              setMainView("records");
-            }
-          }}
-        />
-      )}
+      {createWorkspaceModal}
     </div>
   );
 }
@@ -692,28 +944,23 @@ function displayVersion(version: string): string {
   return version.split("-")[0] ?? version;
 }
 
-function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: () => void }) {
-  return (
-    <div className="empty-state">
-      <div className="empty-state__mark">
-        <Database size={20} className="lucide" />
-      </div>
-      <h1 className="empty-state__title">Connect a workspace</h1>
-      <p className="empty-state__sub">
-        Open an existing <span className="mono">.acrm</span> file or create a new workspace seeded by the SDK.
-      </p>
-      <div className="empty-state__actions">
-        <button className="btn btn--primary" type="button" onClick={onCreate}>
-          <FilePlus2 size={14} className="lucide" />
-          <span>Create workspace</span>
-        </button>
-        <button className="btn" type="button" onClick={onOpen}>
-          <FolderOpen size={14} className="lucide" />
-          <span>Open workspace</span>
-        </button>
-      </div>
-    </div>
-  );
+function formatWorkspacePath(filePath: string): string {
+  if (filePath.startsWith("/Users/")) {
+    const [, , user, ...rest] = filePath.split("/");
+    if (user && rest.length > 0) return `~/${rest.join("/")}`;
+  }
+  return filePath;
+}
+
+function formatCompactRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 60 * 1000) return "now";
+  if (diffMs < 60 * 60 * 1000) return `${Math.round(diffMs / (60 * 1000))}m ago`;
+  if (diffMs < 24 * 60 * 60 * 1000) return `${Math.round(diffMs / (60 * 60 * 1000))}h ago`;
+  if (diffMs < 48 * 60 * 60 * 1000) return "yesterday";
+  return `${Math.round(diffMs / (24 * 60 * 60 * 1000))}d ago`;
 }
 
 function SettingsView({
@@ -1016,12 +1263,23 @@ function accountMeta(account: IntegrationAccountSummary): string {
   return [...new Set(parts)].join(" · ");
 }
 
+type LoadRecordPageOptions = {
+  quiet?: boolean;
+  cursor: string | null;
+  searchQuery: string;
+};
+
+function recordPreviewId(record: Pick<RecordPreview, "object_slug" | "record_id">): string {
+  return `${record.object_slug}:${record.record_id}`;
+}
+
 function RecordsView({
   object,
   dataVersion,
   totalRecords,
   cloudSyncStatus,
   onRowClick,
+  focusRequest,
   setError
 }: {
   object: SchemaObject;
@@ -1029,9 +1287,25 @@ function RecordsView({
   totalRecords: number;
   cloudSyncStatus: CloudSyncStatus;
   onRowClick?: (record: RecordPreview) => void;
+  focusRequest: number;
   setError: (error: string | null) => void;
 }) {
-  const pageSize = 100;
+  const [dealsViewMode, setDealsViewMode] = useState<DealsViewMode>("kanban");
+  const viewMode = object.object_slug === "deals" ? dealsViewMode : "table";
+  const isDealsView = object.object_slug === "deals";
+  const tableFilterAvailable =
+    object.object_slug === "companies" ||
+    object.object_slug === "people" ||
+    (object.object_slug === "deals" && viewMode === "table");
+  const [filterQuery, setFilterQuery] = useState("");
+  const normalizedFilterQuery = normalizeTableFilterQuery(filterQuery);
+  const debouncedFilterQuery = useDebouncedValue(
+    tableFilterAvailable ? normalizedFilterQuery : "",
+    90
+  );
+  const filterInputRef = useRef<HTMLInputElement | null>(null);
+  const loadAllRecords = isDealsView;
+  const pageSize = loadAllRecords ? DEAL_RECORD_PAGE_SIZE : RECORD_TABLE_PAGE_SIZE;
   const [records, setRecords] = useState<RecordPreview[]>([]);
   const [signals, setSignals] = useState<SignalDefinitionSummary[]>([]);
   const [signalFailures, setSignalFailures] = useState<SignalRunFailureSummary[]>([]);
@@ -1039,10 +1313,24 @@ function RecordsView({
   const [loadingRecords, setLoadingRecords] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [totalMatches, setTotalMatches] = useState<number | null>(null);
+  const [loadedSearchQuery, setLoadedSearchQuery] = useState("");
+  const [focusedRecordId, setFocusedRecordId] = useState<string | null>(null);
+  const [focusRequestVersion, setFocusRequestVersion] = useState(0);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<Array<string | null>>([null]);
   const requestIdRef = useRef(0);
+  const recordsRef = useRef<RecordPreview[]>([]);
+  const loadRequestContextRef = useRef({
+    dataVersion,
+    objectSlug: object.object_slug,
+    searchQuery: debouncedFilterQuery
+  });
   const [retryingSignals, setRetryingSignals] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    recordsRef.current = records;
+  }, [records]);
 
   useEffect(() => {
     setRecords([]);
@@ -1052,14 +1340,40 @@ function RecordsView({
     setLoadingRecords(true);
     setHasMore(false);
     setNextCursor(null);
+    setTotalMatches(null);
+    setLoadedSearchQuery("");
+    setFocusedRecordId(null);
+    setFocusRequestVersion(0);
     setPageIndex(0);
     setPageCursors([null]);
   }, [object.object_slug]);
 
-  const loadRecords = useCallback(async (options: { quiet?: boolean } = {}) => {
+  useEffect(() => {
+    if (!tableFilterAvailable) return;
+    function onKeyDown(event: KeyboardEvent) {
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "f") return;
+      if (isTerminalTarget(event.target)) return;
+      if (isEditableTarget(event.target) && event.target !== filterInputRef.current) return;
+      event.preventDefault();
+      window.requestAnimationFrame(() => {
+        filterInputRef.current?.focus();
+        filterInputRef.current?.select();
+      });
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [tableFilterAvailable]);
+
+  const loadRecordPage = useCallback(async ({
+    quiet = false,
+    cursor,
+    searchQuery
+  }: LoadRecordPageOptions) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    if (!options.quiet) {
+    if (!quiet) {
       setLoadingRecords(true);
     }
     try {
@@ -1068,11 +1382,48 @@ function RecordsView({
         api.listSignalFailures(),
         api.listSignalRuns()
       ]);
-      const requestedColumns = pickValueColumns(object, [], nextSignals);
+      const requestedAttributes = requestedRecordAttributes(object, nextSignals);
+      const includeSecondaryLabels =
+        object.object_slug === "deals" ? true : !COLUMNS_BY_OBJECT[object.object_slug];
+      if (loadAllRecords) {
+        const allRecords: RecordPreview[] = [];
+        let pageCursor: string | null = null;
+        let more = false;
+        let next: string | null = null;
+
+        do {
+          const result = await api.listRecords(object.object_slug, {
+            limit: DEAL_RECORD_PAGE_SIZE,
+            cursor: pageCursor,
+            valueAttributes: requestedAttributes,
+            includeSecondaryLabels,
+            searchQuery: searchQuery || undefined
+          });
+          if (requestId !== requestIdRef.current) return;
+          if (result.objectSlug !== object.object_slug) return;
+          allRecords.push(...result.records);
+          more = result.hasMore;
+          next = result.nextCursor;
+          pageCursor = result.nextCursor;
+          setTotalMatches(searchQuery ? result.totalMatches ?? allRecords.length : null);
+        } while (more && pageCursor);
+
+        setRecords(allRecords);
+        setSignals(nextSignals);
+        setSignalFailures(nextSignalFailures);
+        setSignalRuns(nextSignalRuns);
+        setHasMore(more);
+        setNextCursor(next);
+        setTotalMatches(searchQuery ? allRecords.length : null);
+        setLoadedSearchQuery(searchQuery);
+        return;
+      }
       const result = await api.listRecords(object.object_slug, {
         limit: pageSize,
-        cursor: pageCursors[pageIndex] ?? null,
-        valueAttributes: requestedColumns.map((column) => column.slug)
+        cursor,
+        valueAttributes: requestedAttributes,
+        includeSecondaryLabels,
+        searchQuery: searchQuery || undefined
       });
       if (requestId !== requestIdRef.current) return;
       if (result.objectSlug !== object.object_slug) return;
@@ -1082,24 +1433,110 @@ function RecordsView({
       setSignalRuns(nextSignalRuns);
       setHasMore(result.hasMore);
       setNextCursor(result.nextCursor);
+      setTotalMatches(searchQuery ? result.totalMatches ?? result.records.length : null);
+      setLoadedSearchQuery(searchQuery);
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       setError(statusFromError(err));
     } finally {
-      if (requestId === requestIdRef.current && !options.quiet) {
+      if (requestId === requestIdRef.current && !quiet) {
         setLoadingRecords(false);
       }
     }
-  }, [object, pageCursors, pageIndex, setError]);
+  }, [loadAllRecords, object, pageSize, setError]);
+
+  const loadCurrentRecords = useCallback(
+    (options: { quiet?: boolean } = {}) =>
+      loadRecordPage({
+        quiet: options.quiet,
+        cursor: pageCursors[pageIndex] ?? null,
+        searchQuery: debouncedFilterQuery
+      }),
+    [debouncedFilterQuery, loadRecordPage, pageCursors, pageIndex],
+  );
 
   useEffect(() => {
-    void loadRecords();
-  }, [loadRecords, dataVersion]);
+    const previous = loadRequestContextRef.current;
+    const filterOnlyChange =
+      previous.objectSlug === object.object_slug &&
+      previous.dataVersion === dataVersion &&
+      previous.searchQuery !== debouncedFilterQuery;
+    const suppressLoadingState =
+      tableFilterAvailable && filterOnlyChange && recordsRef.current.length > 0;
+
+    loadRequestContextRef.current = {
+      dataVersion,
+      objectSlug: object.object_slug,
+      searchQuery: debouncedFilterQuery
+    };
+
+    if (!suppressLoadingState) {
+      setLoadingRecords(true);
+    }
+    setHasMore(false);
+    setNextCursor(null);
+    setTotalMatches(null);
+    setPageIndex(0);
+    setPageCursors([null]);
+    void loadRecordPage({
+      cursor: null,
+      quiet: suppressLoadingState,
+      searchQuery: debouncedFilterQuery
+    });
+  }, [dataVersion, debouncedFilterQuery, loadRecordPage, object.object_slug, tableFilterAvailable]);
 
   const valueColumns = useMemo(
     () => pickValueColumns(object, records, signals),
     [object, records, signals],
   );
+  const displayedRecords = useMemo(() => {
+    if (!tableFilterAvailable) return records;
+    if (normalizedFilterQuery === loadedSearchQuery) return records;
+    return filterRecordsForQuery(records, filterQuery);
+  }, [filterQuery, loadedSearchQuery, normalizedFilterQuery, records, tableFilterAvailable]);
+  const displayedRecordIds = useMemo(
+    () => displayedRecords.map(recordPreviewId),
+    [displayedRecords],
+  );
+
+  useEffect(() => {
+    setFocusedRecordId((current) => {
+      if (displayedRecordIds.length === 0) return null;
+      if (current && displayedRecordIds.includes(current)) return current;
+      return displayedRecordIds[0];
+    });
+  }, [displayedRecordIds]);
+
+  useEffect(() => {
+    if (!tableFilterAvailable) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
+      if (!isTableRowNavigationTarget(event.target)) return;
+      if (displayedRecords.length === 0) return;
+
+      const currentIndex = focusedRecordId
+        ? displayedRecordIds.indexOf(focusedRecordId)
+        : -1;
+      const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        onRowClick?.(displayedRecords[safeIndex]);
+        return;
+      }
+
+      event.preventDefault();
+      const nextIndex =
+        event.key === "ArrowDown"
+          ? Math.min(displayedRecords.length - 1, currentIndex + 1)
+          : Math.max(0, currentIndex < 0 ? displayedRecords.length - 1 : currentIndex - 1);
+      setFocusedRecordId(displayedRecordIds[nextIndex]);
+      setFocusRequestVersion((version) => version + 1);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [displayedRecordIds, displayedRecords, focusedRecordId, onRowClick, tableFilterAvailable]);
   const failureBySignal = useMemo(
     () => signalFailureMap(signalFailures, signals),
     [signalFailures, signals],
@@ -1121,7 +1558,7 @@ function RecordsView({
           record_ids: [failure.record_id],
           concurrency: 1
         });
-        await loadRecords({ quiet: true });
+        await loadCurrentRecords({ quiet: true });
       } catch (err) {
         setError(statusFromError(err));
       } finally {
@@ -1132,7 +1569,7 @@ function RecordsView({
         });
       }
     },
-    [loadRecords, retryingSignals, setError],
+    [loadCurrentRecords, retryingSignals, setError],
   );
   const hasRunningSignalCells = records.some((record) =>
     valueColumns.some(
@@ -1145,23 +1582,31 @@ function RecordsView({
   useEffect(() => {
     if (!hasRunningSignalCells) return;
     const timer = window.setInterval(() => {
-      void loadRecords({ quiet: true });
+      void loadCurrentRecords({ quiet: true });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [hasRunningSignalCells, loadRecords]);
+  }, [hasRunningSignalCells, loadCurrentRecords]);
 
   function goToPreviousPage() {
-    setPageIndex((index) => Math.max(0, index - 1));
+    const nextIndex = Math.max(0, pageIndex - 1);
+    setPageIndex(nextIndex);
+    void loadRecordPage({
+      cursor: pageCursors[nextIndex] ?? null,
+      searchQuery: debouncedFilterQuery
+    });
   }
 
   function goToNextPage() {
     if (!nextCursor) return;
+    const cursor = nextCursor;
+    const nextIndex = pageIndex + 1;
     setPageCursors((cursors) => {
       const next = cursors.slice(0, pageIndex + 1);
-      next[pageIndex + 1] = nextCursor;
+      next[nextIndex] = cursor;
       return next;
     });
-    setPageIndex((index) => index + 1);
+    setPageIndex(nextIndex);
+    void loadRecordPage({ cursor, searchQuery: debouncedFilterQuery });
   }
 
   if (totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
@@ -1173,24 +1618,67 @@ function RecordsView({
     );
   }
 
-  const pageStart = records.length === 0 ? 0 : pageIndex * pageSize + 1;
-  const pageEnd = pageIndex * pageSize + records.length;
+  const filterActive = tableFilterAvailable && normalizedFilterQuery.length > 0;
+  const optimisticFilter = filterActive && normalizedFilterQuery !== debouncedFilterQuery;
+  const pageStart = displayedRecords.length === 0 ? 0 : pageIndex * pageSize + 1;
+  const pageEnd = pageIndex * pageSize + displayedRecords.length;
+  const showLoadingMeta = loadingRecords && records.length === 0 && !filterActive;
+  const metaText = filterActive
+    ? filterMetaText(
+        optimisticFilter ? null : totalMatches,
+        displayedRecords.length,
+        totalRecords,
+        object.plural_name
+      )
+    : `${formatNumber(pageStart)}-${formatNumber(pageEnd)} of ${formatNumber(totalRecords)}`;
+
+  if (isDealsView) {
+    return (
+      <DealsPipelineView
+        object={object}
+        records={displayedRecords}
+        totalRecords={totalRecords}
+        loading={loadingRecords}
+        viewMode={viewMode}
+        onViewModeChange={setDealsViewMode}
+        filterQuery={filterQuery}
+        filterInputRef={filterInputRef}
+        onFilterQueryChange={setFilterQuery}
+        totalMatches={optimisticFilter ? null : totalMatches}
+        focusedRecordId={focusedRecordId}
+        focusRequestVersion={focusRequestVersion}
+        tableFocusRequest={focusRequest}
+        onFocusedRecordChange={setFocusedRecordId}
+        onRecordClick={onRowClick}
+        onRecordsChanged={() => loadCurrentRecords({ quiet: true })}
+        setError={setError}
+      />
+    );
+  }
 
   return (
     <div className="table">
       <div className="table-toolbar">
         <div className="table-toolbar__meta">
-          {loadingRecords ? (
+          {showLoadingMeta ? (
             <>
               <Loader2 size={13} className="lucide spin" />
               <span>Loading {object.plural_name.toLowerCase()}</span>
             </>
           ) : (
-            <span>
-              {formatNumber(pageStart)}-{formatNumber(pageEnd)} of {formatNumber(totalRecords)}
-            </span>
+            <>
+              {loadingRecords && <Loader2 size={13} className="lucide spin" />}
+              <span>{metaText}</span>
+            </>
           )}
         </div>
+        <CloudSyncToolbarStatus status={cloudSyncStatus} />
+        <TableFilterControl
+          objectName={object.plural_name}
+          value={filterQuery}
+          inputRef={filterInputRef}
+          onChange={setFilterQuery}
+        />
         <div className="table-toolbar__pager">
           <button
             type="button"
@@ -1216,17 +1704,83 @@ function RecordsView({
       </div>
       <RecordsTable
         object={object}
-        records={records}
+        records={displayedRecords}
         valueColumns={valueColumns}
         failureBySignal={failureBySignal}
         runningBySignal={runningBySignal}
         retryingSignals={retryingSignals}
         onRetrySignal={retrySignal}
         onRowClick={onRowClick}
-        loading={loadingRecords}
+        focusedRecordId={focusedRecordId}
+        focusRequestVersion={focusRequestVersion}
+        tableFocusRequest={focusRequest}
+        onFocusedRecordChange={setFocusedRecordId}
+        loading={loadingRecords && records.length === 0 && !filterActive}
+        emptyMessage={filterActive ? "no matching records" : undefined}
       />
     </div>
   );
+}
+
+function CloudSyncToolbarStatus({ status }: { status: CloudSyncStatus }) {
+  const text = cloudSyncToolbarStatusText(status);
+  if (!text) return null;
+  const active = cloudSyncToolbarStatusActive(status);
+  return (
+    <div
+      className={`table-toolbar__sync${active ? " table-toolbar__sync--active" : ""}`}
+      role="status"
+      aria-live="polite"
+      title={cloudSyncToolbarStatusTitle(status)}
+    >
+      <Mail size={12} className="lucide" />
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function cloudSyncToolbarStatusText(status: CloudSyncStatus): string | null {
+  if (status.state !== "syncing") return null;
+  if (!status.providers?.includes("gmail")) return null;
+  const progress = status.progress;
+  if (progress?.backfillStatus === "paused" || isFutureIso(progress?.resumeAfter)) {
+    return "Gmail paused";
+  }
+  if (progress?.writtenThreads != null && progress.writtenThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.writtenThreads)} threads`;
+  }
+  if (progress?.fetchedThreads != null && progress.fetchedThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.fetchedThreads)} scanned`;
+  }
+  if (progress?.listedThreads != null && progress.listedThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.listedThreads)} listed`;
+  }
+  return "Gmail syncing";
+}
+
+function cloudSyncToolbarStatusActive(status: CloudSyncStatus): boolean {
+  if (status.state !== "syncing") return false;
+  if (!status.providers?.includes("gmail")) return false;
+  return status.progress?.backfillStatus !== "paused" && !isFutureIso(status.progress?.resumeAfter);
+}
+
+function cloudSyncToolbarStatusTitle(status: CloudSyncStatus): string {
+  if (status.state !== "syncing") return "";
+  const progress = status.progress;
+  const parts = [
+    progress?.listedThreads != null ? `${formatNumber(progress.listedThreads)} listed` : undefined,
+    progress?.fetchedThreads != null ? `${formatNumber(progress.fetchedThreads)} fetched` : undefined,
+    progress?.filteredThreads != null ? `${formatNumber(progress.filteredThreads)} filtered` : undefined,
+    progress?.writtenThreads != null ? `${formatNumber(progress.writtenThreads)} threads written` : undefined,
+    progress?.writtenMessages != null ? `${formatNumber(progress.writtenMessages)} messages written` : undefined
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? `Gmail sync in progress: ${parts.join(", ")}` : "Gmail sync in progress";
+}
+
+function isFutureIso(value: string | undefined): boolean {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now();
 }
 
 type RecordsEmptyConfig = {
@@ -1318,7 +1872,7 @@ function RecordsEmptySyncStatus({ status }: { status: CloudSyncStatus | null }) 
 function cloudSyncStatusText(status: CloudSyncStatus | null): string | null {
   if (!status) return null;
   if (status.state === "error") return status.message || "Gmail sync failed";
-  if (status.state !== "syncing") return null;
+  if (status.state !== "syncing" || status.showInEmptyState !== true) return null;
   const providers = status.providers ?? [];
   const hasGmail = providers.includes("gmail");
   const hasLinkedIn = providers.includes("linkedin");
@@ -1396,6 +1950,11 @@ const COLUMNS_BY_OBJECT: Record<string, Array<[string, string]>> = {
     ["linkedin_url", "LinkedIn"],
     ["twitter_url", "X"],
     ["email_addresses", "Email"]
+  ],
+  deals: [
+    ["stage", "Stage"],
+    ["value", "Value"],
+    ["close_date", "Close date"]
   ]
 };
 
@@ -1469,6 +2028,113 @@ function pickValueColumns(
           )?.slug
         : undefined
     }));
+}
+
+function requestedRecordAttributes(
+  object: SchemaObject,
+  signals: SignalDefinitionSummary[],
+) {
+  const attrs = new Set(pickValueColumns(object, [], signals).map((column) => column.slug));
+  if (object.object_slug === "people") attrs.add("job_title");
+  if (object.object_slug === "deals") {
+    for (const attr of [
+      "stage",
+      "value",
+      "close_date",
+      "next_step",
+      "company",
+      "account",
+      "owner",
+      "assignee",
+      "source",
+      "tags",
+      "domain",
+      "domains",
+      "website",
+      "last_touch",
+      "last_message_at",
+      "updated_at"
+    ]) {
+      attrs.add(attr);
+    }
+  }
+  return [...attrs];
+}
+
+function DealsViewToggle({
+  value,
+  onChange
+}: {
+  value: DealsViewMode;
+  onChange: (mode: DealsViewMode) => void;
+}) {
+  return (
+    <SegmentedControl
+      label="Deals view"
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: "kanban", label: "Kanban", icon: <Columns3 size={12} className="lucide" /> },
+        { value: "table", label: "Table", icon: <Table2 size={12} className="lucide" /> }
+      ]}
+    />
+  );
+}
+
+function TableFilterControl({
+  objectName,
+  value,
+  inputRef,
+  onChange
+}: {
+  objectName: string;
+  value: string;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChange: (value: string) => void;
+}) {
+  const label = `Filter ${objectName.toLowerCase()}`;
+  return (
+    <label className="table-filter" data-active={value.trim() ? "true" : undefined}>
+      <Search size={13} className="lucide" aria-hidden="true" />
+      <input
+        ref={inputRef}
+        value={value}
+        aria-label={label}
+        placeholder={label}
+        spellCheck={false}
+        autoCapitalize="none"
+        onChange={(event) => onChange(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (value) {
+            onChange("");
+          } else {
+            event.currentTarget.blur();
+          }
+        }}
+      />
+      {value ? (
+        <button
+          type="button"
+          className="table-filter__clear"
+          title="Clear filter"
+          aria-label="Clear filter"
+          onClick={() => {
+            onChange("");
+            window.requestAnimationFrame(() => filterInputRefFocus(inputRef));
+          }}
+        >
+          <X size={12} className="lucide" />
+        </button>
+      ) : null}
+    </label>
+  );
+}
+
+function filterInputRefFocus(inputRef: RefObject<HTMLInputElement | null>) {
+  inputRef.current?.focus();
 }
 
 function signalFailureMap(
@@ -1641,7 +2307,12 @@ function RecordsTable({
   retryingSignals,
   onRetrySignal,
   onRowClick,
-  loading
+  focusedRecordId,
+  focusRequestVersion,
+  tableFocusRequest,
+  onFocusedRecordChange,
+  loading,
+  emptyMessage = "no records yet · run an import or create one"
 }: {
   object: SchemaObject;
   records: RecordPreview[];
@@ -1651,12 +2322,19 @@ function RecordsTable({
   retryingSignals: Set<string>;
   onRetrySignal?: (failure: SignalRunFailureSummary) => void;
   onRowClick?: (record: RecordPreview) => void;
+  focusedRecordId?: string | null;
+  focusRequestVersion?: number;
+  tableFocusRequest?: number;
+  onFocusedRecordChange?: (recordId: string) => void;
   loading: boolean;
+  emptyMessage?: string;
 }) {
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [expandedCell, setExpandedCell] = useState<string | null>(null);
   const [openSignalCell, setOpenSignalCell] = useState<string | null>(null);
   const [signalPopoverTabs, setSignalPopoverTabs] = useState<Record<string, SignalPopoverTab>>({});
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const handledTableFocusRequestRef = useRef(0);
   const columns = useRecordColumns(
     object,
     valueColumns,
@@ -1701,6 +2379,24 @@ function RecordsTable({
       .join(" ") + " 1fr";
   const gridStyle = { ["--columns" as string]: columnTemplate };
 
+  useEffect(() => {
+    if (!focusedRecordId || !focusRequestVersion) return;
+    const row = rowRefs.current.get(focusedRecordId);
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedRecordId, focusRequestVersion]);
+
+  useEffect(() => {
+    if (!tableFocusRequest) return;
+    if (handledTableFocusRequestRef.current === tableFocusRequest) return;
+    const rowId = focusedRecordId ?? table.getRowModel().rows[0]?.id;
+    if (!rowId) return;
+    const row = rowRefs.current.get(rowId);
+    handledTableFocusRequestRef.current = tableFocusRequest;
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedRecordId, table, tableFocusRequest]);
+
   return (
     <div className="table__inner" style={gridStyle}>
       {table.getHeaderGroups().map((headerGroup) => (
@@ -1717,15 +2413,32 @@ function RecordsTable({
       <div className="table__body">
         {records.length === 0 && !loading ? (
           <div className="empty-inline">
-            <span>no records yet · run an import or create one</span>
+            <span>{emptyMessage}</span>
           </div>
         ) : null}
         {records.length > 0
-          ? table.getRowModel().rows.map((row, index) => (
+          ? table.getRowModel().rows.map((row) => (
             <div
               key={row.id}
               className="table__row"
-              data-touched={index === 0 ? "true" : undefined}
+              ref={(element) => {
+                if (element) rowRefs.current.set(row.id, element);
+                else rowRefs.current.delete(row.id);
+              }}
+              tabIndex={0}
+              data-focused={focusedRecordId === row.id ? "true" : undefined}
+              aria-selected={focusedRecordId === row.id}
+              onFocus={() => onFocusedRecordChange?.(row.id)}
+              onMouseDown={(event) => {
+                onFocusedRecordChange?.(row.id);
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest("button, a, input, textarea, select, [contenteditable='true']")
+                ) {
+                  return;
+                }
+                event.currentTarget.focus({ preventScroll: true });
+              }}
             >
               {row.getVisibleCells().map((cell, cellIndex, cells) => {
                 const isIdentity = cell.column.id === "identity";
@@ -1784,6 +2497,796 @@ function RecordsTable({
   );
 }
 
+type DealStageColumn = {
+  key: string;
+  title: string;
+  records: DealRecord[];
+  valueTotal: number | null;
+};
+
+type DealRecord = {
+  record: RecordPreview;
+  id: string;
+  title: string;
+  company: string;
+  domain: string;
+  stage: string;
+  stageKey: string;
+  stageKind: "success" | "warning" | "danger" | "accent" | "neutral";
+  value: RecordValue | undefined;
+  valueAmount: number | null;
+  valueLabel: string;
+  closeDate: string;
+  nextStep: string;
+  owner: string;
+  source: string;
+  tags: string[];
+  lastTouch: string;
+};
+
+function DealsPipelineView({
+  object,
+  records,
+  totalRecords,
+  loading,
+  viewMode,
+  onViewModeChange,
+  filterQuery,
+  filterInputRef,
+  onFilterQueryChange,
+  totalMatches,
+  focusedRecordId,
+  focusRequestVersion,
+  tableFocusRequest,
+  onFocusedRecordChange,
+  onRecordClick,
+  onRecordsChanged,
+  setError
+}: {
+  object: SchemaObject;
+  records: RecordPreview[];
+  totalRecords: number;
+  loading: boolean;
+  viewMode: DealsViewMode;
+  onViewModeChange: (mode: DealsViewMode) => void;
+  filterQuery: string;
+  filterInputRef: RefObject<HTMLInputElement | null>;
+  onFilterQueryChange: (query: string) => void;
+  totalMatches: number | null;
+  focusedRecordId?: string | null;
+  focusRequestVersion?: number;
+  tableFocusRequest?: number;
+  onFocusedRecordChange?: (recordId: string) => void;
+  onRecordClick?: (record: RecordPreview) => void;
+  onRecordsChanged?: () => Promise<void> | void;
+  setError: (error: string | null) => void;
+}) {
+  const [stageOverrides, setStageOverrides] = useState<Record<string, string>>({});
+  const [movingDealIds, setMovingDealIds] = useState<Set<string>>(() => new Set());
+  const deals = useMemo(
+    () => records.map((record) => toDealRecord(record, stageOverrides[dealRecordId(record)])),
+    [records, stageOverrides],
+  );
+  const columns = useMemo(() => buildDealStageColumns(object, deals), [object, deals]);
+  const visibleCount = deals.length;
+  const filterActive = viewMode === "table" && normalizeTableFilterQuery(filterQuery).length > 0;
+  const emptyMessage = filterActive ? "no matching deals" : "no deals yet - run an import or create one";
+  const statusText = filterActive
+    ? filterMetaText(totalMatches, visibleCount, totalRecords, object.plural_name)
+    : `${formatNumber(visibleCount)} of ${formatNumber(totalRecords)} deals`;
+
+  useEffect(() => {
+    setStageOverrides((current) => {
+      let changed = false;
+      const next = { ...current };
+      const recordsById = new Map(records.map((record) => [dealRecordId(record), record]));
+      for (const [id, stage] of Object.entries(current)) {
+        const record = recordsById.get(id);
+        if (!record) {
+          delete next[id];
+          changed = true;
+          continue;
+        }
+        const currentStage = recordValue(record, "stage")?.display.trim() || "Unstaged";
+        if (stageKey(currentStage) === stageKey(stage)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [records]);
+
+  const updateDealStage = useCallback(
+    async (deal: DealRecord, targetStage: string) => {
+      const nextStage = targetStage.trim();
+      if (!nextStage || stageKey(nextStage) === "unstaged" || deal.stageKey === stageKey(nextStage)) {
+        return;
+      }
+      setError(null);
+      setStageOverrides((current) => ({ ...current, [deal.id]: nextStage }));
+      setMovingDealIds((current) => {
+        const next = new Set(current);
+        next.add(deal.id);
+        return next;
+      });
+      try {
+        await api.updateRecord({
+          object_slug: deal.record.object_slug,
+          record_id: deal.record.record_id,
+          fields: [`stage=${stageUpdateValue(object, nextStage)}`],
+          source: "app:deals-kanban"
+        });
+        await onRecordsChanged?.();
+      } catch (error) {
+        setStageOverrides((current) => {
+          const next = { ...current };
+          delete next[deal.id];
+          return next;
+        });
+        setError(statusFromError(error));
+      } finally {
+        setMovingDealIds((current) => {
+          const next = new Set(current);
+          next.delete(deal.id);
+          return next;
+        });
+      }
+    },
+    [object, onRecordsChanged, setError],
+  );
+
+  return (
+    <div className="deals-workspace" aria-busy={loading}>
+      <div className="deals-toolbar">
+        {viewMode === "table" && (
+          <TableFilterControl
+            objectName={object.plural_name}
+            value={filterQuery}
+            inputRef={filterInputRef}
+            onChange={onFilterQueryChange}
+          />
+        )}
+        <div className="deals-toolbar__spacer" />
+        <DealsViewToggle value={viewMode} onChange={onViewModeChange} />
+      </div>
+
+      <div className="deals-workspace__body">
+        {loading && records.length === 0 ? (
+          viewMode === "table" ? (
+            <DealsTableView deals={[]} emptyMessage={filterActive ? emptyMessage : "loading deals"} />
+          ) : (
+            <DealsKanbanSkeleton />
+          )
+        ) : viewMode === "kanban" ? (
+          <DealsKanbanView
+            columns={columns}
+            movingDealIds={movingDealIds}
+            onCardClick={(deal) => onRecordClick?.(deal.record)}
+            onStageChange={updateDealStage}
+          />
+        ) : (
+          <DealsTableView
+            deals={deals}
+            emptyMessage={emptyMessage}
+            focusedDealId={focusedRecordId}
+            focusRequestVersion={focusRequestVersion}
+            tableFocusRequest={tableFocusRequest}
+            onFocusedDealChange={onFocusedRecordChange}
+            onRowClick={(deal) => onRecordClick?.(deal.record)}
+          />
+        )}
+      </div>
+
+      <div className="deals-status-bar">
+        {loading && records.length > 0 && <Loader2 size={12} className="lucide spin" />}
+        <span>{statusText}</span>
+      </div>
+    </div>
+  );
+}
+
+function DealsKanbanView({
+  columns,
+  movingDealIds,
+  onCardClick,
+  onStageChange
+}: {
+  columns: DealStageColumn[];
+  movingDealIds: Set<string>;
+  onCardClick?: (deal: DealRecord) => void;
+  onStageChange?: (deal: DealRecord, stage: string) => void;
+}) {
+  const [draggingDealId, setDraggingDealId] = useState<string | null>(null);
+  const [dropTargetStageKey, setDropTargetStageKey] = useState<string | null>(null);
+  const dealsById = useMemo(() => {
+    const next = new Map<string, DealRecord>();
+    for (const column of columns) {
+      for (const deal of column.records) next.set(deal.id, deal);
+    }
+    return next;
+  }, [columns]);
+
+  function handleDragStart(event: ReactDragEvent<HTMLButtonElement>, deal: DealRecord) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-agent-crm-deal", deal.id);
+    event.dataTransfer.setData("text/plain", deal.id);
+    setDraggingDealId(deal.id);
+  }
+
+  function handleDragEnd() {
+    setDraggingDealId(null);
+    setDropTargetStageKey(null);
+  }
+
+  function draggedDeal(event: ReactDragEvent<HTMLElement>): DealRecord | undefined {
+    const id =
+      event.dataTransfer.getData("application/x-agent-crm-deal") ||
+      event.dataTransfer.getData("text/plain") ||
+      draggingDealId;
+    return id ? dealsById.get(id) : undefined;
+  }
+
+  function handleDragOver(event: ReactDragEvent<HTMLElement>, column: DealStageColumn) {
+    if (!draggingDealId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetStageKey(column.key);
+  }
+
+  function handleDragLeave(event: ReactDragEvent<HTMLElement>, column: DealStageColumn) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setDropTargetStageKey((current) => (current === column.key ? null : current));
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLElement>, column: DealStageColumn) {
+    event.preventDefault();
+    const deal = draggedDeal(event);
+    setDraggingDealId(null);
+    setDropTargetStageKey(null);
+    if (!deal || movingDealIds.has(deal.id) || deal.stageKey === column.key) return;
+    onStageChange?.(deal, column.title);
+  }
+
+  return (
+    <div
+      className="deals-kanban"
+      aria-label="Deals by stage"
+      style={{
+        gridTemplateColumns: `repeat(${Math.max(columns.length, 1)}, ${
+          columns.length <= 4 ? "minmax(210px, 1fr)" : "minmax(248px, 1fr)"
+        })`
+      }}
+    >
+      {columns.map((column) => (
+        <section
+          className="deal-stage-column"
+          key={column.key}
+          data-drop-target={dropTargetStageKey === column.key ? "true" : undefined}
+          style={{ ["--stage-tone" as string]: stageToneColor(column.title) }}
+          onDragEnter={(event) => handleDragOver(event, column)}
+          onDragOver={(event) => handleDragOver(event, column)}
+          onDragLeave={(event) => handleDragLeave(event, column)}
+          onDrop={(event) => handleDrop(event, column)}
+        >
+          <header className="deal-stage-column__header">
+            <span className="deal-stage-column__dot" />
+            <span className="deal-stage-column__name">{column.title}</span>
+            <span className="deal-stage-column__count">{formatNumber(column.records.length)}</span>
+            <span className="deal-stage-column__value">
+              {column.valueTotal === null ? "--" : formatCompactCurrency(column.valueTotal)}
+            </span>
+          </header>
+          <div className="deal-stage-column__body">
+            {column.records.map((deal) => (
+              <DealCard
+                key={deal.id}
+                deal={deal}
+                dragging={draggingDealId === deal.id}
+                moving={movingDealIds.has(deal.id)}
+                onClick={() => onCardClick?.(deal)}
+                onDragStart={(event) => handleDragStart(event, deal)}
+                onDragEnd={handleDragEnd}
+              />
+            ))}
+            {column.records.length === 0 && (
+              <div className="deal-stage-column__drop">
+                {dropTargetStageKey === column.key ? "release to move" : "no deals"}
+              </div>
+            )}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function DealCard({
+  deal,
+  dragging = false,
+  moving = false,
+  onClick,
+  onDragStart,
+  onDragEnd
+}: {
+  deal: DealRecord;
+  dragging?: boolean;
+  moving?: boolean;
+  onClick?: () => void;
+  onDragStart?: (event: ReactDragEvent<HTMLButtonElement>) => void;
+  onDragEnd?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="deal-card"
+      draggable={!moving}
+      data-dragging={dragging ? "true" : undefined}
+      data-moving={moving ? "true" : undefined}
+      aria-busy={moving || undefined}
+      onClick={onClick}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+    >
+      <span className="deal-card__head">
+        <CompanyMark name={deal.company} size={18} />
+        <span className="deal-card__company">{deal.company}</span>
+        {deal.domain && <span className="deal-card__domain">{deal.domain}</span>}
+      </span>
+      <span className="deal-card__title display">{deal.title}</span>
+      {deal.tags.length > 0 && (
+        <span className="deal-card__tags">
+          {deal.tags.slice(0, 3).map((tag) => (
+            <Badge key={tag} kind={dealTagKind(tag)}>
+              {tag}
+            </Badge>
+          ))}
+        </span>
+      )}
+      <span className="deal-card__foot">
+        <span className="deal-card__value">{deal.valueLabel}</span>
+        <span className="deal-card__foot-spacer" />
+        {deal.owner && <Avatar name={deal.owner} size={16} />}
+        {deal.lastTouch && <span className="deal-card__last">{deal.lastTouch}</span>}
+      </span>
+      {(deal.nextStep || deal.closeDate || deal.source) && (
+        <span className="deal-card__subline">
+          {deal.nextStep || deal.source || deal.closeDate}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function DealsTableView({
+  deals,
+  emptyMessage = "no deals yet - run an import or create one",
+  focusedDealId,
+  focusRequestVersion,
+  tableFocusRequest,
+  onFocusedDealChange,
+  onRowClick
+}: {
+  deals: DealRecord[];
+  emptyMessage?: string;
+  focusedDealId?: string | null;
+  focusRequestVersion?: number;
+  tableFocusRequest?: number;
+  onFocusedDealChange?: (dealId: string) => void;
+  onRowClick?: (deal: DealRecord) => void;
+}) {
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const handledTableFocusRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (!focusedDealId || !focusRequestVersion) return;
+    const row = rowRefs.current.get(focusedDealId);
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedDealId, focusRequestVersion]);
+
+  useEffect(() => {
+    if (!tableFocusRequest) return;
+    if (handledTableFocusRequestRef.current === tableFocusRequest) return;
+    const dealId = focusedDealId ?? deals[0]?.id;
+    if (!dealId) return;
+    const row = rowRefs.current.get(dealId);
+    handledTableFocusRequestRef.current = tableFocusRequest;
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [deals, focusedDealId, tableFocusRequest]);
+
+  return (
+    <div className="deals-table" style={{ ["--deals-table-columns" as string]: DEALS_TABLE_COLUMNS }}>
+      <div className="deals-table__head">
+        <span />
+        <span>Deal</span>
+        <span>Stage</span>
+        <span className="deals-table__right">Value</span>
+        <span>Company</span>
+        <span>Close date</span>
+        <span>Next step</span>
+      </div>
+      <div className="deals-table__body">
+        {deals.length === 0 ? (
+          <div className="empty-inline">
+            <span>{emptyMessage}</span>
+          </div>
+        ) : null}
+        {deals.map((deal) => (
+          <button
+            key={deal.id}
+            type="button"
+            className="deals-table__row"
+            ref={(element) => {
+              if (element) rowRefs.current.set(deal.id, element);
+              else rowRefs.current.delete(deal.id);
+            }}
+            data-focused={focusedDealId === deal.id ? "true" : undefined}
+            aria-selected={focusedDealId === deal.id}
+            onFocus={() => onFocusedDealChange?.(deal.id)}
+            onMouseDown={() => onFocusedDealChange?.(deal.id)}
+            onClick={() => onRowClick?.(deal)}
+          >
+            <span className="cell-check" />
+            <span className="deals-table__deal">
+              <CompanyMark name={deal.company} size={22} />
+              <span>
+                <span>{deal.title}</span>
+                <span>{[deal.domain, deal.source].filter(Boolean).join(" · ") || deal.company}</span>
+              </span>
+            </span>
+            <span>
+              <Badge kind={deal.stageKind} dot>{deal.stage}</Badge>
+            </span>
+            <span className="deals-table__value">{deal.valueLabel}</span>
+            <span className="deals-table__muted">{deal.company}</span>
+            <span className="deals-table__muted">{deal.closeDate || "--"}</span>
+            <span className="deals-table__muted">{deal.nextStep || "--"}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const DEALS_TABLE_COLUMNS = "28px minmax(260px, 2fr) minmax(116px, .8fr) minmax(92px, .6fr) minmax(140px, 1fr) minmax(112px, .75fr) minmax(180px, 1.2fr)";
+
+function DealsKanbanSkeleton() {
+  return (
+    <div className="deals-kanban deals-kanban--skeleton">
+      {Array.from({ length: 4 }).map((_, columnIndex) => (
+        <section className="deal-stage-column deal-stage-column--skeleton" key={columnIndex}>
+          <header className="deal-stage-column__header">
+            <span className="kanban-skeleton kanban-skeleton--dot" />
+            <span className="kanban-skeleton kanban-skeleton--badge" />
+            <span className="kanban-skeleton kanban-skeleton--count" />
+          </header>
+          <div className="deal-stage-column__body">
+            {Array.from({ length: 3 }).map((__, cardIndex) => (
+              <span className="deal-card deal-card--skeleton" key={cardIndex}>
+                <span className="kanban-skeleton kanban-skeleton--title" />
+                <span className="kanban-skeleton kanban-skeleton--meta" />
+                <span className="kanban-skeleton kanban-skeleton--line" />
+              </span>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function toDealRecord(record: RecordPreview, stageOverride?: string): DealRecord {
+  const stage = (stageOverride ?? recordValue(record, "stage")?.display.trim()) || "Unstaged";
+  const companyValue = recordValue(record, "company", "account");
+  const domainValue = recordValue(record, "domain", "domains", "website");
+  const value = recordValue(record, "value", "amount", "deal_value");
+  const owner = recordValue(record, "owner", "assignee")?.display.trim() ?? "";
+  const closeDate = formatDealDate(recordValue(record, "close_date", "expected_close_date")) ?? "";
+  const lastTouch =
+    formatDealDate(recordValue(record, "last_touch", "last_message_at", "updated_at")) ??
+    "";
+  const source = recordValue(record, "source")?.display.trim() ?? "";
+  const tags = dealTags(recordValue(record, "tags", "tag"));
+  const valueAmount = numericDealValue(value);
+  const company = companyValue?.display.trim() || dealCompanyFromSubtitle(record, stage, value, valueAmount);
+
+  return {
+    record,
+    id: `${record.object_slug}:${record.record_id}`,
+    title: record.label,
+    company,
+    domain: domainValue?.display.trim() ?? "",
+    stage,
+    stageKey: stageKey(stage),
+    stageKind: stageKind(stage),
+    value,
+    valueAmount,
+    valueLabel: formatDealValue(value) ?? "--",
+    closeDate,
+    nextStep: recordValue(record, "next_step", "next_steps")?.display.trim() ?? "",
+    owner,
+    source,
+    tags,
+    lastTouch
+  };
+}
+
+function dealRecordId(record: RecordPreview): string {
+  return `${record.object_slug}:${record.record_id}`;
+}
+
+function stageUpdateValue(object: SchemaObject, stage: string): string {
+  const stageAttribute = object.attributes.find((attribute) => attribute.attribute_slug === "stage");
+  const option = stageOptionsFromConfig(stageAttribute?.config).find(
+    (candidate) => stageKey(candidate.title) === stageKey(stage) || stageKey(candidate.id) === stageKey(stage),
+  );
+  return option?.id || stage;
+}
+
+function stageOptionsFromConfig(config: unknown): Array<{ id: string; title: string }> {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return [];
+  const object = config as Record<string, unknown>;
+  const candidates = [object.options, object.statuses, object.choices, object.values];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    return candidate.flatMap((option) => {
+      if (typeof option === "string") return [{ id: option, title: option }];
+      if (!option || typeof option !== "object" || Array.isArray(option)) return [];
+      const item = option as Record<string, unknown>;
+      const id = item.id ?? item.value ?? item.name ?? item.label ?? item.title;
+      const title = item.title ?? item.label ?? item.name ?? item.value ?? item.id;
+      if (typeof id !== "string" || typeof title !== "string") return [];
+      return [{ id, title }];
+    });
+  }
+  return [];
+}
+
+function dealCompanyFromSubtitle(
+  record: RecordPreview,
+  stage: string,
+  value: RecordValue | undefined,
+  valueAmount: number | null
+): string {
+  const ignored = new Set(
+    [
+      stage,
+      value?.display,
+      valueAmount === null ? null : String(valueAmount),
+      valueAmount === null ? null : formatDealValue(value),
+    ]
+      .filter((item): item is string => Boolean(item))
+      .map(stageKey),
+  );
+  const company = record.subtitle
+    .split("·")
+    .map((part) => part.trim())
+    .find((part) => {
+      if (!part || ignored.has(stageKey(part))) return false;
+      return !/^\$?\d[\d,]*(?:\.\d+)?[kKmM]?$/.test(part);
+    });
+  return company || "Unknown account";
+}
+
+function buildDealStageColumns(object: SchemaObject, deals: DealRecord[]): DealStageColumn[] {
+  const configuredStages = stageOptionLabels(object);
+  const optionOrder = new Map(configuredStages.map((stage, index) => [stageKey(stage), index]));
+  const byStage = new Map<string, DealStageColumn>();
+
+  function ensureColumn(title: string): DealStageColumn {
+    const key = stageKey(title);
+    const existing = byStage.get(key);
+    if (existing) return existing;
+    const column = {
+      key,
+      title: title.trim() || "Unstaged",
+      records: [],
+      valueTotal: null
+    };
+    byStage.set(key, column);
+    return column;
+  }
+
+  for (const stage of configuredStages) {
+    ensureColumn(stage);
+  }
+
+  for (const deal of deals) {
+    ensureColumn(deal.stage).records.push(deal);
+  }
+
+  const columns = [...byStage.values()].map((column) => ({
+    ...column,
+    valueTotal: sumDealValues(column.records)
+  }));
+
+  return columns.sort((left, right) => compareDealStages(left.title, right.title, optionOrder));
+}
+
+function compareDealStages(
+  left: string,
+  right: string,
+  optionOrder: Map<string, number>
+): number {
+  const leftOption = optionOrder.get(stageKey(left));
+  const rightOption = optionOrder.get(stageKey(right));
+  if (leftOption !== undefined && rightOption !== undefined) return leftOption - rightOption;
+  if (leftOption !== undefined) return -1;
+  if (rightOption !== undefined) return 1;
+
+  const leftRank = stageRank(left);
+  const rightRank = stageRank(right);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  return left.localeCompare(right);
+}
+
+function stageOptionLabels(object: SchemaObject): string[] {
+  const stageAttribute = object.attributes.find((attribute) => attribute.attribute_slug === "stage");
+  return optionLabelsFromConfig(stageAttribute?.config);
+}
+
+function optionLabelsFromConfig(config: unknown): string[] {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return [];
+  const object = config as Record<string, unknown>;
+  const candidates = [object.options, object.statuses, object.choices, object.values];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    return uniqueNonEmpty(candidate.map(optionLabel).filter((label): label is string => Boolean(label)));
+  }
+  return [];
+}
+
+function optionLabel(option: unknown): string | null {
+  if (typeof option === "string") return option;
+  if (!option || typeof option !== "object" || Array.isArray(option)) return null;
+  const object = option as Record<string, unknown>;
+  const value = object.title ?? object.label ?? object.name ?? object.value ?? object.id;
+  return typeof value === "string" ? value : null;
+}
+
+function stageKey(stage: string) {
+  return stage.trim().toLowerCase().replace(/\s+/g, " ") || "unstaged";
+}
+
+function stageRank(stage: string): number {
+  const value = stageKey(stage);
+  const order = [
+    ["new", "lead", "prospect"],
+    ["discovery"],
+    ["qualified"],
+    ["eval", "evaluation", "in progress"],
+    ["trial", "pilot", "poc"],
+    ["proposal"],
+    ["negotiation", "procurement"],
+    ["contract", "legal"],
+    ["won", "closed won", "gone", "live", "active"],
+    ["lost", "closed lost", "churn"]
+  ];
+  if (value === "unstaged") return order.length + 1;
+  const found = order.findIndex((group) => group.some((hint) => value.includes(hint)));
+  return found === -1 ? order.length : found;
+}
+
+function recordValue(record: RecordPreview, ...attributeSlugs: string[]): RecordValue | undefined {
+  for (const attributeSlug of attributeSlugs) {
+    const value = record.values.find(
+      (candidate) => candidate.attribute_slug === attributeSlug && candidate.display,
+    );
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function sumDealValues(deals: DealRecord[]): number | null {
+  let total = 0;
+  let hasValue = false;
+  for (const deal of deals) {
+    if (deal.valueAmount === null) continue;
+    total += deal.valueAmount;
+    hasValue = true;
+  }
+  return hasValue ? total : null;
+}
+
+function numericDealValue(value?: RecordValue): number | null {
+  if (!value) return null;
+  const candidates = rawNumberCandidates(value.raw);
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
+    if (typeof candidate !== "string") continue;
+    const parsed = Number.parseFloat(candidate.replace(/[$,\s]/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function rawNumberCandidates(raw: unknown): unknown[] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [raw];
+  const object = raw as Record<string, unknown>;
+  return [object.amount, object.value, object.currency_value, object.total, object.number];
+}
+
+function formatDealValue(value?: RecordValue): string | null {
+  if (!value?.display) return null;
+  const amount = numericDealValue(value);
+  if (amount === null) return value.display;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: dealCurrency(value) ?? "USD",
+    maximumFractionDigits: 0
+  }).format(amount);
+}
+
+function dealCurrency(value: RecordValue): string | null {
+  if (!value.raw || typeof value.raw !== "object" || Array.isArray(value.raw)) return null;
+  const raw = value.raw as Record<string, unknown>;
+  const currency = raw.currency ?? raw.currency_code ?? raw.currencyCode;
+  return typeof currency === "string" && /^[A-Z]{3}$/.test(currency) ? currency : null;
+}
+
+function formatDealDate(value?: RecordValue): string | null {
+  if (!value?.display) return null;
+  const raw = typeof value.raw === "object" && value.raw !== null && !Array.isArray(value.raw)
+    ? (value.raw as Record<string, unknown>).date ??
+      (value.raw as Record<string, unknown>).timestamp ??
+      (value.raw as Record<string, unknown>).value
+    : value.raw;
+  const candidate = typeof raw === "string" ? raw : value.display;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return formatDateOnly(candidate);
+  const parsed = Date.parse(candidate);
+  return Number.isNaN(parsed) ? value.display : formatDateDisplay(new Date(parsed).toISOString());
+}
+
+function formatCompactCurrency(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(abs % 1_000_000 === 0 ? 0 : 2).replace(/\.?0+$/, "")}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(abs % 1_000 === 0 ? 0 : 1).replace(/\.?0+$/, "")}k`;
+  return `$${formatNumber(value)}`;
+}
+
+function formatDateOnly(value: string): string {
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return value;
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function dealTags(value?: RecordValue): string[] {
+  if (!value) return [];
+  return uniqueNonEmpty(
+    value.values
+      .flatMap((item) => {
+        if (Array.isArray(item)) return item.map(displayUnknown);
+        if (typeof item === "object" && item !== null) {
+          return [displayUnknown(item)];
+        }
+        return [displayUnknown(item)];
+      })
+      .flatMap((item) => item.split(","))
+  );
+}
+
+function dealTagKind(tag: string): "success" | "warning" | "danger" | "accent" | "neutral" {
+  const value = tag.toLowerCase();
+  if (["champion", "design partner", "yc", "expansion"].some((hint) => value.includes(hint))) return "accent";
+  if (["churn", "lost", "dark"].some((hint) => value.includes(hint))) return "danger";
+  return "neutral";
+}
+
+function stageToneColor(stage: string): string {
+  const kind = stageKind(stage);
+  if (kind === "success") return "var(--success)";
+  if (kind === "warning") return "var(--warning)";
+  if (kind === "danger") return "var(--danger)";
+  if (kind === "accent") return "var(--accent)";
+  return "var(--text-dim)";
+}
+
 function cellText(columnId: string, raw: unknown, record: RecordPreview): string {
   if (columnId === "identity") return record.label;
   if (raw && typeof raw === "object" && "display" in raw) {
@@ -1795,13 +3298,57 @@ function cellText(columnId: string, raw: unknown, record: RecordPreview): string
   return "";
 }
 
+function normalizeTableFilterQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function tableFilterTerms(query: string): string[] {
+  const normalized = normalizeTableFilterQuery(query);
+  return normalized ? normalized.split(" ").slice(0, 8) : [];
+}
+
+function filterRecordsForQuery(records: RecordPreview[], query: string): RecordPreview[] {
+  const terms = tableFilterTerms(query);
+  if (terms.length === 0) return records;
+  return records.filter((record) => {
+    const haystack = recordSearchText(record);
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+function recordSearchText(record: RecordPreview): string {
+  return [
+    record.label,
+    record.subtitle,
+    ...record.values.flatMap((value) => [
+      value.title,
+      value.display,
+      ...value.values.map(displayUnknown)
+    ])
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function filterMetaText(
+  totalMatches: number | null,
+  visibleCount: number,
+  totalRecords: number,
+  objectName: string
+): string {
+  if (totalMatches !== null) {
+    return `${formatNumber(totalMatches)} ${totalMatches === 1 ? "match" : "matches"} in ${formatNumber(totalRecords)} ${objectName.toLowerCase()}`;
+  }
+  return `${formatNumber(visibleCount)} ${visibleCount === 1 ? "match" : "matches"}`;
+}
+
 function TableSkeleton({ columnCount }: { columnCount: number }) {
   return (
     <>
       {Array.from({ length: 10 }).map((_, rowIndex) => (
         <div key={rowIndex} className="table__row table__row--skeleton">
           {Array.from({ length: columnCount }).map((__, columnIndex) => (
-            <span key={columnIndex}>
+            <span key={columnIndex} className="table__cell table__cell--skeleton">
               <span
                 className="table-skeleton-bar"
                 data-column={columnIndex === 0 ? "select" : undefined}
@@ -1893,6 +3440,13 @@ function ValueCell({
     );
   }
   if (looksLikeStage(value)) return <Badge kind={stageKind(value.display)} dot>{value.display}</Badge>;
+  if (value.attribute_slug === "linkedin_url") {
+    return (
+      <a className="table__cell--mono table__cell-link" href={externalUrl(value.display)} target="_blank" rel="noreferrer">
+        {value.display}
+      </a>
+    );
+  }
   if (looksMono(value)) return <span className="table__cell--mono">{value.display}</span>;
   return <span className="table__cell--muted">{value.display}</span>;
 }
@@ -2079,8 +3633,9 @@ function looksLikeStage(value: RecordValue) {
 
 function stageKind(display: string): "success" | "warning" | "danger" | "accent" | "neutral" {
   const v = display.toLowerCase();
-  if (["live", "expansion", "won", "active"].some((s) => v.includes(s))) return "success";
-  if (["eval", "queued", "in progress", "trial"].some((s) => v.includes(s))) return "warning";
+  if (["live", "expansion", "won", "gone", "active"].some((s) => v.includes(s))) return "success";
+  if (["in progress"].some((s) => v.includes(s))) return "accent";
+  if (["lead", "prospect", "discovery", "qualified", "eval", "queued", "trial", "pilot"].some((s) => v.includes(s))) return "warning";
   if (["churn", "lost", "error"].some((s) => v.includes(s))) return "danger";
   return "neutral";
 }
@@ -2097,13 +3652,17 @@ function looksMono(value: RecordValue) {
 
 function RecordDetail({
   object,
-  record
+  record,
+  focusRequest
 }: {
   object: SchemaObject;
   record: RecordPreview;
+  focusRequest: number;
 }) {
   const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
   const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const handledFocusRequestRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -2140,8 +3699,15 @@ function RecordDetail({
     (value) => value.display && !isSignalValue(value) && value.attribute_slug !== "name",
   );
 
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
   return (
-    <div className="detail">
+    <div ref={detailRef} className="detail" tabIndex={-1}>
       <header className="detail__header">
         <h1 className="detail__title display">{record.label}</h1>
         {meta && <div className="detail__meta">{meta}</div>}
@@ -2288,6 +3854,68 @@ function sessionIdFor(cwd: string | undefined): string {
 
 const TERMINAL_MIN_WIDTH = 280;
 const TERMINAL_MAX_WIDTH_FRACTION = 0.7;
+const MAX_DROPPED_FILE_BYTES = 50 * 1024 * 1024;
+const TERMINAL_PATH_ESCAPE_PATTERN = /([\s'"\\$`!*?()[\]{}|;<>&#~])/g;
+
+function isHeicLikeFile(file: File): boolean {
+  const type = file.type.toLowerCase();
+  return type.includes("heic") || type.includes("heif") || /\.(heic|heif)$/i.test(file.name);
+}
+
+function isUnstableDropPath(filePath: string): boolean {
+  if (!filePath) return true;
+  if (/^\/(?:private\/)?var\/folders\/.*\/T\/Drops\//.test(filePath)) return true;
+  if (/[\\/](?:tmp|temp)[\\/]/i.test(filePath) && /(?:drop|chromium|electron)/i.test(filePath)) {
+    return true;
+  }
+  if (/[\\/]AppData[\\/]Local[\\/]Temp[\\/]/i.test(filePath)) return true;
+  return false;
+}
+
+function escapeTerminalPath(filePath: string): string {
+  return filePath.replace(TERMINAL_PATH_ESCAPE_PATTERN, "\\$1");
+}
+
+function escapeWindowsTerminalPath(filePath: string): string {
+  return `"${filePath.replace(/"/g, "\"\"")}"`;
+}
+
+function formatTerminalDroppedPaths(paths: string[]): string {
+  if (window.crm?.platform === "win32") {
+    return paths.map(escapeWindowsTerminalPath).join(" ");
+  }
+  return paths.map(escapeTerminalPath).join(" ");
+}
+
+function wrapAsBracketedPaste(text: string): string {
+  return `\x1b[200~${text}\x1b[201~`;
+}
+
+function hasDroppedFiles(event: ReactDragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("Files");
+}
+
+async function resolveDroppedTerminalFile(file: File): Promise<string | null> {
+  const bridge = window.terminal;
+  if (!bridge) return null;
+
+  const originalPath = bridge.getPathForFile(file).trim();
+  if (originalPath && !isUnstableDropPath(originalPath) && !isHeicLikeFile(file)) {
+    return originalPath;
+  }
+
+  if (file.size > MAX_DROPPED_FILE_BYTES) return null;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return await bridge.persistDroppedFile({
+      bytes,
+      name: file.name,
+      mimeType: file.type
+    });
+  } catch {
+    return null;
+  }
+}
 
 function agentCliPreflightLabel(status: AgentCliPreflightStatus): string | null {
   if (status.state === "checking") return "checking Agent CRM CLI";
@@ -2550,8 +4178,40 @@ function TerminalPane({
 
   const agentCliLabel = agentCliPreflightLabel(agentCliPreflightStatus);
 
+  function onTerminalDragOver(event: ReactDragEvent<HTMLElement>) {
+    if (!hasDroppedFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function onTerminalDrop(event: ReactDragEvent<HTMLElement>) {
+    if (!hasDroppedFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const bridge = window.terminal;
+    const term = termRef.current;
+    if (!bridge || !term) return;
+
+    const files = Array.from(event.dataTransfer.files);
+
+    void (async () => {
+      const resolved = await Promise.all(files.map((file) => resolveDroppedTerminalFile(file)));
+      const paths = resolved.filter((filePath): filePath is string => Boolean(filePath));
+      if (paths.length === 0) return;
+      term.focus();
+      bridge.send(sessionIdRef.current, `${wrapAsBracketedPaste(formatTerminalDroppedPaths(paths))} `);
+    })();
+  }
+
   return (
-    <aside className="terminal" hidden={!visible} style={{ width }}>
+    <aside
+      className="terminal"
+      hidden={!visible}
+      style={{ width }}
+      onDragOver={onTerminalDragOver}
+      onDrop={onTerminalDrop}
+    >
       <div
         className="terminal__resizer"
         role="separator"
@@ -2978,14 +4638,20 @@ function postSecondary(item: RelatedRecord): string {
 function PersonDetail({
   record,
   tab,
+  focusRequest,
   onTabChange
 }: {
   record: RecordPreview;
   tab: PersonTab;
+  focusRequest: number;
   onTabChange: (tab: PersonTab) => void;
 }) {
-  const meta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : null;
+  const baseMeta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : "";
+  const [companyName, setCompanyName] = useState("");
+  const meta = uniqueNonEmpty([baseMeta, companyName]).join(" · ") || null;
   const contactRows = buildContactRows(record);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const handledFocusRequestRef = useRef(0);
 
   const [communicationThreads, setCommunicationThreads] = useState<CommunicationThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -2998,6 +4664,21 @@ function PersonDetail({
   useEffect(() => {
     setSelectedThreadId(null);
   }, [record.record_id, tab]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCompanyName("");
+    fetchPersonCompanyName(record.record_id)
+      .then((name) => {
+        if (!cancelled) setCompanyName(name);
+      })
+      .catch(() => {
+        if (!cancelled) setCompanyName("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record.record_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3055,8 +4736,39 @@ function PersonDetail({
   const selectedThread =
     communicationThreads.find((thread) => thread.id === selectedThreadId) ?? null;
 
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditableTarget(event.target) || isTerminalTarget(event.target)) return;
+      if (event.target instanceof Element && event.target.closest(".sidebar")) return;
+
+      const currentIndex = PERSON_TABS.indexOf(tab);
+      if (currentIndex === -1) return;
+      const nextIndex =
+        event.key === "ArrowRight"
+          ? Math.min(PERSON_TABS.length - 1, currentIndex + 1)
+          : Math.max(0, currentIndex - 1);
+      const nextTab = PERSON_TABS[nextIndex];
+      if (nextTab === tab) return;
+
+      event.preventDefault();
+      onTabChange(nextTab);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onTabChange, tab]);
+
   return (
-    <div className="detail">
+    <div ref={detailRef} className="detail" tabIndex={-1}>
       <header className="detail__header">
         <h1 className="detail__title display">{record.label}</h1>
         {meta && <div className="detail__meta">{meta}</div>}
@@ -3644,6 +5356,37 @@ function RelatedList({
   );
 }
 
+async function fetchPersonCompanyName(personRecordId: string): Promise<string> {
+  const result = await api.runQuery(
+    `SELECT cv.value_json AS company_name
+       FROM acrm_value pv
+       LEFT JOIN acrm_value cv
+         ON cv.object_slug = 'companies'
+        AND cv.record_id = pv.ref_record_id
+        AND cv.attribute_slug = 'name'
+        AND cv.active_until IS NULL
+      WHERE pv.object_slug = 'people'
+        AND pv.record_id = $1
+        AND pv.attribute_slug = 'company'
+        AND pv.active_until IS NULL
+      LIMIT 1`,
+    [personRecordId]
+  );
+  return scalarText(parseValueJson(result.rows[0]?.company_name));
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 type ContactRow = {
   Icon: ComponentType<{ size?: number; className?: string }>;
   value: string;
@@ -3706,6 +5449,10 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
     }
   }
   return rows;
+}
+
+function scalarText(value: unknown): string {
+  return getScalar({ value }, "value");
 }
 
 function stripUrl(url: string): string {

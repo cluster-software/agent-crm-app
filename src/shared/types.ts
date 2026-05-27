@@ -4,17 +4,39 @@ export type WorkspaceSummary = {
   cloudWorkspaceId?: string;
   objects: SchemaObject[];
   counts: Record<string, number>;
-  activeValues: number;
-  recent: RecordPreview[];
+};
+
+export type RecentWorkspaceSummary = {
+  path: string;
+  filename: string;
+  lastOpenedAt: string;
+  timestampSource: "opened" | "modified";
 };
 
 export type CloudSyncProvider = "gmail" | "linkedin";
+
+export type GmailSyncProgress = {
+  backfillStatus?: string;
+  listedThreads?: number;
+  fetchedThreads?: number;
+  filteredThreads?: number;
+  writtenThreads?: number;
+  writtenMessages?: number;
+  pageCount?: number;
+  resultSizeEstimate?: number;
+  resumeAfter?: string;
+};
 
 export type CloudSyncStatus =
   | { state: "idle" }
   | { state: "checking" }
   | { state: "disconnected" }
-  | { state: "syncing"; providers?: CloudSyncProvider[] }
+  | {
+      state: "syncing";
+      providers?: CloudSyncProvider[];
+      showInEmptyState?: boolean;
+      progress?: GmailSyncProgress;
+    }
   | {
       state: "synced";
       lastSyncedAt: string;
@@ -43,6 +65,15 @@ export type IntegrationSyncStatus = {
   peopleSeen?: number;
   communicationThreadsSeen?: number;
   communicationMessagesSeen?: number;
+  backfillStatus?: string;
+  listedThreads?: number;
+  fetchedThreads?: number;
+  filteredThreads?: number;
+  writtenThreads?: number;
+  writtenMessages?: number;
+  pageCount?: number;
+  resultSizeEstimate?: number;
+  resumeAfter?: string;
 };
 
 export type IntegrationProviderStatus = {
@@ -106,6 +137,8 @@ export type RecordListOptions = {
   limit?: number;
   cursor?: string | null;
   valueAttributes?: string[];
+  includeSecondaryLabels?: boolean;
+  searchQuery?: string | null;
 };
 
 export type RecordListResult = {
@@ -115,6 +148,7 @@ export type RecordListResult = {
   cursor: string | null;
   nextCursor: string | null;
   hasMore: boolean;
+  totalMatches?: number;
 };
 
 export type QueryResult = {
@@ -192,6 +226,20 @@ export type CreateRecordResult = {
   object_slug: string;
   record_id: string;
   values_inserted: number;
+};
+
+export type UpdateRecordPayload = {
+  object_slug: string;
+  record_id: string;
+  fields: string[];
+  source?: string;
+};
+
+export type UpdateRecordResult = {
+  updated: true;
+  object_slug: string;
+  record_id: string;
+  values_changed: number;
 };
 
 export type SignalOutputDefinition = {
@@ -282,9 +330,17 @@ export type AgentCliPreflightStatus =
   | { state: "ready"; version?: string; updated: boolean }
   | { state: "error"; message: string };
 
+export type TerminalDroppedFilePayload = {
+  bytes: Uint8Array;
+  name: string;
+  mimeType: string;
+};
+
 export type TerminalBridge = {
   subscribe: (id: string, cols: number, rows: number, cwd?: string) => Promise<string>;
   send: (id: string, data: string) => void;
+  getPathForFile: (file: File) => string;
+  persistDroppedFile: (payload: TerminalDroppedFilePayload) => Promise<string>;
   resize: (id: string, cols: number, rows: number) => void;
   kill: (id: string) => void;
   getAgentCliPreflightStatus: () => Promise<AgentCliPreflightStatus>;
@@ -309,10 +365,12 @@ export type AppBridge = {
   openWorkspacePath: (filePath: string) => Promise<WorkspaceSummary>;
   closeWorkspace: () => Promise<void>;
   getWorkspace: () => Promise<WorkspaceSummary | null>;
+  listRecentWorkspaces: () => Promise<RecentWorkspaceSummary[]>;
   listRecords: (objectSlug: string, options?: RecordListOptions) => Promise<RecordListResult>;
   importCsv: (payload: ImportCsvPayload) => Promise<ImportCsvResult>;
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;
+  updateRecord: (payload: UpdateRecordPayload) => Promise<UpdateRecordResult>;
   runQuery: (sql: string, params?: unknown[]) => Promise<QueryResult>;
   listSignals: () => Promise<SignalDefinitionSummary[]>;
   listSignalFailures: () => Promise<SignalRunFailureSummary[]>;
