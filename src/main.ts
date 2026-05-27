@@ -20,6 +20,7 @@ import type {
   QueryResult,
   RecordListOptions,
   RecordListResult,
+  RecentWorkspaceSummary,
   SignalRunRequest,
   TerminalDroppedFilePayload,
   TranscriptImportResult,
@@ -286,6 +287,17 @@ function defaultCwd() {
 
 const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
 const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
+const RECENT_WORKSPACES_FILENAME = "recent-workspaces.json";
+const RECENT_WORKSPACE_DIRS = [
+  { dir: AGENT_CRM_ROOT, depth: 2 },
+  { dir: path.join(os.homedir(), "workspaces"), depth: 1 },
+  { dir: path.join(os.homedir(), "Downloads"), depth: 1 }
+] as const;
+
+type PersistedRecentWorkspace = {
+  path: string;
+  openedAt: string;
+};
 
 type AgentWorkspaceInstructions = {
   filenames: readonly string[];
@@ -1253,9 +1265,150 @@ async function openAndWatch(filePath: string): Promise<WorkspaceSummary> {
   const summary = await withCloudWorkspace(
     await getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath)
   );
-  if (summary?.path) workspaceWatcher.start(summary.path);
+  if (summary?.path) {
+    workspaceWatcher.start(summary.path);
+    app.addRecentDocument(summary.path);
+    await recordRecentWorkspace(summary.path);
+  }
   startCloudSync(summary);
   return summary;
+}
+
+function recentWorkspacesPath(): string {
+  return path.join(app.getPath("userData"), RECENT_WORKSPACES_FILENAME);
+}
+
+function normalizeRecentWorkspace(input: unknown): PersistedRecentWorkspace | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const candidate = input as Partial<PersistedRecentWorkspace>;
+  if (typeof candidate.path !== "string" || !candidate.path.endsWith(".acrm")) return null;
+  if (typeof candidate.openedAt !== "string" || Number.isNaN(new Date(candidate.openedAt).getTime())) {
+    return null;
+  }
+  return {
+    path: candidate.path,
+    openedAt: candidate.openedAt
+  };
+}
+
+async function readRecentWorkspaces(): Promise<PersistedRecentWorkspace[]> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(recentWorkspacesPath(), "utf8"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizeRecentWorkspace).filter((item): item is PersistedRecentWorkspace => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
+async function writeRecentWorkspaces(workspaces: PersistedRecentWorkspace[]): Promise<void> {
+  const filePath = recentWorkspacesPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(workspaces, null, 2)}\n`);
+}
+
+async function recordRecentWorkspace(filePath: string): Promise<void> {
+  const resolvedPath = path.resolve(filePath);
+  const next: PersistedRecentWorkspace = {
+    path: resolvedPath,
+    openedAt: new Date().toISOString()
+  };
+  const seen = new Set<string>();
+  const workspaces = [next, ...await readRecentWorkspaces()]
+    .filter((workspace) => {
+      const key = path.resolve(workspace.path);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 20);
+  await writeRecentWorkspaces(workspaces);
+}
+
+async function findWorkspaceFiles(dir: string, depth: number): Promise<RecentWorkspaceSummary[]> {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: RecentWorkspaceSummary[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (depth > 0) {
+        files.push(...await findWorkspaceFiles(entryPath, depth - 1));
+      }
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".acrm")) continue;
+    try {
+      const stat = await fs.stat(entryPath);
+      files.push({
+        path: entryPath,
+        filename: entry.name,
+        lastOpenedAt: stat.mtime.toISOString(),
+        timestampSource: "modified"
+      });
+    } catch {
+      // Ignore files that disappear while scanning.
+    }
+  }
+  return files;
+}
+
+async function listRecentWorkspaces(): Promise<RecentWorkspaceSummary[]> {
+  const seen = new Set<string>();
+  const isRecentWorkspace = (item: RecentWorkspaceSummary | null): item is RecentWorkspaceSummary =>
+    item !== null;
+  const persisted: Array<Promise<RecentWorkspaceSummary | null>> = (await readRecentWorkspaces()).map(async (workspace) => {
+    try {
+      await fs.stat(workspace.path);
+      return {
+        path: workspace.path,
+        filename: path.basename(workspace.path),
+        lastOpenedAt: workspace.openedAt,
+        timestampSource: "opened" as const
+      };
+    } catch {
+      return null;
+    }
+  });
+  const recentDocuments: Array<Promise<RecentWorkspaceSummary | null>> = app.getRecentDocuments()
+    .filter((filePath) => filePath.endsWith(".acrm"))
+    .map(async (filePath) => {
+      try {
+        const stat = await fs.stat(filePath);
+        return {
+          path: filePath,
+          filename: path.basename(filePath),
+          lastOpenedAt: stat.mtime.toISOString(),
+          timestampSource: "modified" as const
+        };
+      } catch {
+        return null;
+      }
+    });
+
+  const scanned = await Promise.all(RECENT_WORKSPACE_DIRS.map(({ dir, depth }) =>
+    findWorkspaceFiles(dir, depth)
+  ));
+
+  return [
+    ...(await Promise.all(persisted)).filter(isRecentWorkspace),
+    ...(await Promise.all(recentDocuments)).filter(isRecentWorkspace),
+    ...scanned.flat()
+  ]
+    .filter((workspace) => {
+      const key = path.resolve(workspace.path);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
+    .slice(0, 3);
 }
 
 handle("workspace:open-dialog", async () => {
@@ -1296,7 +1449,11 @@ handle("workspace:create", async (name: string, parentDir?: string) => {
     await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath)
   );
   await ensureAgentInstructionFiles(filePath);
-  if (summary?.path) workspaceWatcher.start(summary.path);
+  if (summary?.path) {
+    workspaceWatcher.start(summary.path);
+    app.addRecentDocument(summary.path);
+    await recordRecentWorkspace(summary.path);
+  }
   startCloudSync(summary);
   return summary;
 });
@@ -1324,6 +1481,7 @@ handle("workspace:get", async () => {
   }
   return withCloud;
 });
+handle("workspace:list-recent", listRecentWorkspaces);
 handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
   return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);
 });

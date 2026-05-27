@@ -38,6 +38,7 @@ const bridge: AppBridge = {
   openWorkspacePath: (filePath: string) => invoke("workspace:open-path", filePath),
   closeWorkspace: () => invoke("workspace:close"),
   getWorkspace: () => invoke("workspace:get"),
+  listRecentWorkspaces: () => invoke("workspace:list-recent"),
   listRecords: (objectSlug: string, options) => invoke("records:list", objectSlug, options),
   importCsv: (payload: ImportCsvPayload) => invoke("import:csv", payload),
   importTranscript: (payload: TranscriptPayload) => invoke("import:transcript", payload),

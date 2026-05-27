@@ -6,6 +6,13 @@ export type WorkspaceSummary = {
   counts: Record<string, number>;
 };
 
+export type RecentWorkspaceSummary = {
+  path: string;
+  filename: string;
+  lastOpenedAt: string;
+  timestampSource: "opened" | "modified";
+};
+
 export type CloudSyncProvider = "gmail" | "linkedin";
 
 export type CloudSyncStatus =
@@ -321,6 +328,7 @@ export type AppBridge = {
   openWorkspacePath: (filePath: string) => Promise<WorkspaceSummary>;
   closeWorkspace: () => Promise<void>;
   getWorkspace: () => Promise<WorkspaceSummary | null>;
+  listRecentWorkspaces: () => Promise<RecentWorkspaceSummary[]>;
   listRecords: (objectSlug: string, options?: RecordListOptions) => Promise<RecordListResult>;
   importCsv: (payload: ImportCsvPayload) => Promise<ImportCsvResult>;
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;

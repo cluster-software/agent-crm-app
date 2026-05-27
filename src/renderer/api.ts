@@ -6,6 +6,7 @@ import type {
   RecordListOptions,
   RecordListResult,
   RecordPreview,
+  RecentWorkspaceSummary,
   SignalDefinitionSummary,
   SignalRunRequest,
   TranscriptPayload,
@@ -409,6 +410,29 @@ const previewWorkspace: WorkspaceSummary = {
   ]
 };
 
+const previewRecentWorkspaces: RecentWorkspaceSummary[] = [
+  {
+    path: "/Users/example/workspaces/cluster.acrm",
+    filename: "cluster.acrm",
+    lastOpenedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
+    timestampSource: "opened"
+  },
+  {
+    path: "/Users/example/workspaces/anthropic-design.acrm",
+    filename: "anthropic-design.acrm",
+    lastOpenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    timestampSource: "opened"
+  },
+  {
+    path: "/Users/example/Downloads/yc-w26-leads.acrm",
+    filename: "yc-w26-leads.acrm",
+    lastOpenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+    timestampSource: "opened"
+  }
+];
+const forceWelcomePreview =
+  typeof window !== "undefined" && new URLSearchParams(window.location.search).has("welcome");
+
 function listPreviewRecords(
   objectSlug: string,
   options: RecordListOptions = {}
@@ -511,7 +535,8 @@ const browserPreview: AppBridge = {
   createWorkspace: async (_name: string, _parentDir?: string) => previewWorkspace,
   openWorkspacePath: async () => previewWorkspace,
   closeWorkspace: async () => undefined,
-  getWorkspace: async () => previewWorkspace,
+  getWorkspace: async () => (forceWelcomePreview ? null : previewWorkspace),
+  listRecentWorkspaces: async () => previewRecentWorkspaces,
   listRecords: async (objectSlug: string, options?: RecordListOptions) =>
     listPreviewRecords(objectSlug, options),
   importCsv: async (_payload: ImportCsvPayload) => ({
