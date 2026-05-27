@@ -86,6 +86,7 @@ const sdkObjectOrder = [
 const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const appVersion = packageJson.version;
+const appDisplayVersion = displayVersion(appVersion);
 
 type PersonTab = "overview" | "messages" | "transcripts" | "posts";
 type SignalPopoverTab = "sources" | "reasoning";
