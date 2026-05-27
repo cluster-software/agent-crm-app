@@ -16,6 +16,7 @@ import {
   Mail,
   Newspaper,
   Phone,
+  Search,
   Settings,
   Table2,
   Terminal,
@@ -30,6 +31,7 @@ import type {
   DragEvent as ReactDragEvent,
   FormEvent as ReactFormEvent,
   PointerEvent as ReactPointerEvent,
+  RefObject,
   ReactNode,
   SetStateAction
 } from "react";
@@ -82,7 +84,6 @@ const sdkObjectOrder = [
 const SIDEBAR_VISIBLE_OBJECTS = new Set(["companies", "people", "deals"]);
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const appVersion = packageJson.version;
-const appDisplayVersion = displayVersion(appVersion);
 
 type PersonTab = "overview" | "messages" | "transcripts" | "posts";
 type SignalPopoverTab = "sources" | "reasoning";
@@ -90,6 +91,7 @@ type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
 type DealsViewMode = "table" | "kanban";
 
+const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
 
@@ -104,6 +106,20 @@ function isTerminalTarget(target: EventTarget | null): boolean {
   return target.closest(".terminal") !== null;
 }
 
+function isTableRowNavigationTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (isTerminalTarget(target)) return false;
+  if (target.closest(".table-filter")) return true;
+  if (isEditableTarget(target)) return false;
+
+  const row = target.closest(".table__row:not(.table__row--skeleton), .deals-table__row");
+  if (!row) {
+    return !target.closest("button, a, input, textarea, select, [contenteditable='true']");
+  }
+  const interactive = target.closest("button, a, input, textarea, select, [contenteditable='true']");
+  return !interactive || interactive === row;
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
 }
@@ -111,6 +127,17 @@ function formatNumber(value: number) {
 function statusFromError(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+
+  return debounced;
 }
 
 function isDefaultRecordsWorkspaceEmpty(summary: WorkspaceSummary | null): boolean {
@@ -134,6 +161,9 @@ export function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
   const previousWorkspacePathRef = useRef<string | null>(null);
+  const sidebarItemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [recordsFocusRequest, setRecordsFocusRequest] = useState(0);
+  const [detailFocusRequest, setDetailFocusRequest] = useState(0);
 
   useEffect(() => {
     return api.onUpdateStatus(setUpdateStatus);
@@ -270,6 +300,10 @@ export function App() {
     () => orderSchemaObjects(workspace?.objects ?? []),
     [workspace]
   );
+  const sidebarObjects = useMemo(
+    () => schemaObjects.filter((object) => SIDEBAR_VISIBLE_OBJECTS.has(object.object_slug)),
+    [schemaObjects],
+  );
   const selectedObject =
     schemaObjects.find((object) => object.object_slug === selectedObjectSlug) ??
     schemaObjects[0];
@@ -280,6 +314,48 @@ export function App() {
       setSelectedObjectSlug(defaultObjectSlug(schemaObjects));
     }
   }, [schemaObjects, selectedObjectSlug, workspace]);
+
+  const selectSidebarObject = useCallback((objectSlug: string, focus = false) => {
+    setSelectedObjectSlug(objectSlug);
+    setMainView("records");
+    setDetailRecord(null);
+    setPersonTab("overview");
+    if (focus) {
+      window.requestAnimationFrame(() => {
+        sidebarItemRefs.current.get(objectSlug)?.focus();
+      });
+    }
+  }, []);
+
+  const moveSidebarSelection = useCallback((delta: -1 | 1) => {
+    if (sidebarObjects.length === 0) return;
+    const currentIndex = Math.max(
+      0,
+      sidebarObjects.findIndex((object) => object.object_slug === selectedObjectSlug),
+    );
+    const nextIndex = Math.min(sidebarObjects.length - 1, Math.max(0, currentIndex + delta));
+    const nextObject = sidebarObjects[nextIndex];
+    if (!nextObject) return;
+    selectSidebarObject(nextObject.object_slug, true);
+  }, [selectSidebarObject, selectedObjectSlug, sidebarObjects]);
+
+  useEffect(() => {
+    if (!workspace || !sidebarOpen || mainView !== "records") return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "ArrowLeft") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditableTarget(event.target) || isTerminalTarget(event.target)) return;
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest(".sidebar")) return;
+      if (!selectedObject || !SIDEBAR_VISIBLE_OBJECTS.has(selectedObject.object_slug)) return;
+      if (detailRecord && selectedObject.object_slug === "people" && personTab !== "overview") return;
+
+      event.preventDefault();
+      sidebarItemRefs.current.get(selectedObject.object_slug)?.focus();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [detailRecord, mainView, personTab, selectedObject, sidebarOpen, workspace]);
 
   async function runWorkspaceAction(action: () => Promise<WorkspaceSummary | null>) {
     setError(null);
@@ -306,10 +382,8 @@ export function App() {
         </div>
 
         <div className="sidebar-section">
-          {schemaObjects.length > 0 ? (
-            schemaObjects
-              .filter((object) => SIDEBAR_VISIBLE_OBJECTS.has(object.object_slug))
-              .map((object) => {
+          {sidebarObjects.length > 0 ? (
+            sidebarObjects.map((object) => {
               const Icon = iconForObject(object.object_slug);
               const active = mainView === "records" && selectedObject?.object_slug === object.object_slug;
               const count = workspace?.counts[object.object_slug] ?? 0;
@@ -319,11 +393,27 @@ export function App() {
                   className="nav-item"
                   aria-current={active}
                   key={object.object_slug}
-                  onClick={() => {
-                    setSelectedObjectSlug(object.object_slug);
-                    setMainView("records");
-                    setDetailRecord(null);
-                    setPersonTab("overview");
+                  ref={(element) => {
+                    if (element) sidebarItemRefs.current.set(object.object_slug, element);
+                    else sidebarItemRefs.current.delete(object.object_slug);
+                  }}
+                  onClick={() => selectSidebarObject(object.object_slug)}
+                  onKeyDown={(event) => {
+                    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      moveSidebarSelection(1);
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveSidebarSelection(-1);
+                    } else if (event.key === "ArrowRight") {
+                      event.preventDefault();
+                      if (detailRecord) {
+                        setDetailFocusRequest((request) => request + 1);
+                      } else {
+                        setRecordsFocusRequest((request) => request + 1);
+                      }
+                    }
                   }}
                 >
                   <span className="nav-item__icon">
@@ -363,7 +453,7 @@ export function App() {
                 className="sidebar-footer__dot"
                 data-state={workspace ? "live" : "idle"}
               />
-              <span>agent-crm v{appDisplayVersion}</span>
+              <span className="sidebar-footer__workspace">{workspaceLabel}</span>
             </div>
             <UpdateBanner status={updateStatus} appVersion={appVersion} />
           </div>
@@ -461,9 +551,18 @@ export function App() {
             ) : mainView === "settings" ? (
               <SettingsView dataVersion={dataVersion} setError={setError} />
             ) : detailRecord && selectedObject?.object_slug === "people" ? (
-              <PersonDetail record={detailRecord} tab={personTab} onTabChange={setPersonTab} />
+              <PersonDetail
+                record={detailRecord}
+                tab={personTab}
+                focusRequest={detailFocusRequest}
+                onTabChange={setPersonTab}
+              />
             ) : detailRecord && selectedObject ? (
-              <RecordDetail object={selectedObject} record={detailRecord} />
+              <RecordDetail
+                object={selectedObject}
+                record={detailRecord}
+                focusRequest={detailFocusRequest}
+              />
             ) : selectedObject ? (
               <RecordsView
                 key={selectedObject.object_slug}
@@ -472,6 +571,7 @@ export function App() {
                 totalRecords={workspace.counts[selectedObject.object_slug] ?? 0}
                 cloudSyncStatus={cloudSyncStatus}
                 onRowClick={setDetailRecord}
+                focusRequest={recordsFocusRequest}
                 setError={setError}
               />
             ) : null}
@@ -1036,12 +1136,23 @@ function accountMeta(account: IntegrationAccountSummary): string {
   return [...new Set(parts)].join(" · ");
 }
 
+type LoadRecordPageOptions = {
+  quiet?: boolean;
+  cursor: string | null;
+  searchQuery: string;
+};
+
+function recordPreviewId(record: Pick<RecordPreview, "object_slug" | "record_id">): string {
+  return `${record.object_slug}:${record.record_id}`;
+}
+
 function RecordsView({
   object,
   dataVersion,
   totalRecords,
   cloudSyncStatus,
   onRowClick,
+  focusRequest,
   setError
 }: {
   object: SchemaObject;
@@ -1049,11 +1160,23 @@ function RecordsView({
   totalRecords: number;
   cloudSyncStatus: CloudSyncStatus;
   onRowClick?: (record: RecordPreview) => void;
+  focusRequest: number;
   setError: (error: string | null) => void;
 }) {
   const [dealsViewMode, setDealsViewMode] = useState<DealsViewMode>("kanban");
   const viewMode = object.object_slug === "deals" ? dealsViewMode : "table";
   const isDealsView = object.object_slug === "deals";
+  const tableFilterAvailable =
+    object.object_slug === "companies" ||
+    object.object_slug === "people" ||
+    (object.object_slug === "deals" && viewMode === "table");
+  const [filterQuery, setFilterQuery] = useState("");
+  const normalizedFilterQuery = normalizeTableFilterQuery(filterQuery);
+  const debouncedFilterQuery = useDebouncedValue(
+    tableFilterAvailable ? normalizedFilterQuery : "",
+    90
+  );
+  const filterInputRef = useRef<HTMLInputElement | null>(null);
   const loadAllRecords = isDealsView;
   const pageSize = loadAllRecords ? DEAL_RECORD_PAGE_SIZE : RECORD_TABLE_PAGE_SIZE;
   const [records, setRecords] = useState<RecordPreview[]>([]);
@@ -1063,10 +1186,24 @@ function RecordsView({
   const [loadingRecords, setLoadingRecords] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [totalMatches, setTotalMatches] = useState<number | null>(null);
+  const [loadedSearchQuery, setLoadedSearchQuery] = useState("");
+  const [focusedRecordId, setFocusedRecordId] = useState<string | null>(null);
+  const [focusRequestVersion, setFocusRequestVersion] = useState(0);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<Array<string | null>>([null]);
   const requestIdRef = useRef(0);
+  const recordsRef = useRef<RecordPreview[]>([]);
+  const loadRequestContextRef = useRef({
+    dataVersion,
+    objectSlug: object.object_slug,
+    searchQuery: debouncedFilterQuery
+  });
   const [retryingSignals, setRetryingSignals] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    recordsRef.current = records;
+  }, [records]);
 
   useEffect(() => {
     setRecords([]);
@@ -1076,14 +1213,40 @@ function RecordsView({
     setLoadingRecords(true);
     setHasMore(false);
     setNextCursor(null);
+    setTotalMatches(null);
+    setLoadedSearchQuery("");
+    setFocusedRecordId(null);
+    setFocusRequestVersion(0);
     setPageIndex(0);
     setPageCursors([null]);
   }, [object.object_slug]);
 
-  const loadRecords = useCallback(async (options: { quiet?: boolean } = {}) => {
+  useEffect(() => {
+    if (!tableFilterAvailable) return;
+    function onKeyDown(event: KeyboardEvent) {
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "f") return;
+      if (isTerminalTarget(event.target)) return;
+      if (isEditableTarget(event.target) && event.target !== filterInputRef.current) return;
+      event.preventDefault();
+      window.requestAnimationFrame(() => {
+        filterInputRef.current?.focus();
+        filterInputRef.current?.select();
+      });
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [tableFilterAvailable]);
+
+  const loadRecordPage = useCallback(async ({
+    quiet = false,
+    cursor,
+    searchQuery
+  }: LoadRecordPageOptions) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    if (!options.quiet) {
+    if (!quiet) {
       setLoadingRecords(true);
     }
     try {
@@ -1097,24 +1260,26 @@ function RecordsView({
         object.object_slug === "deals" ? true : !COLUMNS_BY_OBJECT[object.object_slug];
       if (loadAllRecords) {
         const allRecords: RecordPreview[] = [];
-        let cursor: string | null = null;
+        let pageCursor: string | null = null;
         let more = false;
         let next: string | null = null;
 
         do {
           const result = await api.listRecords(object.object_slug, {
             limit: DEAL_RECORD_PAGE_SIZE,
-            cursor,
+            cursor: pageCursor,
             valueAttributes: requestedAttributes,
-            includeSecondaryLabels
+            includeSecondaryLabels,
+            searchQuery: searchQuery || undefined
           });
           if (requestId !== requestIdRef.current) return;
           if (result.objectSlug !== object.object_slug) return;
           allRecords.push(...result.records);
           more = result.hasMore;
           next = result.nextCursor;
-          cursor = result.nextCursor;
-        } while (more && cursor);
+          pageCursor = result.nextCursor;
+          setTotalMatches(searchQuery ? result.totalMatches ?? allRecords.length : null);
+        } while (more && pageCursor);
 
         setRecords(allRecords);
         setSignals(nextSignals);
@@ -1122,13 +1287,16 @@ function RecordsView({
         setSignalRuns(nextSignalRuns);
         setHasMore(more);
         setNextCursor(next);
+        setTotalMatches(searchQuery ? allRecords.length : null);
+        setLoadedSearchQuery(searchQuery);
         return;
       }
       const result = await api.listRecords(object.object_slug, {
         limit: pageSize,
-        cursor: pageCursors[pageIndex] ?? null,
+        cursor,
         valueAttributes: requestedAttributes,
-        includeSecondaryLabels
+        includeSecondaryLabels,
+        searchQuery: searchQuery || undefined
       });
       if (requestId !== requestIdRef.current) return;
       if (result.objectSlug !== object.object_slug) return;
@@ -1138,24 +1306,110 @@ function RecordsView({
       setSignalRuns(nextSignalRuns);
       setHasMore(result.hasMore);
       setNextCursor(result.nextCursor);
+      setTotalMatches(searchQuery ? result.totalMatches ?? result.records.length : null);
+      setLoadedSearchQuery(searchQuery);
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       setError(statusFromError(err));
     } finally {
-      if (requestId === requestIdRef.current && !options.quiet) {
+      if (requestId === requestIdRef.current && !quiet) {
         setLoadingRecords(false);
       }
     }
-  }, [loadAllRecords, object, pageCursors, pageIndex, pageSize, setError]);
+  }, [loadAllRecords, object, pageSize, setError]);
+
+  const loadCurrentRecords = useCallback(
+    (options: { quiet?: boolean } = {}) =>
+      loadRecordPage({
+        quiet: options.quiet,
+        cursor: pageCursors[pageIndex] ?? null,
+        searchQuery: debouncedFilterQuery
+      }),
+    [debouncedFilterQuery, loadRecordPage, pageCursors, pageIndex],
+  );
 
   useEffect(() => {
-    void loadRecords();
-  }, [loadRecords, dataVersion]);
+    const previous = loadRequestContextRef.current;
+    const filterOnlyChange =
+      previous.objectSlug === object.object_slug &&
+      previous.dataVersion === dataVersion &&
+      previous.searchQuery !== debouncedFilterQuery;
+    const suppressLoadingState =
+      tableFilterAvailable && filterOnlyChange && recordsRef.current.length > 0;
+
+    loadRequestContextRef.current = {
+      dataVersion,
+      objectSlug: object.object_slug,
+      searchQuery: debouncedFilterQuery
+    };
+
+    if (!suppressLoadingState) {
+      setLoadingRecords(true);
+    }
+    setHasMore(false);
+    setNextCursor(null);
+    setTotalMatches(null);
+    setPageIndex(0);
+    setPageCursors([null]);
+    void loadRecordPage({
+      cursor: null,
+      quiet: suppressLoadingState,
+      searchQuery: debouncedFilterQuery
+    });
+  }, [dataVersion, debouncedFilterQuery, loadRecordPage, object.object_slug, tableFilterAvailable]);
 
   const valueColumns = useMemo(
     () => pickValueColumns(object, records, signals),
     [object, records, signals],
   );
+  const displayedRecords = useMemo(() => {
+    if (!tableFilterAvailable) return records;
+    if (normalizedFilterQuery === loadedSearchQuery) return records;
+    return filterRecordsForQuery(records, filterQuery);
+  }, [filterQuery, loadedSearchQuery, normalizedFilterQuery, records, tableFilterAvailable]);
+  const displayedRecordIds = useMemo(
+    () => displayedRecords.map(recordPreviewId),
+    [displayedRecords],
+  );
+
+  useEffect(() => {
+    setFocusedRecordId((current) => {
+      if (displayedRecordIds.length === 0) return null;
+      if (current && displayedRecordIds.includes(current)) return current;
+      return displayedRecordIds[0];
+    });
+  }, [displayedRecordIds]);
+
+  useEffect(() => {
+    if (!tableFilterAvailable) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
+      if (!isTableRowNavigationTarget(event.target)) return;
+      if (displayedRecords.length === 0) return;
+
+      const currentIndex = focusedRecordId
+        ? displayedRecordIds.indexOf(focusedRecordId)
+        : -1;
+      const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        onRowClick?.(displayedRecords[safeIndex]);
+        return;
+      }
+
+      event.preventDefault();
+      const nextIndex =
+        event.key === "ArrowDown"
+          ? Math.min(displayedRecords.length - 1, currentIndex + 1)
+          : Math.max(0, currentIndex < 0 ? displayedRecords.length - 1 : currentIndex - 1);
+      setFocusedRecordId(displayedRecordIds[nextIndex]);
+      setFocusRequestVersion((version) => version + 1);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [displayedRecordIds, displayedRecords, focusedRecordId, onRowClick, tableFilterAvailable]);
   const failureBySignal = useMemo(
     () => signalFailureMap(signalFailures, signals),
     [signalFailures, signals],
@@ -1177,7 +1431,7 @@ function RecordsView({
           record_ids: [failure.record_id],
           concurrency: 1
         });
-        await loadRecords({ quiet: true });
+        await loadCurrentRecords({ quiet: true });
       } catch (err) {
         setError(statusFromError(err));
       } finally {
@@ -1188,7 +1442,7 @@ function RecordsView({
         });
       }
     },
-    [loadRecords, retryingSignals, setError],
+    [loadCurrentRecords, retryingSignals, setError],
   );
   const hasRunningSignalCells = records.some((record) =>
     valueColumns.some(
@@ -1201,23 +1455,31 @@ function RecordsView({
   useEffect(() => {
     if (!hasRunningSignalCells) return;
     const timer = window.setInterval(() => {
-      void loadRecords({ quiet: true });
+      void loadCurrentRecords({ quiet: true });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [hasRunningSignalCells, loadRecords]);
+  }, [hasRunningSignalCells, loadCurrentRecords]);
 
   function goToPreviousPage() {
-    setPageIndex((index) => Math.max(0, index - 1));
+    const nextIndex = Math.max(0, pageIndex - 1);
+    setPageIndex(nextIndex);
+    void loadRecordPage({
+      cursor: pageCursors[nextIndex] ?? null,
+      searchQuery: debouncedFilterQuery
+    });
   }
 
   function goToNextPage() {
     if (!nextCursor) return;
+    const cursor = nextCursor;
+    const nextIndex = pageIndex + 1;
     setPageCursors((cursors) => {
       const next = cursors.slice(0, pageIndex + 1);
-      next[pageIndex + 1] = nextCursor;
+      next[nextIndex] = cursor;
       return next;
     });
-    setPageIndex((index) => index + 1);
+    setPageIndex(nextIndex);
+    void loadRecordPage({ cursor, searchQuery: debouncedFilterQuery });
   }
 
   if (totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
@@ -1229,21 +1491,39 @@ function RecordsView({
     );
   }
 
-  const pageStart = records.length === 0 ? 0 : pageIndex * pageSize + 1;
-  const pageEnd = pageIndex * pageSize + records.length;
-  const showLoadingMeta = loadingRecords && records.length === 0;
+  const filterActive = tableFilterAvailable && normalizedFilterQuery.length > 0;
+  const optimisticFilter = filterActive && normalizedFilterQuery !== debouncedFilterQuery;
+  const pageStart = displayedRecords.length === 0 ? 0 : pageIndex * pageSize + 1;
+  const pageEnd = pageIndex * pageSize + displayedRecords.length;
+  const showLoadingMeta = loadingRecords && records.length === 0 && !filterActive;
+  const metaText = filterActive
+    ? filterMetaText(
+        optimisticFilter ? null : totalMatches,
+        displayedRecords.length,
+        totalRecords,
+        object.plural_name
+      )
+    : `${formatNumber(pageStart)}-${formatNumber(pageEnd)} of ${formatNumber(totalRecords)}`;
 
   if (isDealsView) {
     return (
       <DealsPipelineView
         object={object}
-        records={records}
+        records={displayedRecords}
         totalRecords={totalRecords}
         loading={loadingRecords}
         viewMode={viewMode}
         onViewModeChange={setDealsViewMode}
+        filterQuery={filterQuery}
+        filterInputRef={filterInputRef}
+        onFilterQueryChange={setFilterQuery}
+        totalMatches={optimisticFilter ? null : totalMatches}
+        focusedRecordId={focusedRecordId}
+        focusRequestVersion={focusRequestVersion}
+        tableFocusRequest={focusRequest}
+        onFocusedRecordChange={setFocusedRecordId}
         onRecordClick={onRowClick}
-        onRecordsChanged={() => loadRecords({ quiet: true })}
+        onRecordsChanged={() => loadCurrentRecords({ quiet: true })}
         setError={setError}
       />
     );
@@ -1259,11 +1539,18 @@ function RecordsView({
               <span>Loading {object.plural_name.toLowerCase()}</span>
             </>
           ) : (
-            <span>
-              {formatNumber(pageStart)}-{formatNumber(pageEnd)} of {formatNumber(totalRecords)}
-            </span>
+            <>
+              {loadingRecords && <Loader2 size={13} className="lucide spin" />}
+              <span>{metaText}</span>
+            </>
           )}
         </div>
+        <TableFilterControl
+          objectName={object.plural_name}
+          value={filterQuery}
+          inputRef={filterInputRef}
+          onChange={setFilterQuery}
+        />
         <div className="table-toolbar__pager">
           <button
             type="button"
@@ -1289,14 +1576,19 @@ function RecordsView({
       </div>
       <RecordsTable
         object={object}
-        records={records}
+        records={displayedRecords}
         valueColumns={valueColumns}
         failureBySignal={failureBySignal}
         runningBySignal={runningBySignal}
         retryingSignals={retryingSignals}
         onRetrySignal={retrySignal}
         onRowClick={onRowClick}
-        loading={loadingRecords}
+        focusedRecordId={focusedRecordId}
+        focusRequestVersion={focusRequestVersion}
+        tableFocusRequest={focusRequest}
+        onFocusedRecordChange={setFocusedRecordId}
+        loading={loadingRecords && records.length === 0 && !filterActive}
+        emptyMessage={filterActive ? "no matching records" : undefined}
       />
     </div>
   );
@@ -1600,6 +1892,62 @@ function DealsViewToggle({
   );
 }
 
+function TableFilterControl({
+  objectName,
+  value,
+  inputRef,
+  onChange
+}: {
+  objectName: string;
+  value: string;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChange: (value: string) => void;
+}) {
+  const label = `Filter ${objectName.toLowerCase()}`;
+  return (
+    <label className="table-filter" data-active={value.trim() ? "true" : undefined}>
+      <Search size={13} className="lucide" aria-hidden="true" />
+      <input
+        ref={inputRef}
+        value={value}
+        aria-label={label}
+        placeholder={label}
+        spellCheck={false}
+        autoCapitalize="none"
+        onChange={(event) => onChange(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (value) {
+            onChange("");
+          } else {
+            event.currentTarget.blur();
+          }
+        }}
+      />
+      {value ? (
+        <button
+          type="button"
+          className="table-filter__clear"
+          title="Clear filter"
+          aria-label="Clear filter"
+          onClick={() => {
+            onChange("");
+            window.requestAnimationFrame(() => filterInputRefFocus(inputRef));
+          }}
+        >
+          <X size={12} className="lucide" />
+        </button>
+      ) : null}
+    </label>
+  );
+}
+
+function filterInputRefFocus(inputRef: RefObject<HTMLInputElement | null>) {
+  inputRef.current?.focus();
+}
+
 function signalFailureMap(
   failures: SignalRunFailureSummary[],
   signals: SignalDefinitionSummary[],
@@ -1770,7 +2118,12 @@ function RecordsTable({
   retryingSignals,
   onRetrySignal,
   onRowClick,
-  loading
+  focusedRecordId,
+  focusRequestVersion,
+  tableFocusRequest,
+  onFocusedRecordChange,
+  loading,
+  emptyMessage = "no records yet · run an import or create one"
 }: {
   object: SchemaObject;
   records: RecordPreview[];
@@ -1780,12 +2133,19 @@ function RecordsTable({
   retryingSignals: Set<string>;
   onRetrySignal?: (failure: SignalRunFailureSummary) => void;
   onRowClick?: (record: RecordPreview) => void;
+  focusedRecordId?: string | null;
+  focusRequestVersion?: number;
+  tableFocusRequest?: number;
+  onFocusedRecordChange?: (recordId: string) => void;
   loading: boolean;
+  emptyMessage?: string;
 }) {
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [expandedCell, setExpandedCell] = useState<string | null>(null);
   const [openSignalCell, setOpenSignalCell] = useState<string | null>(null);
   const [signalPopoverTabs, setSignalPopoverTabs] = useState<Record<string, SignalPopoverTab>>({});
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const handledTableFocusRequestRef = useRef(0);
   const columns = useRecordColumns(
     object,
     valueColumns,
@@ -1830,6 +2190,24 @@ function RecordsTable({
       .join(" ") + " 1fr";
   const gridStyle = { ["--columns" as string]: columnTemplate };
 
+  useEffect(() => {
+    if (!focusedRecordId || !focusRequestVersion) return;
+    const row = rowRefs.current.get(focusedRecordId);
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedRecordId, focusRequestVersion]);
+
+  useEffect(() => {
+    if (!tableFocusRequest) return;
+    if (handledTableFocusRequestRef.current === tableFocusRequest) return;
+    const rowId = focusedRecordId ?? table.getRowModel().rows[0]?.id;
+    if (!rowId) return;
+    const row = rowRefs.current.get(rowId);
+    handledTableFocusRequestRef.current = tableFocusRequest;
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedRecordId, table, tableFocusRequest]);
+
   return (
     <div className="table__inner" style={gridStyle}>
       {table.getHeaderGroups().map((headerGroup) => (
@@ -1846,15 +2224,32 @@ function RecordsTable({
       <div className="table__body">
         {records.length === 0 && !loading ? (
           <div className="empty-inline">
-            <span>no records yet · run an import or create one</span>
+            <span>{emptyMessage}</span>
           </div>
         ) : null}
         {records.length > 0
-          ? table.getRowModel().rows.map((row, index) => (
+          ? table.getRowModel().rows.map((row) => (
             <div
               key={row.id}
               className="table__row"
-              data-touched={index === 0 ? "true" : undefined}
+              ref={(element) => {
+                if (element) rowRefs.current.set(row.id, element);
+                else rowRefs.current.delete(row.id);
+              }}
+              tabIndex={0}
+              data-focused={focusedRecordId === row.id ? "true" : undefined}
+              aria-selected={focusedRecordId === row.id}
+              onFocus={() => onFocusedRecordChange?.(row.id)}
+              onMouseDown={(event) => {
+                onFocusedRecordChange?.(row.id);
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest("button, a, input, textarea, select, [contenteditable='true']")
+                ) {
+                  return;
+                }
+                event.currentTarget.focus({ preventScroll: true });
+              }}
             >
               {row.getVisibleCells().map((cell, cellIndex, cells) => {
                 const isIdentity = cell.column.id === "identity";
@@ -1947,6 +2342,14 @@ function DealsPipelineView({
   loading,
   viewMode,
   onViewModeChange,
+  filterQuery,
+  filterInputRef,
+  onFilterQueryChange,
+  totalMatches,
+  focusedRecordId,
+  focusRequestVersion,
+  tableFocusRequest,
+  onFocusedRecordChange,
   onRecordClick,
   onRecordsChanged,
   setError
@@ -1957,6 +2360,14 @@ function DealsPipelineView({
   loading: boolean;
   viewMode: DealsViewMode;
   onViewModeChange: (mode: DealsViewMode) => void;
+  filterQuery: string;
+  filterInputRef: RefObject<HTMLInputElement | null>;
+  onFilterQueryChange: (query: string) => void;
+  totalMatches: number | null;
+  focusedRecordId?: string | null;
+  focusRequestVersion?: number;
+  tableFocusRequest?: number;
+  onFocusedRecordChange?: (recordId: string) => void;
   onRecordClick?: (record: RecordPreview) => void;
   onRecordsChanged?: () => Promise<void> | void;
   setError: (error: string | null) => void;
@@ -1969,6 +2380,11 @@ function DealsPipelineView({
   );
   const columns = useMemo(() => buildDealStageColumns(object, deals), [object, deals]);
   const visibleCount = deals.length;
+  const filterActive = viewMode === "table" && normalizeTableFilterQuery(filterQuery).length > 0;
+  const emptyMessage = filterActive ? "no matching deals" : "no deals yet - run an import or create one";
+  const statusText = filterActive
+    ? filterMetaText(totalMatches, visibleCount, totalRecords, object.plural_name)
+    : `${formatNumber(visibleCount)} of ${formatNumber(totalRecords)} deals`;
 
   useEffect(() => {
     setStageOverrides((current) => {
@@ -2031,26 +2447,28 @@ function DealsPipelineView({
     [object, onRecordsChanged, setError],
   );
 
-  if (records.length === 0 && !loading) {
-    return (
-      <div className="deals-workspace">
-        <div className="empty-inline">
-          <span>no deals yet - run an import or create one</span>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="deals-workspace" aria-busy={loading}>
       <div className="deals-toolbar">
+        {viewMode === "table" && (
+          <TableFilterControl
+            objectName={object.plural_name}
+            value={filterQuery}
+            inputRef={filterInputRef}
+            onChange={onFilterQueryChange}
+          />
+        )}
         <div className="deals-toolbar__spacer" />
         <DealsViewToggle value={viewMode} onChange={onViewModeChange} />
       </div>
 
       <div className="deals-workspace__body">
         {loading && records.length === 0 ? (
-          <DealsKanbanSkeleton />
+          viewMode === "table" ? (
+            <DealsTableView deals={[]} emptyMessage={filterActive ? emptyMessage : "loading deals"} />
+          ) : (
+            <DealsKanbanSkeleton />
+          )
         ) : viewMode === "kanban" ? (
           <DealsKanbanView
             columns={columns}
@@ -2061,15 +2479,19 @@ function DealsPipelineView({
         ) : (
           <DealsTableView
             deals={deals}
+            emptyMessage={emptyMessage}
+            focusedDealId={focusedRecordId}
+            focusRequestVersion={focusRequestVersion}
+            tableFocusRequest={tableFocusRequest}
+            onFocusedDealChange={onFocusedRecordChange}
             onRowClick={(deal) => onRecordClick?.(deal.record)}
           />
         )}
       </div>
 
       <div className="deals-status-bar">
-        <span>
-          {formatNumber(visibleCount)} of {formatNumber(totalRecords)} deals
-        </span>
+        {loading && records.length > 0 && <Loader2 size={12} className="lucide spin" />}
+        <span>{statusText}</span>
       </div>
     </div>
   );
@@ -2249,11 +2671,42 @@ function DealCard({
 
 function DealsTableView({
   deals,
+  emptyMessage = "no deals yet - run an import or create one",
+  focusedDealId,
+  focusRequestVersion,
+  tableFocusRequest,
+  onFocusedDealChange,
   onRowClick
 }: {
   deals: DealRecord[];
+  emptyMessage?: string;
+  focusedDealId?: string | null;
+  focusRequestVersion?: number;
+  tableFocusRequest?: number;
+  onFocusedDealChange?: (dealId: string) => void;
   onRowClick?: (deal: DealRecord) => void;
 }) {
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const handledTableFocusRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (!focusedDealId || !focusRequestVersion) return;
+    const row = rowRefs.current.get(focusedDealId);
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedDealId, focusRequestVersion]);
+
+  useEffect(() => {
+    if (!tableFocusRequest) return;
+    if (handledTableFocusRequestRef.current === tableFocusRequest) return;
+    const dealId = focusedDealId ?? deals[0]?.id;
+    if (!dealId) return;
+    const row = rowRefs.current.get(dealId);
+    handledTableFocusRequestRef.current = tableFocusRequest;
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
+  }, [deals, focusedDealId, tableFocusRequest]);
+
   return (
     <div className="deals-table" style={{ ["--deals-table-columns" as string]: DEALS_TABLE_COLUMNS }}>
       <div className="deals-table__head">
@@ -2266,11 +2719,24 @@ function DealsTableView({
         <span>Next step</span>
       </div>
       <div className="deals-table__body">
+        {deals.length === 0 ? (
+          <div className="empty-inline">
+            <span>{emptyMessage}</span>
+          </div>
+        ) : null}
         {deals.map((deal) => (
           <button
             key={deal.id}
             type="button"
             className="deals-table__row"
+            ref={(element) => {
+              if (element) rowRefs.current.set(deal.id, element);
+              else rowRefs.current.delete(deal.id);
+            }}
+            data-focused={focusedDealId === deal.id ? "true" : undefined}
+            aria-selected={focusedDealId === deal.id}
+            onFocus={() => onFocusedDealChange?.(deal.id)}
+            onMouseDown={() => onFocusedDealChange?.(deal.id)}
             onClick={() => onRowClick?.(deal)}
           >
             <span className="cell-check" />
@@ -2643,6 +3109,50 @@ function cellText(columnId: string, raw: unknown, record: RecordPreview): string
   return "";
 }
 
+function normalizeTableFilterQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function tableFilterTerms(query: string): string[] {
+  const normalized = normalizeTableFilterQuery(query);
+  return normalized ? normalized.split(" ").slice(0, 8) : [];
+}
+
+function filterRecordsForQuery(records: RecordPreview[], query: string): RecordPreview[] {
+  const terms = tableFilterTerms(query);
+  if (terms.length === 0) return records;
+  return records.filter((record) => {
+    const haystack = recordSearchText(record);
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+function recordSearchText(record: RecordPreview): string {
+  return [
+    record.label,
+    record.subtitle,
+    ...record.values.flatMap((value) => [
+      value.title,
+      value.display,
+      ...value.values.map(displayUnknown)
+    ])
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function filterMetaText(
+  totalMatches: number | null,
+  visibleCount: number,
+  totalRecords: number,
+  objectName: string
+): string {
+  if (totalMatches !== null) {
+    return `${formatNumber(totalMatches)} ${totalMatches === 1 ? "match" : "matches"} in ${formatNumber(totalRecords)} ${objectName.toLowerCase()}`;
+  }
+  return `${formatNumber(visibleCount)} ${visibleCount === 1 ? "match" : "matches"}`;
+}
+
 function TableSkeleton({ columnCount }: { columnCount: number }) {
   return (
     <>
@@ -2953,13 +3463,17 @@ function looksMono(value: RecordValue) {
 
 function RecordDetail({
   object,
-  record
+  record,
+  focusRequest
 }: {
   object: SchemaObject;
   record: RecordPreview;
+  focusRequest: number;
 }) {
   const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
   const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const handledFocusRequestRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -2996,8 +3510,15 @@ function RecordDetail({
     (value) => value.display && !isSignalValue(value) && value.attribute_slug !== "name",
   );
 
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
   return (
-    <div className="detail">
+    <div ref={detailRef} className="detail" tabIndex={-1}>
       <header className="detail__header">
         <h1 className="detail__title display">{record.label}</h1>
         {meta && <div className="detail__meta">{meta}</div>}
@@ -3891,16 +4412,20 @@ function postSecondary(item: RelatedRecord): string {
 function PersonDetail({
   record,
   tab,
+  focusRequest,
   onTabChange
 }: {
   record: RecordPreview;
   tab: PersonTab;
+  focusRequest: number;
   onTabChange: (tab: PersonTab) => void;
 }) {
   const baseMeta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : "";
   const [companyName, setCompanyName] = useState("");
   const meta = uniqueNonEmpty([baseMeta, companyName]).join(" · ") || null;
   const contactRows = buildContactRows(record);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const handledFocusRequestRef = useRef(0);
 
   const [communicationThreads, setCommunicationThreads] = useState<CommunicationThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -3985,8 +4510,39 @@ function PersonDetail({
   const selectedThread =
     communicationThreads.find((thread) => thread.id === selectedThreadId) ?? null;
 
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditableTarget(event.target) || isTerminalTarget(event.target)) return;
+      if (event.target instanceof Element && event.target.closest(".sidebar")) return;
+
+      const currentIndex = PERSON_TABS.indexOf(tab);
+      if (currentIndex === -1) return;
+      const nextIndex =
+        event.key === "ArrowRight"
+          ? Math.min(PERSON_TABS.length - 1, currentIndex + 1)
+          : Math.max(0, currentIndex - 1);
+      const nextTab = PERSON_TABS[nextIndex];
+      if (nextTab === tab) return;
+
+      event.preventDefault();
+      onTabChange(nextTab);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onTabChange, tab]);
+
   return (
-    <div className="detail">
+    <div ref={detailRef} className="detail" tabIndex={-1}>
       <header className="detail__header">
         <h1 className="detail__title display">{record.label}</h1>
         {meta && <div className="detail__meta">{meta}</div>}

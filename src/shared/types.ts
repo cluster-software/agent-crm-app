@@ -105,6 +105,7 @@ export type RecordListOptions = {
   cursor?: string | null;
   valueAttributes?: string[];
   includeSecondaryLabels?: boolean;
+  searchQuery?: string | null;
 };
 
 export type RecordListResult = {
@@ -114,6 +115,7 @@ export type RecordListResult = {
   cursor: string | null;
   nextCursor: string | null;
   hasMore: boolean;
+  totalMatches?: number;
 };
 
 export type QueryResult = {

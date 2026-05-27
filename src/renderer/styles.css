@@ -254,6 +254,10 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
   text-align: left;
 }
 .nav-item:hover { background: var(--hover); color: var(--text); }
+.nav-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
 .nav-item[aria-current="true"] {
   background: var(--surface-2);
   border-color: var(--border);
@@ -341,7 +345,8 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
   background: var(--text-dim);
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--text-dim) 28%, transparent);
 }
-.sidebar-footer__status span:last-child {
+.sidebar-footer__workspace {
+  flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -1021,6 +1026,64 @@ body.resizing-terminal * { cursor: col-resize !important; }
   gap: 2px;
 }
 
+.table-filter {
+  width: min(280px, 34vw);
+  height: 25px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 280px;
+  padding: 0 5px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: var(--input-shadow);
+}
+.table-filter:focus-within {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.table-filter[data-active="true"] {
+  border-color: var(--accent-lo);
+}
+.table-filter .lucide {
+  flex: 0 0 auto;
+}
+.table-filter input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.table-filter input::placeholder {
+  color: var(--text-faint);
+}
+.table-filter__clear {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.table-filter__clear:hover {
+  border-color: var(--border);
+  background: var(--hover);
+  color: var(--text);
+}
+
 .table__inner {
   display: grid;
   grid-template-columns: var(--columns, 28px minmax(220px, max-content) minmax(140px, max-content) minmax(140px, max-content) minmax(140px, max-content));
@@ -1069,8 +1132,16 @@ body.resizing-terminal * { cursor: col-resize !important; }
   font-size: 12.5px;
   cursor: default;
   color: var(--text);
+  outline: none;
 }
 .table__row:hover { background: var(--hover); }
+.table__row[data-focused="true"] {
+  background: color-mix(in oklch, var(--accent) 10%, var(--bg));
+}
+.table__row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
 .table__row--skeleton {
   cursor: default;
   pointer-events: none;
@@ -1523,6 +1594,11 @@ body.resizing-terminal * { cursor: col-resize !important; }
   min-width: 12px;
 }
 
+.deals-toolbar .table-filter {
+  width: min(340px, 42vw);
+  flex-basis: 340px;
+}
+
 .deals-workspace__body {
   flex: 1;
   min-height: 0;
@@ -1544,6 +1620,9 @@ body.resizing-terminal * { cursor: col-resize !important; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
+}
+.deals-status-bar .lucide {
+  flex: 0 0 auto;
 }
 
 .deals-kanban {
@@ -1821,10 +1900,15 @@ body.resizing-terminal * { cursor: col-resize !important; }
   border-bottom: 1px solid var(--border-soft);
   color: var(--text);
   text-align: left;
+  outline: none;
 }
 
 .deals-table__row:hover {
   background: var(--hover);
+}
+
+.deals-table__row[data-focused="true"] {
+  background: color-mix(in oklch, var(--accent) 10%, var(--bg));
 }
 
 .deals-table__row:focus-visible {
@@ -1906,6 +1990,11 @@ body.resizing-terminal * { cursor: col-resize !important; }
 .kanban-skeleton--line { width: 88%; height: 11px; }
 
 @media (max-width: 860px) {
+  .table-filter {
+    width: min(220px, 46vw);
+    flex-basis: 220px;
+  }
+
   .deals-toolbar {
     min-height: 38px;
   }
@@ -2313,6 +2402,11 @@ body.resizing-terminal * { cursor: col-resize !important; }
   flex-direction: column;
   min-height: 0;
   overflow: auto;
+}
+.detail:focus { outline: none; }
+.detail:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 .detail__header {
   padding: 28px 28px 18px;
