@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.18.0-295b305...v0.18.1-295b305) (2026-05-27)
+
+
+### Bug Fixes
+
+* cache record previews in sqlite ([d6146b3](https://github.com/cluster-software/agent-crm-app/commit/d6146b3be815ad0f8242f915f4237dafc01a4529))
+* cache record previews in sqlite ([0e2f6ff](https://github.com/cluster-software/agent-crm-app/commit/0e2f6ff630e8af14ee18326e7ea67b132921bff1))
+* hide Gmail sync pill during local refresh ([28b3b20](https://github.com/cluster-software/agent-crm-app/commit/28b3b204b37231450a23653c47e5b704a1da6bc7))
+* hide Gmail sync pill during local refresh ([bd048b2](https://github.com/cluster-software/agent-crm-app/commit/bd048b2ca2db1bbf2a78877a93bbcc368a4e4408))
+
 ## [0.18.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.17.0-295b305...v0.18.0-295b305) (2026-05-27)
 
 
