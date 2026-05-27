@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.16.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.15.0-295b305...v0.16.0-295b305) (2026-05-27)
+
+
+### Features
+
+* add record filtering and keyboard navigation ([202e349](https://github.com/cluster-software/agent-crm-app/commit/202e3492b4169d8f49204f39dc805df6a7047e32))
+* add record filtering and keyboard navigation ([1570e4b](https://github.com/cluster-software/agent-crm-app/commit/1570e4bb86f758a824158973da36bd6452cfaee3))
+* redesign welcome page ([9b9e39a](https://github.com/cluster-software/agent-crm-app/commit/9b9e39a8ccfd51475980aa9cd8e6a244d7a31f14))
+* redesign welcome page ([130ef50](https://github.com/cluster-software/agent-crm-app/commit/130ef5085ca6e78d27bba89f27732a55882cfcf4))
+
 ## [0.15.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.10-295b305...v0.15.0-295b305) (2026-05-27)
 
 
