@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.10-295b305...v0.15.0-295b305) (2026-05-27)
+
+
+### Features
+
+* add deals kanban pipeline view ([6656ae5](https://github.com/cluster-software/agent-crm-app/commit/6656ae577ca65da66db9282dc5eb0e5ab1fe04e3))
+* add deals kanban pipeline view ([67d6a4d](https://github.com/cluster-software/agent-crm-app/commit/67d6a4d12061e28cb173aab1e31625e3d34f3b94))
+
+
+### Bug Fixes
+
+* remove expanded deals preview fixture ([1411a86](https://github.com/cluster-software/agent-crm-app/commit/1411a86e0356f236e2fa02d3a3194e0326f9347a))
+* remove expanded deals preview fixture ([6f7ba6c](https://github.com/cluster-software/agent-crm-app/commit/6f7ba6cac18cfe91fec3f7afdff784e0f6f28a55))
+
 ## [0.14.10-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.9-295b305...v0.14.10-295b305) (2026-05-27)
 
 
