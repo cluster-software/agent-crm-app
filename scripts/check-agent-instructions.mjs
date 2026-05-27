@@ -41,6 +41,12 @@ if (!instructions.block.includes("## Agent CRM Workspace")) {
   fail("AGENT_WORKSPACE_INSTRUCTIONS.block must include the Agent CRM workspace heading.");
 }
 
+for (const snippet of ["--backfill-days", "--exclude-newsletters"]) {
+  if (!instructions.block.includes(snippet)) {
+    fail(`AGENT_WORKSPACE_INSTRUCTIONS.block must include Gmail guidance for ${snippet}.`);
+  }
+}
+
 const mainSource = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
 const forbiddenMainSourceSnippets = [
   "const agentWorkspaceGuideNames",
