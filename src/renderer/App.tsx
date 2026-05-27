@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Columns3,
   Database,
   FileText,
   FilePlus2,
@@ -16,6 +17,7 @@ import {
   Newspaper,
   Phone,
   Settings,
+  Table2,
   Terminal,
   Users,
   X,
@@ -62,6 +64,7 @@ import {
   GitHubIcon,
   LinkedInIcon,
   MonoLabel,
+  SegmentedControl,
   XIcon
 } from "./primitives";
 import agentCrmLogo from "./assets/agent-crm-bg.png";
@@ -85,6 +88,10 @@ type PersonTab = "overview" | "messages" | "transcripts" | "posts";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
+type DealsViewMode = "table" | "kanban";
+
+const RECORD_TABLE_PAGE_SIZE = 100;
+const DEAL_RECORD_PAGE_SIZE = 250;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -1044,7 +1051,11 @@ function RecordsView({
   onRowClick?: (record: RecordPreview) => void;
   setError: (error: string | null) => void;
 }) {
-  const pageSize = 100;
+  const [dealsViewMode, setDealsViewMode] = useState<DealsViewMode>("kanban");
+  const viewMode = object.object_slug === "deals" ? dealsViewMode : "table";
+  const isDealsView = object.object_slug === "deals";
+  const loadAllRecords = isDealsView;
+  const pageSize = loadAllRecords ? DEAL_RECORD_PAGE_SIZE : RECORD_TABLE_PAGE_SIZE;
   const [records, setRecords] = useState<RecordPreview[]>([]);
   const [signals, setSignals] = useState<SignalDefinitionSummary[]>([]);
   const [signalFailures, setSignalFailures] = useState<SignalRunFailureSummary[]>([]);
@@ -1081,14 +1092,43 @@ function RecordsView({
         api.listSignalFailures(),
         api.listSignalRuns()
       ]);
-      const requestedColumns = pickValueColumns(object, [], nextSignals);
-      const requestedAttributes = requestedColumns.map((column) => column.slug);
-      if (object.object_slug === "people") requestedAttributes.push("job_title");
+      const requestedAttributes = requestedRecordAttributes(object, nextSignals);
+      const includeSecondaryLabels =
+        object.object_slug === "deals" ? true : !COLUMNS_BY_OBJECT[object.object_slug];
+      if (loadAllRecords) {
+        const allRecords: RecordPreview[] = [];
+        let cursor: string | null = null;
+        let more = false;
+        let next: string | null = null;
+
+        do {
+          const result = await api.listRecords(object.object_slug, {
+            limit: DEAL_RECORD_PAGE_SIZE,
+            cursor,
+            valueAttributes: requestedAttributes,
+            includeSecondaryLabels
+          });
+          if (requestId !== requestIdRef.current) return;
+          if (result.objectSlug !== object.object_slug) return;
+          allRecords.push(...result.records);
+          more = result.hasMore;
+          next = result.nextCursor;
+          cursor = result.nextCursor;
+        } while (more && cursor);
+
+        setRecords(allRecords);
+        setSignals(nextSignals);
+        setSignalFailures(nextSignalFailures);
+        setSignalRuns(nextSignalRuns);
+        setHasMore(more);
+        setNextCursor(next);
+        return;
+      }
       const result = await api.listRecords(object.object_slug, {
         limit: pageSize,
         cursor: pageCursors[pageIndex] ?? null,
         valueAttributes: requestedAttributes,
-        includeSecondaryLabels: !COLUMNS_BY_OBJECT[object.object_slug]
+        includeSecondaryLabels
       });
       if (requestId !== requestIdRef.current) return;
       if (result.objectSlug !== object.object_slug) return;
@@ -1106,7 +1146,7 @@ function RecordsView({
         setLoadingRecords(false);
       }
     }
-  }, [object, pageCursors, pageIndex, setError]);
+  }, [loadAllRecords, object, pageCursors, pageIndex, pageSize, setError]);
 
   useEffect(() => {
     void loadRecords();
@@ -1192,6 +1232,22 @@ function RecordsView({
   const pageStart = records.length === 0 ? 0 : pageIndex * pageSize + 1;
   const pageEnd = pageIndex * pageSize + records.length;
   const showLoadingMeta = loadingRecords && records.length === 0;
+
+  if (isDealsView) {
+    return (
+      <DealsPipelineView
+        object={object}
+        records={records}
+        totalRecords={totalRecords}
+        loading={loadingRecords}
+        viewMode={viewMode}
+        onViewModeChange={setDealsViewMode}
+        onRecordClick={onRowClick}
+        onRecordsChanged={() => loadRecords({ quiet: true })}
+        setError={setError}
+      />
+    );
+  }
 
   return (
     <div className="table">
@@ -1413,6 +1469,11 @@ const COLUMNS_BY_OBJECT: Record<string, Array<[string, string]>> = {
     ["linkedin_url", "LinkedIn"],
     ["twitter_url", "X"],
     ["email_addresses", "Email"]
+  ],
+  deals: [
+    ["stage", "Stage"],
+    ["value", "Value"],
+    ["close_date", "Close date"]
   ]
 };
 
@@ -1486,6 +1547,57 @@ function pickValueColumns(
           )?.slug
         : undefined
     }));
+}
+
+function requestedRecordAttributes(
+  object: SchemaObject,
+  signals: SignalDefinitionSummary[],
+) {
+  const attrs = new Set(pickValueColumns(object, [], signals).map((column) => column.slug));
+  if (object.object_slug === "people") attrs.add("job_title");
+  if (object.object_slug === "deals") {
+    for (const attr of [
+      "stage",
+      "value",
+      "close_date",
+      "next_step",
+      "company",
+      "account",
+      "owner",
+      "assignee",
+      "source",
+      "tags",
+      "domain",
+      "domains",
+      "website",
+      "last_touch",
+      "last_message_at",
+      "updated_at"
+    ]) {
+      attrs.add(attr);
+    }
+  }
+  return [...attrs];
+}
+
+function DealsViewToggle({
+  value,
+  onChange
+}: {
+  value: DealsViewMode;
+  onChange: (mode: DealsViewMode) => void;
+}) {
+  return (
+    <SegmentedControl
+      label="Deals view"
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: "kanban", label: "Kanban", icon: <Columns3 size={12} className="lucide" /> },
+        { value: "table", label: "Table", icon: <Table2 size={12} className="lucide" /> }
+      ]}
+    />
+  );
 }
 
 function signalFailureMap(
@@ -1801,6 +1913,725 @@ function RecordsTable({
   );
 }
 
+type DealStageColumn = {
+  key: string;
+  title: string;
+  records: DealRecord[];
+  valueTotal: number | null;
+};
+
+type DealRecord = {
+  record: RecordPreview;
+  id: string;
+  title: string;
+  company: string;
+  domain: string;
+  stage: string;
+  stageKey: string;
+  stageKind: "success" | "warning" | "danger" | "accent" | "neutral";
+  value: RecordValue | undefined;
+  valueAmount: number | null;
+  valueLabel: string;
+  closeDate: string;
+  nextStep: string;
+  owner: string;
+  source: string;
+  tags: string[];
+  lastTouch: string;
+};
+
+function DealsPipelineView({
+  object,
+  records,
+  totalRecords,
+  loading,
+  viewMode,
+  onViewModeChange,
+  onRecordClick,
+  onRecordsChanged,
+  setError
+}: {
+  object: SchemaObject;
+  records: RecordPreview[];
+  totalRecords: number;
+  loading: boolean;
+  viewMode: DealsViewMode;
+  onViewModeChange: (mode: DealsViewMode) => void;
+  onRecordClick?: (record: RecordPreview) => void;
+  onRecordsChanged?: () => Promise<void> | void;
+  setError: (error: string | null) => void;
+}) {
+  const [stageOverrides, setStageOverrides] = useState<Record<string, string>>({});
+  const [movingDealIds, setMovingDealIds] = useState<Set<string>>(() => new Set());
+  const deals = useMemo(
+    () => records.map((record) => toDealRecord(record, stageOverrides[dealRecordId(record)])),
+    [records, stageOverrides],
+  );
+  const columns = useMemo(() => buildDealStageColumns(object, deals), [object, deals]);
+  const visibleCount = deals.length;
+
+  useEffect(() => {
+    setStageOverrides((current) => {
+      let changed = false;
+      const next = { ...current };
+      const recordsById = new Map(records.map((record) => [dealRecordId(record), record]));
+      for (const [id, stage] of Object.entries(current)) {
+        const record = recordsById.get(id);
+        if (!record) {
+          delete next[id];
+          changed = true;
+          continue;
+        }
+        const currentStage = recordValue(record, "stage")?.display.trim() || "Unstaged";
+        if (stageKey(currentStage) === stageKey(stage)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [records]);
+
+  const updateDealStage = useCallback(
+    async (deal: DealRecord, targetStage: string) => {
+      const nextStage = targetStage.trim();
+      if (!nextStage || stageKey(nextStage) === "unstaged" || deal.stageKey === stageKey(nextStage)) {
+        return;
+      }
+      setError(null);
+      setStageOverrides((current) => ({ ...current, [deal.id]: nextStage }));
+      setMovingDealIds((current) => {
+        const next = new Set(current);
+        next.add(deal.id);
+        return next;
+      });
+      try {
+        await api.updateRecord({
+          object_slug: deal.record.object_slug,
+          record_id: deal.record.record_id,
+          fields: [`stage=${stageUpdateValue(object, nextStage)}`],
+          source: "app:deals-kanban"
+        });
+        await onRecordsChanged?.();
+      } catch (error) {
+        setStageOverrides((current) => {
+          const next = { ...current };
+          delete next[deal.id];
+          return next;
+        });
+        setError(statusFromError(error));
+      } finally {
+        setMovingDealIds((current) => {
+          const next = new Set(current);
+          next.delete(deal.id);
+          return next;
+        });
+      }
+    },
+    [object, onRecordsChanged, setError],
+  );
+
+  if (records.length === 0 && !loading) {
+    return (
+      <div className="deals-workspace">
+        <div className="empty-inline">
+          <span>no deals yet - run an import or create one</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="deals-workspace" aria-busy={loading}>
+      <div className="deals-toolbar">
+        <div className="deals-toolbar__spacer" />
+        <DealsViewToggle value={viewMode} onChange={onViewModeChange} />
+      </div>
+
+      <div className="deals-workspace__body">
+        {loading && records.length === 0 ? (
+          <DealsKanbanSkeleton />
+        ) : viewMode === "kanban" ? (
+          <DealsKanbanView
+            columns={columns}
+            movingDealIds={movingDealIds}
+            onCardClick={(deal) => onRecordClick?.(deal.record)}
+            onStageChange={updateDealStage}
+          />
+        ) : (
+          <DealsTableView
+            deals={deals}
+            onRowClick={(deal) => onRecordClick?.(deal.record)}
+          />
+        )}
+      </div>
+
+      <div className="deals-status-bar">
+        <span>
+          {formatNumber(visibleCount)} of {formatNumber(totalRecords)} deals
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DealsKanbanView({
+  columns,
+  movingDealIds,
+  onCardClick,
+  onStageChange
+}: {
+  columns: DealStageColumn[];
+  movingDealIds: Set<string>;
+  onCardClick?: (deal: DealRecord) => void;
+  onStageChange?: (deal: DealRecord, stage: string) => void;
+}) {
+  const [draggingDealId, setDraggingDealId] = useState<string | null>(null);
+  const [dropTargetStageKey, setDropTargetStageKey] = useState<string | null>(null);
+  const dealsById = useMemo(() => {
+    const next = new Map<string, DealRecord>();
+    for (const column of columns) {
+      for (const deal of column.records) next.set(deal.id, deal);
+    }
+    return next;
+  }, [columns]);
+
+  function handleDragStart(event: ReactDragEvent<HTMLButtonElement>, deal: DealRecord) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-agent-crm-deal", deal.id);
+    event.dataTransfer.setData("text/plain", deal.id);
+    setDraggingDealId(deal.id);
+  }
+
+  function handleDragEnd() {
+    setDraggingDealId(null);
+    setDropTargetStageKey(null);
+  }
+
+  function draggedDeal(event: ReactDragEvent<HTMLElement>): DealRecord | undefined {
+    const id =
+      event.dataTransfer.getData("application/x-agent-crm-deal") ||
+      event.dataTransfer.getData("text/plain") ||
+      draggingDealId;
+    return id ? dealsById.get(id) : undefined;
+  }
+
+  function handleDragOver(event: ReactDragEvent<HTMLElement>, column: DealStageColumn) {
+    if (!draggingDealId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetStageKey(column.key);
+  }
+
+  function handleDragLeave(event: ReactDragEvent<HTMLElement>, column: DealStageColumn) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setDropTargetStageKey((current) => (current === column.key ? null : current));
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLElement>, column: DealStageColumn) {
+    event.preventDefault();
+    const deal = draggedDeal(event);
+    setDraggingDealId(null);
+    setDropTargetStageKey(null);
+    if (!deal || movingDealIds.has(deal.id) || deal.stageKey === column.key) return;
+    onStageChange?.(deal, column.title);
+  }
+
+  return (
+    <div
+      className="deals-kanban"
+      aria-label="Deals by stage"
+      style={{
+        gridTemplateColumns: `repeat(${Math.max(columns.length, 1)}, ${
+          columns.length <= 4 ? "minmax(210px, 1fr)" : "minmax(248px, 1fr)"
+        })`
+      }}
+    >
+      {columns.map((column) => (
+        <section
+          className="deal-stage-column"
+          key={column.key}
+          data-drop-target={dropTargetStageKey === column.key ? "true" : undefined}
+          style={{ ["--stage-tone" as string]: stageToneColor(column.title) }}
+          onDragEnter={(event) => handleDragOver(event, column)}
+          onDragOver={(event) => handleDragOver(event, column)}
+          onDragLeave={(event) => handleDragLeave(event, column)}
+          onDrop={(event) => handleDrop(event, column)}
+        >
+          <header className="deal-stage-column__header">
+            <span className="deal-stage-column__dot" />
+            <span className="deal-stage-column__name">{column.title}</span>
+            <span className="deal-stage-column__count">{formatNumber(column.records.length)}</span>
+            <span className="deal-stage-column__value">
+              {column.valueTotal === null ? "--" : formatCompactCurrency(column.valueTotal)}
+            </span>
+          </header>
+          <div className="deal-stage-column__body">
+            {column.records.map((deal) => (
+              <DealCard
+                key={deal.id}
+                deal={deal}
+                dragging={draggingDealId === deal.id}
+                moving={movingDealIds.has(deal.id)}
+                onClick={() => onCardClick?.(deal)}
+                onDragStart={(event) => handleDragStart(event, deal)}
+                onDragEnd={handleDragEnd}
+              />
+            ))}
+            {column.records.length === 0 && (
+              <div className="deal-stage-column__drop">
+                {dropTargetStageKey === column.key ? "release to move" : "no deals"}
+              </div>
+            )}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function DealCard({
+  deal,
+  dragging = false,
+  moving = false,
+  onClick,
+  onDragStart,
+  onDragEnd
+}: {
+  deal: DealRecord;
+  dragging?: boolean;
+  moving?: boolean;
+  onClick?: () => void;
+  onDragStart?: (event: ReactDragEvent<HTMLButtonElement>) => void;
+  onDragEnd?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="deal-card"
+      draggable={!moving}
+      data-dragging={dragging ? "true" : undefined}
+      data-moving={moving ? "true" : undefined}
+      aria-busy={moving || undefined}
+      onClick={onClick}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+    >
+      <span className="deal-card__head">
+        <CompanyMark name={deal.company} size={18} />
+        <span className="deal-card__company">{deal.company}</span>
+        {deal.domain && <span className="deal-card__domain">{deal.domain}</span>}
+      </span>
+      <span className="deal-card__title display">{deal.title}</span>
+      {deal.tags.length > 0 && (
+        <span className="deal-card__tags">
+          {deal.tags.slice(0, 3).map((tag) => (
+            <Badge key={tag} kind={dealTagKind(tag)}>
+              {tag}
+            </Badge>
+          ))}
+        </span>
+      )}
+      <span className="deal-card__foot">
+        <span className="deal-card__value">{deal.valueLabel}</span>
+        <span className="deal-card__foot-spacer" />
+        {deal.owner && <Avatar name={deal.owner} size={16} />}
+        {deal.lastTouch && <span className="deal-card__last">{deal.lastTouch}</span>}
+      </span>
+      {(deal.nextStep || deal.closeDate || deal.source) && (
+        <span className="deal-card__subline">
+          {deal.nextStep || deal.source || deal.closeDate}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function DealsTableView({
+  deals,
+  onRowClick
+}: {
+  deals: DealRecord[];
+  onRowClick?: (deal: DealRecord) => void;
+}) {
+  return (
+    <div className="deals-table" style={{ ["--deals-table-columns" as string]: DEALS_TABLE_COLUMNS }}>
+      <div className="deals-table__head">
+        <span />
+        <span>Deal</span>
+        <span>Stage</span>
+        <span className="deals-table__right">Value</span>
+        <span>Company</span>
+        <span>Close date</span>
+        <span>Next step</span>
+      </div>
+      <div className="deals-table__body">
+        {deals.map((deal) => (
+          <button
+            key={deal.id}
+            type="button"
+            className="deals-table__row"
+            onClick={() => onRowClick?.(deal)}
+          >
+            <span className="cell-check" />
+            <span className="deals-table__deal">
+              <CompanyMark name={deal.company} size={22} />
+              <span>
+                <span>{deal.title}</span>
+                <span>{[deal.domain, deal.source].filter(Boolean).join(" · ") || deal.company}</span>
+              </span>
+            </span>
+            <span>
+              <Badge kind={deal.stageKind} dot>{deal.stage}</Badge>
+            </span>
+            <span className="deals-table__value">{deal.valueLabel}</span>
+            <span className="deals-table__muted">{deal.company}</span>
+            <span className="deals-table__muted">{deal.closeDate || "--"}</span>
+            <span className="deals-table__muted">{deal.nextStep || "--"}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const DEALS_TABLE_COLUMNS = "28px minmax(260px, 2fr) minmax(116px, .8fr) minmax(92px, .6fr) minmax(140px, 1fr) minmax(112px, .75fr) minmax(180px, 1.2fr)";
+
+function DealsKanbanSkeleton() {
+  return (
+    <div className="deals-kanban deals-kanban--skeleton">
+      {Array.from({ length: 4 }).map((_, columnIndex) => (
+        <section className="deal-stage-column deal-stage-column--skeleton" key={columnIndex}>
+          <header className="deal-stage-column__header">
+            <span className="kanban-skeleton kanban-skeleton--dot" />
+            <span className="kanban-skeleton kanban-skeleton--badge" />
+            <span className="kanban-skeleton kanban-skeleton--count" />
+          </header>
+          <div className="deal-stage-column__body">
+            {Array.from({ length: 3 }).map((__, cardIndex) => (
+              <span className="deal-card deal-card--skeleton" key={cardIndex}>
+                <span className="kanban-skeleton kanban-skeleton--title" />
+                <span className="kanban-skeleton kanban-skeleton--meta" />
+                <span className="kanban-skeleton kanban-skeleton--line" />
+              </span>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function toDealRecord(record: RecordPreview, stageOverride?: string): DealRecord {
+  const stage = (stageOverride ?? recordValue(record, "stage")?.display.trim()) || "Unstaged";
+  const companyValue = recordValue(record, "company", "account");
+  const domainValue = recordValue(record, "domain", "domains", "website");
+  const value = recordValue(record, "value", "amount", "deal_value");
+  const owner = recordValue(record, "owner", "assignee")?.display.trim() ?? "";
+  const closeDate = formatDealDate(recordValue(record, "close_date", "expected_close_date")) ?? "";
+  const lastTouch =
+    formatDealDate(recordValue(record, "last_touch", "last_message_at", "updated_at")) ??
+    "";
+  const source = recordValue(record, "source")?.display.trim() ?? "";
+  const tags = dealTags(recordValue(record, "tags", "tag"));
+  const valueAmount = numericDealValue(value);
+  const company = companyValue?.display.trim() || dealCompanyFromSubtitle(record, stage, value, valueAmount);
+
+  return {
+    record,
+    id: `${record.object_slug}:${record.record_id}`,
+    title: record.label,
+    company,
+    domain: domainValue?.display.trim() ?? "",
+    stage,
+    stageKey: stageKey(stage),
+    stageKind: stageKind(stage),
+    value,
+    valueAmount,
+    valueLabel: formatDealValue(value) ?? "--",
+    closeDate,
+    nextStep: recordValue(record, "next_step", "next_steps")?.display.trim() ?? "",
+    owner,
+    source,
+    tags,
+    lastTouch
+  };
+}
+
+function dealRecordId(record: RecordPreview): string {
+  return `${record.object_slug}:${record.record_id}`;
+}
+
+function stageUpdateValue(object: SchemaObject, stage: string): string {
+  const stageAttribute = object.attributes.find((attribute) => attribute.attribute_slug === "stage");
+  const option = stageOptionsFromConfig(stageAttribute?.config).find(
+    (candidate) => stageKey(candidate.title) === stageKey(stage) || stageKey(candidate.id) === stageKey(stage),
+  );
+  return option?.id || stage;
+}
+
+function stageOptionsFromConfig(config: unknown): Array<{ id: string; title: string }> {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return [];
+  const object = config as Record<string, unknown>;
+  const candidates = [object.options, object.statuses, object.choices, object.values];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    return candidate.flatMap((option) => {
+      if (typeof option === "string") return [{ id: option, title: option }];
+      if (!option || typeof option !== "object" || Array.isArray(option)) return [];
+      const item = option as Record<string, unknown>;
+      const id = item.id ?? item.value ?? item.name ?? item.label ?? item.title;
+      const title = item.title ?? item.label ?? item.name ?? item.value ?? item.id;
+      if (typeof id !== "string" || typeof title !== "string") return [];
+      return [{ id, title }];
+    });
+  }
+  return [];
+}
+
+function dealCompanyFromSubtitle(
+  record: RecordPreview,
+  stage: string,
+  value: RecordValue | undefined,
+  valueAmount: number | null
+): string {
+  const ignored = new Set(
+    [
+      stage,
+      value?.display,
+      valueAmount === null ? null : String(valueAmount),
+      valueAmount === null ? null : formatDealValue(value),
+    ]
+      .filter((item): item is string => Boolean(item))
+      .map(stageKey),
+  );
+  const company = record.subtitle
+    .split("·")
+    .map((part) => part.trim())
+    .find((part) => {
+      if (!part || ignored.has(stageKey(part))) return false;
+      return !/^\$?\d[\d,]*(?:\.\d+)?[kKmM]?$/.test(part);
+    });
+  return company || "Unknown account";
+}
+
+function buildDealStageColumns(object: SchemaObject, deals: DealRecord[]): DealStageColumn[] {
+  const configuredStages = stageOptionLabels(object);
+  const optionOrder = new Map(configuredStages.map((stage, index) => [stageKey(stage), index]));
+  const byStage = new Map<string, DealStageColumn>();
+
+  function ensureColumn(title: string): DealStageColumn {
+    const key = stageKey(title);
+    const existing = byStage.get(key);
+    if (existing) return existing;
+    const column = {
+      key,
+      title: title.trim() || "Unstaged",
+      records: [],
+      valueTotal: null
+    };
+    byStage.set(key, column);
+    return column;
+  }
+
+  for (const stage of configuredStages) {
+    ensureColumn(stage);
+  }
+
+  for (const deal of deals) {
+    ensureColumn(deal.stage).records.push(deal);
+  }
+
+  const columns = [...byStage.values()].map((column) => ({
+    ...column,
+    valueTotal: sumDealValues(column.records)
+  }));
+
+  return columns.sort((left, right) => compareDealStages(left.title, right.title, optionOrder));
+}
+
+function compareDealStages(
+  left: string,
+  right: string,
+  optionOrder: Map<string, number>
+): number {
+  const leftOption = optionOrder.get(stageKey(left));
+  const rightOption = optionOrder.get(stageKey(right));
+  if (leftOption !== undefined && rightOption !== undefined) return leftOption - rightOption;
+  if (leftOption !== undefined) return -1;
+  if (rightOption !== undefined) return 1;
+
+  const leftRank = stageRank(left);
+  const rightRank = stageRank(right);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  return left.localeCompare(right);
+}
+
+function stageOptionLabels(object: SchemaObject): string[] {
+  const stageAttribute = object.attributes.find((attribute) => attribute.attribute_slug === "stage");
+  return optionLabelsFromConfig(stageAttribute?.config);
+}
+
+function optionLabelsFromConfig(config: unknown): string[] {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return [];
+  const object = config as Record<string, unknown>;
+  const candidates = [object.options, object.statuses, object.choices, object.values];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    return uniqueNonEmpty(candidate.map(optionLabel).filter((label): label is string => Boolean(label)));
+  }
+  return [];
+}
+
+function optionLabel(option: unknown): string | null {
+  if (typeof option === "string") return option;
+  if (!option || typeof option !== "object" || Array.isArray(option)) return null;
+  const object = option as Record<string, unknown>;
+  const value = object.title ?? object.label ?? object.name ?? object.value ?? object.id;
+  return typeof value === "string" ? value : null;
+}
+
+function stageKey(stage: string) {
+  return stage.trim().toLowerCase().replace(/\s+/g, " ") || "unstaged";
+}
+
+function stageRank(stage: string): number {
+  const value = stageKey(stage);
+  const order = [
+    ["new", "lead", "prospect"],
+    ["discovery"],
+    ["qualified"],
+    ["eval", "evaluation", "in progress"],
+    ["trial", "pilot", "poc"],
+    ["proposal"],
+    ["negotiation", "procurement"],
+    ["contract", "legal"],
+    ["won", "closed won", "gone", "live", "active"],
+    ["lost", "closed lost", "churn"]
+  ];
+  if (value === "unstaged") return order.length + 1;
+  const found = order.findIndex((group) => group.some((hint) => value.includes(hint)));
+  return found === -1 ? order.length : found;
+}
+
+function recordValue(record: RecordPreview, ...attributeSlugs: string[]): RecordValue | undefined {
+  for (const attributeSlug of attributeSlugs) {
+    const value = record.values.find(
+      (candidate) => candidate.attribute_slug === attributeSlug && candidate.display,
+    );
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function sumDealValues(deals: DealRecord[]): number | null {
+  let total = 0;
+  let hasValue = false;
+  for (const deal of deals) {
+    if (deal.valueAmount === null) continue;
+    total += deal.valueAmount;
+    hasValue = true;
+  }
+  return hasValue ? total : null;
+}
+
+function numericDealValue(value?: RecordValue): number | null {
+  if (!value) return null;
+  const candidates = rawNumberCandidates(value.raw);
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
+    if (typeof candidate !== "string") continue;
+    const parsed = Number.parseFloat(candidate.replace(/[$,\s]/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function rawNumberCandidates(raw: unknown): unknown[] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [raw];
+  const object = raw as Record<string, unknown>;
+  return [object.amount, object.value, object.currency_value, object.total, object.number];
+}
+
+function formatDealValue(value?: RecordValue): string | null {
+  if (!value?.display) return null;
+  const amount = numericDealValue(value);
+  if (amount === null) return value.display;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: dealCurrency(value) ?? "USD",
+    maximumFractionDigits: 0
+  }).format(amount);
+}
+
+function dealCurrency(value: RecordValue): string | null {
+  if (!value.raw || typeof value.raw !== "object" || Array.isArray(value.raw)) return null;
+  const raw = value.raw as Record<string, unknown>;
+  const currency = raw.currency ?? raw.currency_code ?? raw.currencyCode;
+  return typeof currency === "string" && /^[A-Z]{3}$/.test(currency) ? currency : null;
+}
+
+function formatDealDate(value?: RecordValue): string | null {
+  if (!value?.display) return null;
+  const raw = typeof value.raw === "object" && value.raw !== null && !Array.isArray(value.raw)
+    ? (value.raw as Record<string, unknown>).date ??
+      (value.raw as Record<string, unknown>).timestamp ??
+      (value.raw as Record<string, unknown>).value
+    : value.raw;
+  const candidate = typeof raw === "string" ? raw : value.display;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return formatDateOnly(candidate);
+  const parsed = Date.parse(candidate);
+  return Number.isNaN(parsed) ? value.display : formatDateDisplay(new Date(parsed).toISOString());
+}
+
+function formatCompactCurrency(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(abs % 1_000_000 === 0 ? 0 : 2).replace(/\.?0+$/, "")}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(abs % 1_000 === 0 ? 0 : 1).replace(/\.?0+$/, "")}k`;
+  return `$${formatNumber(value)}`;
+}
+
+function formatDateOnly(value: string): string {
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return value;
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function dealTags(value?: RecordValue): string[] {
+  if (!value) return [];
+  return uniqueNonEmpty(
+    value.values
+      .flatMap((item) => {
+        if (Array.isArray(item)) return item.map(displayUnknown);
+        if (typeof item === "object" && item !== null) {
+          return [displayUnknown(item)];
+        }
+        return [displayUnknown(item)];
+      })
+      .flatMap((item) => item.split(","))
+  );
+}
+
+function dealTagKind(tag: string): "success" | "warning" | "danger" | "accent" | "neutral" {
+  const value = tag.toLowerCase();
+  if (["champion", "design partner", "yc", "expansion"].some((hint) => value.includes(hint))) return "accent";
+  if (["churn", "lost", "dark"].some((hint) => value.includes(hint))) return "danger";
+  return "neutral";
+}
+
+function stageToneColor(stage: string): string {
+  const kind = stageKind(stage);
+  if (kind === "success") return "var(--success)";
+  if (kind === "warning") return "var(--warning)";
+  if (kind === "danger") return "var(--danger)";
+  if (kind === "accent") return "var(--accent)";
+  return "var(--text-dim)";
+}
+
 function cellText(columnId: string, raw: unknown, record: RecordPreview): string {
   if (columnId === "identity") return record.label;
   if (raw && typeof raw === "object" && "display" in raw) {
@@ -2103,8 +2934,9 @@ function looksLikeStage(value: RecordValue) {
 
 function stageKind(display: string): "success" | "warning" | "danger" | "accent" | "neutral" {
   const v = display.toLowerCase();
-  if (["live", "expansion", "won", "active"].some((s) => v.includes(s))) return "success";
-  if (["eval", "queued", "in progress", "trial"].some((s) => v.includes(s))) return "warning";
+  if (["live", "expansion", "won", "gone", "active"].some((s) => v.includes(s))) return "success";
+  if (["in progress"].some((s) => v.includes(s))) return "accent";
+  if (["lead", "prospect", "discovery", "qualified", "eval", "queued", "trial", "pilot"].some((s) => v.includes(s))) return "warning";
   if (["churn", "lost", "error"].some((s) => v.includes(s))) return "danger";
   return "neutral";
 }
