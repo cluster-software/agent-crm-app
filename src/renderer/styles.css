@@ -1094,6 +1094,34 @@ body.resizing-terminal * { cursor: col-resize !important; }
   font-variant-numeric: tabular-nums;
 }
 
+.table-toolbar__sync {
+  max-width: min(260px, 30vw);
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.table-toolbar__sync svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+.table-toolbar__sync span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .table-toolbar__pager {
   display: flex;
   align-items: center;

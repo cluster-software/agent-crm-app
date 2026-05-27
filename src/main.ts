@@ -11,12 +11,14 @@ import type { IPty } from "node-pty";
 import * as nodePty from "node-pty";
 import type {
   CloudIntegrationsStatus,
+  GmailSyncProgress,
   CloudSyncStatus,
   CloudSyncProvider,
   CreateRecordPayload,
   ImportCsvPayload,
   IntegrationAccountSummary,
   IntegrationProviderStatus,
+  IntegrationSyncStatus,
   QueryResult,
   RecordListOptions,
   RecordListResult,
@@ -51,12 +53,21 @@ let cloudSyncGeneration = 0;
 let cloudSyncShowInEmptyState = false;
 const CLOUD_SYNC_IDLE_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_ACTIVE_INTERVAL_MS = 5_000;
+const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
+const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
+const gmailPartialImportsByWorkspace = new Map<string, GmailPartialImportState>();
 
 type CommunicationImportStats = {
   people_created: number;
   communication_threads_created: number;
   communication_messages_created: number;
+};
+
+type GmailPartialImportState = {
+  importedWrittenThreads: number;
+  importedWrittenMessages: number;
+  lastImportAtMs: number;
 };
 
 type CloudSyncRunContext = {
@@ -640,6 +651,7 @@ function stopCloudSync() {
   }
   cloudSyncWorkspace = null;
   cloudSyncShowInEmptyState = false;
+  gmailPartialImportsByWorkspace.clear();
   setCloudSyncStatus({ state: "idle" });
 }
 
@@ -709,6 +721,30 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
             state?: string;
             errorMessage?: string;
             error_message?: string;
+            peopleSeen?: number;
+            people_seen?: number;
+            communicationThreadsSeen?: number;
+            communication_threads_seen?: number;
+            communicationMessagesSeen?: number;
+            communication_messages_seen?: number;
+            backfillStatus?: string;
+            backfill_status?: string;
+            listedThreads?: number;
+            listed_threads?: number;
+            fetchedThreads?: number;
+            fetched_threads?: number;
+            filteredThreads?: number;
+            filtered_threads?: number;
+            writtenThreads?: number;
+            written_threads?: number;
+            writtenMessages?: number;
+            written_messages?: number;
+            pageCount?: number;
+            page_count?: number;
+            resultSizeEstimate?: number;
+            result_size_estimate?: number;
+            resumeAfter?: string;
+            resume_after?: string;
           };
         };
         linkedin?: {
@@ -727,7 +763,8 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
 
     const gmailStatus = status.integrations.gmail;
     const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
-    const gmailSyncState = gmailStatus?.sync?.state;
+    const gmailSync = normalizeIntegrationSync(gmailStatus?.sync).sync;
+    const gmailSyncState = gmailSync?.state;
     const gmailSyncActive = gmailSyncState === "pending" || gmailSyncState === "running";
     const gmailSyncFailed = gmailSyncState === "failed";
     const gmailImportable = gmailStatus?.connected === true && gmailSyncState === "succeeded";
@@ -743,18 +780,38 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
     }
 
     if (gmailSyncActive) {
-      scheduleCloudSyncForRun(run, CLOUD_SYNC_ACTIVE_INTERVAL_MS);
-      return setCloudSyncStatusForRun(run, {
+      const progress = gmailSyncProgress(gmailSync);
+      const syncingStatus: CloudSyncStatus = {
         state: "syncing",
         providers: ["gmail"],
-        showInEmptyState: cloudSyncShowInEmptyState
-      });
+        showInEmptyState: cloudSyncShowInEmptyState,
+        ...(progress ? { progress } : {})
+      };
+      setCloudSyncStatusForRun(run, syncingStatus);
+
+      if (gmailSyncState === "running" && shouldImportPartialGmail(summary.cloudWorkspaceId, gmailSync)) {
+        try {
+          const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "gmail", {
+            expectedWorkspacePath: summary.path,
+            partial: true
+          });
+          markPartialGmailImported(summary.cloudWorkspaceId, gmailSync);
+          if (isCurrentCloudSyncRun(run) && stats) {
+            sendToMainWindow("workspace:changed");
+          }
+        } catch (error) {
+          console.warn(`[cloud-sync] partial Gmail import failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      scheduleCloudSyncForRun(run, CLOUD_SYNC_ACTIVE_INTERVAL_MS);
+      return cloudSyncStatus;
     }
     if (gmailSyncFailed) {
       clearEmptyStateSyncForRun(run);
       return setCloudSyncStatusForRun(run, {
         state: "error",
-        message: gmailStatus?.sync?.errorMessage ?? gmailStatus?.sync?.error_message ?? "Gmail sync failed."
+        message: gmailSync?.errorMessage ?? "Gmail sync failed."
       });
     }
     if (importableProviders.length === 0) {
@@ -788,6 +845,7 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
         expectedWorkspacePath: summary.path
       });
       addCommunicationStats(aggregateStats, stats);
+      markPartialGmailImported(summary.cloudWorkspaceId, gmailSync);
     }
 
     if (linkedInStatus?.connected) {
@@ -826,17 +884,73 @@ function isDefaultRecordsWorkspaceEmpty(summary: WorkspaceSummary): boolean {
   );
 }
 
+function gmailSyncProgress(sync: IntegrationSyncStatus | undefined): GmailSyncProgress | undefined {
+  if (!sync) return undefined;
+  const progress: GmailSyncProgress = {
+    ...(sync.backfillStatus ? { backfillStatus: sync.backfillStatus } : {}),
+    ...(sync.listedThreads != null ? { listedThreads: sync.listedThreads } : {}),
+    ...(sync.fetchedThreads != null ? { fetchedThreads: sync.fetchedThreads } : {}),
+    ...(sync.filteredThreads != null ? { filteredThreads: sync.filteredThreads } : {}),
+    ...(sync.writtenThreads != null ? { writtenThreads: sync.writtenThreads } : {}),
+    ...(sync.writtenMessages != null ? { writtenMessages: sync.writtenMessages } : {}),
+    ...(sync.pageCount != null ? { pageCount: sync.pageCount } : {}),
+    ...(sync.resultSizeEstimate != null ? { resultSizeEstimate: sync.resultSizeEstimate } : {}),
+    ...(sync.resumeAfter ? { resumeAfter: sync.resumeAfter } : {})
+  };
+  return Object.keys(progress).length > 0 ? progress : undefined;
+}
+
+function shouldImportPartialGmail(workspaceId: string, sync: IntegrationSyncStatus | undefined): boolean {
+  if (!sync) return false;
+  const writtenThreads = sync.writtenThreads ?? sync.communicationThreadsSeen ?? 0;
+  const writtenMessages = sync.writtenMessages ?? sync.communicationMessagesSeen ?? 0;
+  if (writtenThreads <= 0 && writtenMessages <= 0) return false;
+
+  const previous = gmailPartialImportsByWorkspace.get(workspaceId);
+  if (!previous) return true;
+  if (
+    writtenThreads < previous.importedWrittenThreads ||
+    writtenMessages < previous.importedWrittenMessages
+  ) {
+    return true;
+  }
+  if (
+    writtenThreads === previous.importedWrittenThreads &&
+    writtenMessages === previous.importedWrittenMessages
+  ) {
+    return false;
+  }
+
+  const threadDelta = writtenThreads - previous.importedWrittenThreads;
+  const messageDelta = writtenMessages - previous.importedWrittenMessages;
+  return (
+    threadDelta >= GMAIL_PARTIAL_IMPORT_MIN_DELTA ||
+    messageDelta >= GMAIL_PARTIAL_IMPORT_MIN_DELTA ||
+    Date.now() - previous.lastImportAtMs >= GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS
+  );
+}
+
+function markPartialGmailImported(workspaceId: string, sync: IntegrationSyncStatus | undefined): void {
+  if (!sync) return;
+  gmailPartialImportsByWorkspace.set(workspaceId, {
+    importedWrittenThreads: sync.writtenThreads ?? sync.communicationThreadsSeen ?? 0,
+    importedWrittenMessages: sync.writtenMessages ?? sync.communicationMessagesSeen ?? 0,
+    lastImportAtMs: Date.now()
+  });
+}
+
 async function importCloudCommunicationExport(
   workspaceId: string,
   clientToken: string,
   provider: "gmail" | "linkedin",
-  options: { ignoreMissingEndpoint?: boolean; expectedWorkspacePath?: string } = {}
+  options: { ignoreMissingEndpoint?: boolean; expectedWorkspacePath?: string; partial?: boolean } = {}
 ): Promise<CommunicationImportStats | undefined> {
   try {
+    const exportPath = `/workspaces/${encodeURIComponent(workspaceId)}/integrations/${provider}/export${options.partial ? "?mode=partial" : ""}`;
     const exported = await fetchJson<{
       ok: true;
       data: unknown;
-    }>(`/workspaces/${encodeURIComponent(workspaceId)}/integrations/${provider}/export`, clientToken);
+    }>(exportPath, clientToken);
     const result = await getSdkClient().request<{
       stats?: Partial<CommunicationImportStats>;
     }>("importCommunicationBatch", exported.data, options.expectedWorkspacePath);
@@ -872,13 +986,23 @@ async function fetchJson<T>(pathname: string, clientToken: string): Promise<T> {
   });
   const payload = await response.json().catch(() => undefined) as T | undefined;
   if (!response.ok) {
-    const error = payload && typeof payload === "object" && "error" in payload
-      ? String((payload as { error?: unknown }).error)
-      : `Cloud sync request failed (${response.status})`;
-    throw new Error(error);
+    throw new Error(cloudSyncErrorMessage(payload, `Cloud sync request failed (${response.status})`));
   }
   if (!payload) throw new Error("Cloud sync response was empty.");
   return payload;
+}
+
+function cloudSyncErrorMessage(payload: unknown, fallback: string): string {
+  if (!isRecord(payload) || !("error" in payload)) return fallback;
+  const error = payload.error;
+  if (typeof error === "string" && error.length > 0) return error;
+  if (isRecord(error)) {
+    const message = stringField(error, "message");
+    if (message) return message;
+    const code = stringField(error, "code");
+    if (code) return code;
+  }
+  return fallback;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -969,6 +1093,15 @@ function normalizeIntegrationSync(value: unknown): Pick<IntegrationProviderStatu
   const startedAt = stringField(source, "startedAt", "started_at");
   const finishedAt = stringField(source, "finishedAt", "finished_at");
   const errorMessage = stringField(source, "errorMessage", "error_message");
+  const backfillStatus = stringField(source, "backfillStatus", "backfill_status");
+  const listedThreads = numberField(source, "listedThreads", "listed_threads");
+  const fetchedThreads = numberField(source, "fetchedThreads", "fetched_threads");
+  const filteredThreads = numberField(source, "filteredThreads", "filtered_threads");
+  const writtenThreads = numberField(source, "writtenThreads", "written_threads");
+  const writtenMessages = numberField(source, "writtenMessages", "written_messages");
+  const pageCount = numberField(source, "pageCount", "page_count");
+  const resultSizeEstimate = numberField(source, "resultSizeEstimate", "result_size_estimate");
+  const resumeAfter = stringField(source, "resumeAfter", "resume_after");
   return {
     sync: {
       state,
@@ -977,7 +1110,16 @@ function normalizeIntegrationSync(value: unknown): Pick<IntegrationProviderStatu
       ...(errorMessage ? { errorMessage } : {}),
       ...(peopleSeen != null ? { peopleSeen } : {}),
       ...(communicationThreadsSeen != null ? { communicationThreadsSeen } : {}),
-      ...(communicationMessagesSeen != null ? { communicationMessagesSeen } : {})
+      ...(communicationMessagesSeen != null ? { communicationMessagesSeen } : {}),
+      ...(backfillStatus ? { backfillStatus } : {}),
+      ...(listedThreads != null ? { listedThreads } : {}),
+      ...(fetchedThreads != null ? { fetchedThreads } : {}),
+      ...(filteredThreads != null ? { filteredThreads } : {}),
+      ...(writtenThreads != null ? { writtenThreads } : {}),
+      ...(writtenMessages != null ? { writtenMessages } : {}),
+      ...(pageCount != null ? { pageCount } : {}),
+      ...(resultSizeEstimate != null ? { resultSizeEstimate } : {}),
+      ...(resumeAfter ? { resumeAfter } : {})
     }
   };
 }
