@@ -21,6 +21,7 @@ import type {
   RecordListOptions,
   RecordListResult,
   SignalRunRequest,
+  TerminalDroppedFilePayload,
   TranscriptImportResult,
   TranscriptPayload,
   UpdateStatus,
@@ -220,6 +221,7 @@ type PtySession = {
 const ptySessions = new Map<string, PtySession>();
 const MAX_BUFFER_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
+const MAX_DROPPED_FILE_BYTES = 50 * 1024 * 1024;
 
 type ShellCandidate = {
   command: string;
@@ -1015,6 +1017,12 @@ function killAllPtys() {
   for (const id of [...ptySessions.keys()]) killPtySession(id);
 }
 
+function safeDroppedFileName(name: string): string {
+  const basename = path.basename(name || "dropped-file");
+  const sanitized = basename.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized || "dropped-file";
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
@@ -1238,6 +1246,21 @@ ipcMain.on("pty:resize", (_event, id: string, cols: number, rows: number) => {
 });
 ipcMain.on("pty:kill", (_event, id: string) => {
   killPtySession(id);
+});
+
+handle("pty:persist-dropped-file", async (payload: TerminalDroppedFilePayload) => {
+  const bytes = payload.bytes;
+  if (!(bytes instanceof Uint8Array)) {
+    throw new Error("Dropped file payload must include bytes.");
+  }
+  if (bytes.byteLength > MAX_DROPPED_FILE_BYTES) {
+    throw new Error("Dropped file is too large.");
+  }
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-crm-drop-"));
+  const filePath = path.join(dir, safeDroppedFileName(payload.name));
+  await fs.writeFile(filePath, Buffer.from(bytes));
+  return filePath;
 });
 
 let latestUpdateStatus: UpdateStatus = { state: "idle" };

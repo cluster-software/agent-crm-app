@@ -1,9 +1,10 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from "electron";
 import type {
   AppBridge,
   CreateRecordPayload,
   ImportCsvPayload,
   SignalRunRequest,
+  TerminalDroppedFilePayload,
   TranscriptPayload,
   UpdateStatus
 } from "./shared/types.js";
@@ -73,6 +74,15 @@ const terminal = {
   subscribe: (id: string, cols: number, rows: number, cwd?: string) =>
     invoke<string>("pty:subscribe", id, cols, rows, cwd),
   send: (id: string, data: string) => ipcRenderer.send("pty:input", id, data),
+  getPathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
+  persistDroppedFile: (payload: TerminalDroppedFilePayload) =>
+    invoke<string>("pty:persist-dropped-file", payload),
   resize: (id: string, cols: number, rows: number) =>
     ipcRenderer.send("pty:resize", id, cols, rows),
   kill: (id: string) => ipcRenderer.send("pty:kill", id),
