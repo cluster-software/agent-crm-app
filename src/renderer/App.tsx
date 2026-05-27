@@ -1724,8 +1724,14 @@ function RecordsView({
 function CloudSyncToolbarStatus({ status }: { status: CloudSyncStatus }) {
   const text = cloudSyncToolbarStatusText(status);
   if (!text) return null;
+  const active = cloudSyncToolbarStatusActive(status);
   return (
-    <div className="table-toolbar__sync" role="status" aria-live="polite" title={cloudSyncToolbarStatusTitle(status)}>
+    <div
+      className={`table-toolbar__sync${active ? " table-toolbar__sync--active" : ""}`}
+      role="status"
+      aria-live="polite"
+      title={cloudSyncToolbarStatusTitle(status)}
+    >
       <Mail size={12} className="lucide" />
       <span>{text}</span>
     </div>
@@ -1749,6 +1755,12 @@ function cloudSyncToolbarStatusText(status: CloudSyncStatus): string | null {
     return `Gmail syncing · ${formatNumber(progress.listedThreads)} listed`;
   }
   return "Gmail syncing";
+}
+
+function cloudSyncToolbarStatusActive(status: CloudSyncStatus): boolean {
+  if (status.state !== "syncing") return false;
+  if (!status.providers?.includes("gmail")) return false;
+  return status.progress?.backfillStatus !== "paused" && !isFutureIso(status.progress?.resumeAfter);
 }
 
 function cloudSyncToolbarStatusTitle(status: CloudSyncStatus): string {
