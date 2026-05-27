@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.18.1-295b305...v0.19.0-295b305) (2026-05-27)
+
+
+### Features
+
+* open hosted auth flows in app ([4f7baab](https://github.com/cluster-software/agent-crm-app/commit/4f7baabc7f5dd066dc81f67908591169b0aad238))
+* open hosted auth flows inside Agent CRM ([f6bc09b](https://github.com/cluster-software/agent-crm-app/commit/f6bc09bf0f9d7e721fca29a016f29fe2e515874e))
+
 ## [0.18.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.18.0-295b305...v0.18.1-295b305) (2026-05-27)
 
 
