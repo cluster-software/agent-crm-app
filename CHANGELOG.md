@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.16.0-295b305...v0.16.1-295b305) (2026-05-27)
+
+
+### Bug Fixes
+
+* restore app display version ([38ef6f1](https://github.com/cluster-software/agent-crm-app/commit/38ef6f109912f22e4b5c5afb0a52ea8b65e6e337))
+* restore app display version ([014dc5a](https://github.com/cluster-software/agent-crm-app/commit/014dc5a2a53432f3839ba1c2b8b9e360efdd8491))
+
 ## [0.16.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.15.0-295b305...v0.16.0-295b305) (2026-05-27)
 
 
