@@ -9,6 +9,7 @@ import type {
   SignalDefinitionSummary,
   SignalRunRequest,
   TranscriptPayload,
+  UpdateRecordPayload,
   WorkspaceSummary
 } from "../shared/types";
 
@@ -115,12 +116,276 @@ const sampleRecordsByObject: Record<string, RecordPreview[]> = {
           values: ["in_progress"]
         },
         {
+          attribute_slug: "company",
+          title: "Company",
+          type: "text",
+          display: "Lumin AI",
+          raw: "Lumin AI",
+          values: ["Lumin AI"]
+        },
+        {
+          attribute_slug: "domain",
+          title: "Domain",
+          type: "domain",
+          display: "lumin.ai",
+          raw: "lumin.ai",
+          values: ["lumin.ai"]
+        },
+        {
           attribute_slug: "value",
           title: "Value",
           type: "currency",
           display: "24000",
           raw: 24000,
           values: [24000]
+        },
+        {
+          attribute_slug: "close_date",
+          title: "Close date",
+          type: "date",
+          display: "2026-06-18",
+          raw: "2026-06-18",
+          values: ["2026-06-18"]
+        },
+        {
+          attribute_slug: "next_step",
+          title: "Next step",
+          type: "text",
+          display: "Send updated rollout plan",
+          raw: "Send updated rollout plan",
+          values: ["Send updated rollout plan"]
+        },
+        {
+          attribute_slug: "owner",
+          title: "Owner",
+          type: "text",
+          display: "Enrique",
+          raw: "Enrique",
+          values: ["Enrique"]
+        },
+        {
+          attribute_slug: "tags",
+          title: "Tags",
+          type: "text",
+          display: "Expansion, Champion",
+          raw: ["Expansion", "Champion"],
+          values: ["Expansion", "Champion"]
+        },
+        {
+          attribute_slug: "last_touch",
+          title: "Last touch",
+          type: "date",
+          display: "2026-05-26",
+          raw: "2026-05-26",
+          values: ["2026-05-26"]
+        }
+      ]
+    },
+    {
+      object_slug: "deals",
+      record_id: "preview-deal-2",
+      label: "Security review",
+      subtitle: "Evaluation · 18000",
+      values: [
+        {
+          attribute_slug: "stage",
+          title: "Stage",
+          type: "status",
+          display: "Evaluation",
+          raw: "evaluation",
+          values: ["evaluation"]
+        },
+        {
+          attribute_slug: "company",
+          title: "Company",
+          type: "text",
+          display: "OrbitOps",
+          raw: "OrbitOps",
+          values: ["OrbitOps"]
+        },
+        {
+          attribute_slug: "domain",
+          title: "Domain",
+          type: "domain",
+          display: "orbitops.io",
+          raw: "orbitops.io",
+          values: ["orbitops.io"]
+        },
+        {
+          attribute_slug: "value",
+          title: "Value",
+          type: "currency",
+          display: "18000",
+          raw: 18000,
+          values: [18000]
+        },
+        {
+          attribute_slug: "next_step",
+          title: "Next step",
+          type: "text",
+          display: "Confirm SOC2 subprocessors",
+          raw: "Confirm SOC2 subprocessors",
+          values: ["Confirm SOC2 subprocessors"]
+        },
+        {
+          attribute_slug: "owner",
+          title: "Owner",
+          type: "text",
+          display: "Maya Chen",
+          raw: "Maya Chen",
+          values: ["Maya Chen"]
+        },
+        {
+          attribute_slug: "tags",
+          title: "Tags",
+          type: "text",
+          display: "Security, Enterprise",
+          raw: ["Security", "Enterprise"],
+          values: ["Security", "Enterprise"]
+        },
+        {
+          attribute_slug: "last_touch",
+          title: "Last touch",
+          type: "date",
+          display: "2026-05-24",
+          raw: "2026-05-24",
+          values: ["2026-05-24"]
+        }
+      ]
+    },
+    {
+      object_slug: "deals",
+      record_id: "preview-deal-3",
+      label: "Team plan pilot",
+      subtitle: "Trial · 12000",
+      values: [
+        {
+          attribute_slug: "stage",
+          title: "Stage",
+          type: "status",
+          display: "Trial",
+          raw: "trial",
+          values: ["trial"]
+        },
+        {
+          attribute_slug: "company",
+          title: "Company",
+          type: "text",
+          display: "Northstar Studio",
+          raw: "Northstar Studio",
+          values: ["Northstar Studio"]
+        },
+        {
+          attribute_slug: "domain",
+          title: "Domain",
+          type: "domain",
+          display: "northstar.studio",
+          raw: "northstar.studio",
+          values: ["northstar.studio"]
+        },
+        {
+          attribute_slug: "value",
+          title: "Value",
+          type: "currency",
+          display: "12000",
+          raw: 12000,
+          values: [12000]
+        },
+        {
+          attribute_slug: "close_date",
+          title: "Close date",
+          type: "date",
+          display: "2026-06-05",
+          raw: "2026-06-05",
+          values: ["2026-06-05"]
+        },
+        {
+          attribute_slug: "owner",
+          title: "Owner",
+          type: "text",
+          display: "Sam Rivera",
+          raw: "Sam Rivera",
+          values: ["Sam Rivera"]
+        },
+        {
+          attribute_slug: "tags",
+          title: "Tags",
+          type: "text",
+          display: "Pilot",
+          raw: ["Pilot"],
+          values: ["Pilot"]
+        },
+        {
+          attribute_slug: "last_touch",
+          title: "Last touch",
+          type: "date",
+          display: "2026-05-23",
+          raw: "2026-05-23",
+          values: ["2026-05-23"]
+        }
+      ]
+    },
+    {
+      object_slug: "deals",
+      record_id: "preview-deal-4",
+      label: "Renewal",
+      subtitle: "Won · 32000",
+      values: [
+        {
+          attribute_slug: "stage",
+          title: "Stage",
+          type: "status",
+          display: "Won",
+          raw: "won",
+          values: ["won"]
+        },
+        {
+          attribute_slug: "company",
+          title: "Company",
+          type: "text",
+          display: "Atlas Labs",
+          raw: "Atlas Labs",
+          values: ["Atlas Labs"]
+        },
+        {
+          attribute_slug: "domain",
+          title: "Domain",
+          type: "domain",
+          display: "atlaslabs.com",
+          raw: "atlaslabs.com",
+          values: ["atlaslabs.com"]
+        },
+        {
+          attribute_slug: "value",
+          title: "Value",
+          type: "currency",
+          display: "32000",
+          raw: 32000,
+          values: [32000]
+        },
+        {
+          attribute_slug: "owner",
+          title: "Owner",
+          type: "text",
+          display: "Priya Shah",
+          raw: "Priya Shah",
+          values: ["Priya Shah"]
+        },
+        {
+          attribute_slug: "tags",
+          title: "Tags",
+          type: "text",
+          display: "Renewal, Champion",
+          raw: ["Renewal", "Champion"],
+          values: ["Renewal", "Champion"]
+        },
+        {
+          attribute_slug: "last_touch",
+          title: "Last touch",
+          type: "date",
+          display: "2026-05-20",
+          raw: "2026-05-20",
+          values: ["2026-05-20"]
         }
       ]
     }
@@ -221,7 +486,7 @@ const previewWorkspace: WorkspaceSummary = {
   counts: {
     companies: 18,
     people: 42,
-    deals: 9,
+    deals: 4,
     communication_threads: 7,
     communication_messages: 24,
     posts: 27,
@@ -302,7 +567,15 @@ const previewWorkspace: WorkspaceSummary = {
           title: "Stage",
           attribute_type: "status",
           is_multivalued: false,
-          is_unique: false
+          is_unique: false,
+          config: {
+            options: [
+              { id: "evaluation", title: "Evaluation" },
+              { id: "in_progress", title: "In Progress" },
+              { id: "trial", title: "Trial" },
+              { id: "won", title: "Won" }
+            ]
+          }
         }
       ]
     },
@@ -431,6 +704,77 @@ function listPreviewRecords(
   };
 }
 
+function updatePreviewRecord(payload: UpdateRecordPayload) {
+  const records = sampleRecordsByObject[payload.object_slug] ?? [];
+  const record = records.find((item) => item.record_id === payload.record_id);
+  if (!record) {
+    throw new Error(`record not found: ${payload.object_slug}/${payload.record_id}`);
+  }
+
+  let changed = 0;
+  for (const field of payload.fields) {
+    const index = field.indexOf("=");
+    if (index <= 0) continue;
+    const attributeSlug = field.slice(0, index).trim();
+    const rawValue = field.slice(index + 1).trim();
+    const display = previewDisplayValue(payload.object_slug, attributeSlug, rawValue);
+    const existing = record.values.find((value) => value.attribute_slug === attributeSlug);
+    const next = {
+      attribute_slug: attributeSlug,
+      title: previewAttributeTitle(payload.object_slug, attributeSlug),
+      type: previewAttributeType(payload.object_slug, attributeSlug),
+      display,
+      raw: rawValue,
+      values: [rawValue]
+    };
+    if (existing) {
+      Object.assign(existing, next);
+    } else {
+      record.values.push(next);
+    }
+    changed += 1;
+  }
+
+  return {
+    updated: true as const,
+    object_slug: payload.object_slug,
+    record_id: payload.record_id,
+    values_changed: changed
+  };
+}
+
+function previewAttribute(objectSlug: string, attributeSlug: string) {
+  return previewWorkspace.objects
+    .find((object) => object.object_slug === objectSlug)
+    ?.attributes.find((attribute) => attribute.attribute_slug === attributeSlug);
+}
+
+function previewAttributeTitle(objectSlug: string, attributeSlug: string) {
+  return previewAttribute(objectSlug, attributeSlug)?.title ?? attributeSlug;
+}
+
+function previewAttributeType(objectSlug: string, attributeSlug: string) {
+  return previewAttribute(objectSlug, attributeSlug)?.attribute_type ?? "text";
+}
+
+function previewDisplayValue(objectSlug: string, attributeSlug: string, rawValue: string) {
+  const config = previewAttribute(objectSlug, attributeSlug)?.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return rawValue;
+  const options = (config as { options?: unknown }).options;
+  if (!Array.isArray(options)) return rawValue;
+  const needle = rawValue.trim().toLowerCase();
+  for (const option of options) {
+    if (!option || typeof option !== "object" || Array.isArray(option)) continue;
+    const item = option as Record<string, unknown>;
+    const id = typeof item.id === "string" ? item.id : "";
+    const title = typeof item.title === "string" ? item.title : "";
+    if (id.toLowerCase() === needle || title.toLowerCase() === needle) {
+      return title || id || rawValue;
+    }
+  }
+  return rawValue;
+}
+
 const browserPreview: AppBridge = {
   platform: "browser",
   openWorkspaceDialog: async () => previewWorkspace,
@@ -469,6 +813,7 @@ const browserPreview: AppBridge = {
     record_id: "preview-created",
     values_inserted: 3
   }),
+  updateRecord: async (payload: UpdateRecordPayload) => updatePreviewRecord(payload),
   runQuery: async (sql: string, params?: unknown[]) => {
     if (sql.includes("v.object_slug = 'people'") && params?.[1] === "communication_threads") {
       return {

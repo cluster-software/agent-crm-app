@@ -14,6 +14,7 @@ import {
   loadSignalDefinitions,
   query,
   runSignals,
+  updateRecord,
   writeSignalJobState
 } from "@agent-crm/sdk";
 import { ensureWorkspaceIdentity as ensureSdkWorkspaceIdentity } from "@agent-crm/sdk/workspace/identity.js";
@@ -30,6 +31,7 @@ import type {
   SignalRunJob,
   SignalRunRequest,
   TranscriptPayload,
+  UpdateRecordPayload,
   WorkspaceSummary
 } from "./shared/types.js";
 
@@ -815,6 +817,8 @@ async function dispatch(method: string, params: unknown[] = []) {
     case "createRecord":
       schemaObjectsCache = null;
       return createRecord(assertWorkspace(), params[0] as CreateRecordPayload);
+    case "updateRecord":
+      return updateRecord(assertWorkspace(), params[0] as UpdateRecordPayload);
     case "importCsv":
       schemaObjectsCache = null;
       return importCsv(assertWorkspace(), params[0] as ImportCsvPayload);

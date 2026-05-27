@@ -193,6 +193,20 @@ export type CreateRecordResult = {
   values_inserted: number;
 };
 
+export type UpdateRecordPayload = {
+  object_slug: string;
+  record_id: string;
+  fields: string[];
+  source?: string;
+};
+
+export type UpdateRecordResult = {
+  updated: true;
+  object_slug: string;
+  record_id: string;
+  values_changed: number;
+};
+
 export type SignalOutputDefinition = {
   key: string;
   attribute: string;
@@ -311,6 +325,7 @@ export type AppBridge = {
   importCsv: (payload: ImportCsvPayload) => Promise<ImportCsvResult>;
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;
+  updateRecord: (payload: UpdateRecordPayload) => Promise<UpdateRecordResult>;
   runQuery: (sql: string, params?: unknown[]) => Promise<QueryResult>;
   listSignals: () => Promise<SignalDefinitionSummary[]>;
   listSignalFailures: () => Promise<SignalRunFailureSummary[]>;

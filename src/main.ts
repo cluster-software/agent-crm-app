@@ -24,6 +24,8 @@ import type {
   TerminalDroppedFilePayload,
   TranscriptImportResult,
   TranscriptPayload,
+  UpdateRecordPayload,
+  UpdateRecordResult,
   UpdateStatus,
   WorkspaceSummary
 } from "./shared/types.js";
@@ -1327,6 +1329,11 @@ handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
 });
 handle("records:create", (payload: CreateRecordPayload) => {
   return getSdkClient().request("createRecord", payload);
+});
+handle("records:update", async (payload: UpdateRecordPayload) => {
+  const result = await getSdkClient().request<UpdateRecordResult>("updateRecord", payload);
+  sendToMainWindow("workspace:changed");
+  return result;
 });
 handle("import:csv", (payload: ImportCsvPayload) => {
   return getSdkClient().request("importCsv", payload);
