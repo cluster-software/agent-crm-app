@@ -323,6 +323,13 @@ export type SignalRunFailureSummary = {
 
 export type TerminalExit = { exitCode: number; signal?: number };
 
+export type AgentCliPreflightStatus =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "updating"; currentVersion?: string; latestVersion?: string }
+  | { state: "ready"; version?: string; updated: boolean }
+  | { state: "error"; message: string };
+
 export type TerminalDroppedFilePayload = {
   bytes: Uint8Array;
   name: string;
@@ -336,6 +343,8 @@ export type TerminalBridge = {
   persistDroppedFile: (payload: TerminalDroppedFilePayload) => Promise<string>;
   resize: (id: string, cols: number, rows: number) => void;
   kill: (id: string) => void;
+  getAgentCliPreflightStatus: () => Promise<AgentCliPreflightStatus>;
+  onAgentCliPreflightStatus: (handler: (status: AgentCliPreflightStatus) => void) => () => void;
   onData: (id: string, handler: (data: string) => void) => () => void;
   onExit: (id: string, handler: (info: TerminalExit) => void) => () => void;
 };

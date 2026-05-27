@@ -46,6 +46,7 @@ import {
 } from "@tanstack/react-table";
 import { api } from "./api";
 import type {
+  AgentCliPreflightStatus,
   CloudIntegrationsStatus,
   CloudSyncStatus,
   IntegrationAccountSummary,
@@ -3916,6 +3917,13 @@ async function resolveDroppedTerminalFile(file: File): Promise<string | null> {
   }
 }
 
+function agentCliPreflightLabel(status: AgentCliPreflightStatus): string | null {
+  if (status.state === "checking") return "checking Agent CRM CLI";
+  if (status.state === "updating") return "updating Agent CRM CLI";
+  if (status.state === "error") return "Agent CRM CLI needs attention";
+  return null;
+}
+
 function TerminalPane({
   visible,
   cwd,
@@ -3935,6 +3943,16 @@ function TerminalPane({
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string>(sessionIdFor(cwd));
+  const [agentCliPreflightStatus, setAgentCliPreflightStatus] =
+    useState<AgentCliPreflightStatus>({ state: "idle" });
+
+  useEffect(() => {
+    const bridge = window.terminal;
+    if (!bridge) return;
+    return bridge.onAgentCliPreflightStatus((status) => {
+      setAgentCliPreflightStatus(status);
+    });
+  }, []);
 
   useEffect(() => {
     const bridge = window.terminal;
@@ -4158,6 +4176,8 @@ function TerminalPane({
     window.addEventListener("pointerup", onUp);
   }
 
+  const agentCliLabel = agentCliPreflightLabel(agentCliPreflightStatus);
+
   function onTerminalDragOver(event: ReactDragEvent<HTMLElement>) {
     if (!hasDroppedFiles(event)) return;
     event.preventDefault();
@@ -4201,6 +4221,24 @@ function TerminalPane({
       <div className="terminal__head">
         <Terminal size={13} className="lucide" />
         <span className="mono-label">shell</span>
+        {agentCliLabel && (
+          <span
+            className="terminal__status"
+            data-state={agentCliPreflightStatus.state}
+            title={
+              agentCliPreflightStatus.state === "error"
+                ? agentCliPreflightStatus.message
+                : agentCliLabel
+            }
+          >
+            {agentCliPreflightStatus.state === "error" ? (
+              <CircleAlert size={12} className="lucide" />
+            ) : (
+              <Loader2 size={12} className="lucide spin" />
+            )}
+            <span>{agentCliLabel}</span>
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         <button className="icon-btn" type="button" onClick={onClose} title="Close terminal">
           <X size={13} className="lucide" />
