@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.16.1-295b305...v0.17.0-295b305) (2026-05-27)
+
+
+### Features
+
+* show progressive Gmail sync progress ([729263c](https://github.com/cluster-software/agent-crm-app/commit/729263c3fd0b94de5b377cb769ebeb1b363928da))
+* show progressive Gmail sync progress ([03d80f6](https://github.com/cluster-software/agent-crm-app/commit/03d80f6b3ac30026f084d91e77260993c6f67820))
+
 ## [0.16.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.16.0-295b305...v0.16.1-295b305) (2026-05-27)
 
 
