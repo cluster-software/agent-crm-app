@@ -57,6 +57,7 @@ const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
 const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const gmailPartialImportsByWorkspace = new Map<string, GmailPartialImportState>();
+const gmailCompletedImportsByWorkspace = new Map<string, string>();
 
 type CommunicationImportStats = {
   people_created: number;
@@ -717,6 +718,7 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
           connected: boolean;
           accountEmail?: string;
           lastSyncedAt?: string;
+          last_synced_at?: string;
           sync?: {
             state?: string;
             errorMessage?: string;
@@ -765,9 +767,13 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
     const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
     const gmailSync = normalizeIntegrationSync(gmailStatus?.sync).sync;
     const gmailSyncState = gmailSync?.state;
+    const gmailLastSyncedAt = gmailStatus?.lastSyncedAt ?? gmailStatus?.last_synced_at;
     const gmailSyncActive = gmailSyncState === "pending" || gmailSyncState === "running";
     const gmailSyncFailed = gmailSyncState === "failed";
-    const gmailImportable = gmailStatus?.connected === true && gmailSyncState === "succeeded";
+    const gmailImportable =
+      gmailStatus?.connected === true &&
+      gmailSyncState === "succeeded" &&
+      !hasCompletedGmailImported(summary.cloudWorkspaceId, gmailSync, gmailLastSyncedAt);
     const connectedProviders: CloudSyncProvider[] = [];
     const importableProviders: CloudSyncProvider[] = [];
     if (gmailStatus?.connected || gmailSyncActive || gmailSyncFailed) connectedProviders.push("gmail");
@@ -828,11 +834,7 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
       });
     }
 
-    setCloudSyncStatusForRun(run, {
-      state: "syncing",
-      providers: importableProviders,
-      showInEmptyState: cloudSyncShowInEmptyState
-    });
+    setCloudSyncStatusForRun(run, { state: "checking" });
     const aggregateStats: CommunicationImportStats = {
       people_created: 0,
       communication_threads_created: 0,
@@ -846,6 +848,7 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
       });
       addCommunicationStats(aggregateStats, stats);
       markPartialGmailImported(summary.cloudWorkspaceId, gmailSync);
+      markCompletedGmailImported(summary.cloudWorkspaceId, gmailSync, gmailLastSyncedAt);
     }
 
     if (linkedInStatus?.connected) {
@@ -937,6 +940,44 @@ function markPartialGmailImported(workspaceId: string, sync: IntegrationSyncStat
     importedWrittenMessages: sync.writtenMessages ?? sync.communicationMessagesSeen ?? 0,
     lastImportAtMs: Date.now()
   });
+}
+
+function hasCompletedGmailImported(
+  workspaceId: string,
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): boolean {
+  const fingerprint = gmailCompletedSyncFingerprint(sync, lastSyncedAt);
+  return fingerprint != null && gmailCompletedImportsByWorkspace.get(workspaceId) === fingerprint;
+}
+
+function markCompletedGmailImported(
+  workspaceId: string,
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): void {
+  const fingerprint = gmailCompletedSyncFingerprint(sync, lastSyncedAt);
+  if (!fingerprint) return;
+  gmailCompletedImportsByWorkspace.set(workspaceId, fingerprint);
+}
+
+function gmailCompletedSyncFingerprint(
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): string | null {
+  if (!sync || sync.state !== "succeeded") return null;
+  const fingerprint = {
+    lastSyncedAt,
+    startedAt: sync.startedAt,
+    finishedAt: sync.finishedAt,
+    peopleSeen: sync.peopleSeen,
+    communicationThreadsSeen: sync.communicationThreadsSeen,
+    communicationMessagesSeen: sync.communicationMessagesSeen,
+    writtenThreads: sync.writtenThreads,
+    writtenMessages: sync.writtenMessages
+  };
+  if (Object.values(fingerprint).every((value) => value == null || value === "")) return null;
+  return JSON.stringify(fingerprint);
 }
 
 async function importCloudCommunicationExport(
