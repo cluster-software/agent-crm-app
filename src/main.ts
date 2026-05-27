@@ -4,6 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +52,16 @@ let cloudSyncWorkspace: WorkspaceSummary | null = null;
 let cloudSyncInFlight: { generation: number; promise: Promise<CloudSyncStatus> } | null = null;
 let cloudSyncGeneration = 0;
 let cloudSyncShowInEmptyState = false;
+let authFlowWindow: BrowserWindow | null = null;
+let authUrlOpenServer: Server | null = null;
+let authUrlOpenBridge:
+  | {
+      port: number;
+      token: string;
+      helperDir: string;
+      helperPath: string;
+    }
+  | null = null;
 const CLOUD_SYNC_IDLE_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_ACTIVE_INTERVAL_MS = 5_000;
 const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
@@ -83,9 +94,268 @@ function sendToMainWindow(channel: string, ...args: unknown[]) {
   window.webContents.send(channel, ...args);
 }
 
+function isHostedAuthEntryUrl(value: string): boolean {
+  let url: URL;
+  let syncUrl: URL;
+  try {
+    url = new URL(value);
+    syncUrl = new URL(syncEngineUrl);
+  } catch {
+    return false;
+  }
+  if (url.origin !== syncUrl.origin) return false;
+  return [
+    "/auth/",
+    "/integrations/gmail/",
+    "/integrations/linkedin/"
+  ].some((prefix) => url.pathname.startsWith(prefix));
+}
+
+function isExternalGoogleOAuthUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "accounts.google.com" || hostname.endsWith(".accounts.google.com")) return true;
+  return url.protocol === "https:" && (url.pathname === "/google/login" || url.pathname.startsWith("/google/login/"));
+}
+
+function openAuthFlowWindow(url: string): void {
+  if (!isHostedAuthEntryUrl(url)) {
+    void shell.openExternal(url);
+    return;
+  }
+
+  const existingWindow = authFlowWindow && !authFlowWindow.isDestroyed()
+    ? authFlowWindow
+    : null;
+  const window = existingWindow ?? createAuthFlowWindow();
+
+  void window.loadURL(url);
+  if (window.isMinimized()) window.restore();
+  window.focus();
+}
+
+function createAuthFlowWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 980,
+    height: 860,
+    minWidth: 420,
+    minHeight: 560,
+    title: "Agent CRM Auth",
+    backgroundColor: "#11100f",
+    parent: mainWindow ?? undefined,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: "persist:agent-crm-auth"
+    }
+  });
+
+  authFlowWindow = window;
+  window.once("ready-to-show", () => {
+    if (!window.isDestroyed()) window.show();
+  });
+  window.on("closed", () => {
+    if (authFlowWindow === window) authFlowWindow = null;
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (!isExternalGoogleOAuthUrl(url)) return;
+    event.preventDefault();
+    openExternalGoogleOAuth(window, url);
+  });
+  window.webContents.on("will-redirect", (event, url) => {
+    if (!isExternalGoogleOAuthUrl(url)) return;
+    event.preventDefault();
+    openExternalGoogleOAuth(window, url);
+  });
+  window.webContents.setWindowOpenHandler((details) => {
+    if (isExternalGoogleOAuthUrl(details.url)) {
+      openExternalGoogleOAuth(window, details.url);
+    } else if (details.url.startsWith("http://") || details.url.startsWith("https://")) {
+      void window.loadURL(details.url);
+    } else {
+      void shell.openExternal(details.url);
+    }
+    return { action: "deny" };
+  });
+
+  return window;
+}
+
+function openExternalGoogleOAuth(window: BrowserWindow, url: string): void {
+  void shell.openExternal(url);
+  void window.loadURL(externalGoogleOAuthNoticeUrl());
+}
+
+function externalGoogleOAuthNoticeUrl(): string {
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Finish Google sign-in</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #11100f; color: #f7f4ef; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(420px, calc(100vw - 48px)); }
+      h1 { font-size: 28px; line-height: 1.1; margin: 0 0 12px; }
+      p { margin: 0; color: #b9b2a8; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Finish Google sign-in in your browser</h1>
+      <p>Agent CRM opened Google in your default browser. Complete the sign-in there, then return to Agent CRM.</p>
+    </main>
+  </body>
+</html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function authUrlOpenBridgeEnv(): Record<string, string> {
+  if (!authUrlOpenBridge) return {};
+  return {
+    ACRM_OPEN_URL_COMMAND: authUrlOpenBridge.helperPath,
+    AGENT_CRM_AUTH_OPEN_PORT: String(authUrlOpenBridge.port),
+    AGENT_CRM_AUTH_OPEN_TOKEN: authUrlOpenBridge.token
+  };
+}
+
 const workspaceWatcher = createWorkspaceWatcher(() => {
   sendToMainWindow("workspace:changed");
 });
+
+async function ensureAuthUrlOpenBridge(): Promise<void> {
+  if (authUrlOpenBridge) return;
+
+  const token = randomUUID();
+  const server = createServer((request, response) => {
+    void handleAuthUrlOpenRequest(request, response, token).catch(() => {
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Could not start Agent CRM auth URL opener.");
+  }
+
+  const helperDir = path.join(app.getPath("userData"), "bin");
+  const helperPath = path.join(helperDir, process.platform === "win32" ? "agent-crm-open-url.cmd" : "agent-crm-open-url");
+  await writeAuthUrlOpenHelper(helperDir, helperPath);
+
+  authUrlOpenServer = server;
+  authUrlOpenBridge = {
+    port: address.port,
+    token,
+    helperDir,
+    helperPath
+  };
+}
+
+async function handleAuthUrlOpenRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  token: string
+): Promise<void> {
+  if (request.method !== "POST" || request.url !== "/open-url") {
+    response.writeHead(404).end();
+    return;
+  }
+  if (request.headers.authorization !== `Bearer ${token}`) {
+    response.writeHead(401).end();
+    return;
+  }
+
+  const body = await readRequestBody(request);
+  const targetUrl = new URLSearchParams(body).get("url");
+  if (!targetUrl || !isHostedAuthEntryUrl(targetUrl)) {
+    response.writeHead(400).end();
+    return;
+  }
+
+  openAuthFlowWindow(targetUrl);
+  response.writeHead(204).end();
+}
+
+function readRequestBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 16_384) {
+        reject(new Error("Request body too large."));
+        request.destroy();
+      }
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
+}
+
+async function writeAuthUrlOpenHelper(helperDir: string, helperPath: string): Promise<void> {
+  await fs.mkdir(helperDir, { recursive: true });
+  if (process.platform === "win32") {
+    await fs.writeFile(helperPath, authUrlOpenWindowsHelper(), { mode: 0o700 });
+  } else {
+    await fs.writeFile(helperPath, authUrlOpenPosixHelper(), { mode: 0o700 });
+    await fs.chmod(helperPath, 0o700);
+  }
+}
+
+function authUrlOpenPosixHelper(): string {
+  return `#!/bin/sh
+set -u
+if [ "$#" -lt 1 ]; then
+  echo "usage: agent-crm-open-url <url>" >&2
+  exit 2
+fi
+if [ -n "\${AGENT_CRM_AUTH_OPEN_PORT:-}" ] && [ -n "\${AGENT_CRM_AUTH_OPEN_TOKEN:-}" ] && command -v curl >/dev/null 2>&1; then
+  if curl -fsS -X POST \\
+    -H "Authorization: Bearer \${AGENT_CRM_AUTH_OPEN_TOKEN}" \\
+    --data-urlencode "url=$1" \\
+    "http://127.0.0.1:\${AGENT_CRM_AUTH_OPEN_PORT}/open-url" >/dev/null; then
+    exit 0
+  fi
+fi
+if command -v open >/dev/null 2>&1; then
+  open "$1"
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "$1"
+else
+  echo "$1"
+fi
+`;
+}
+
+function authUrlOpenWindowsHelper(): string {
+  return `@echo off
+if "%~1"=="" (
+  echo usage: agent-crm-open-url ^<url^> 1>&2
+  exit /b 2
+)
+if not "%AGENT_CRM_AUTH_OPEN_PORT%"=="" if not "%AGENT_CRM_AUTH_OPEN_TOKEN%"=="" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$headers=@{Authorization='Bearer '+$env:AGENT_CRM_AUTH_OPEN_TOKEN}; $body=@{url=$args[0]}; Invoke-WebRequest -UseBasicParsing -Method Post -Headers $headers -Body $body ('http://127.0.0.1:'+$env:AGENT_CRM_AUTH_OPEN_PORT+'/open-url') | Out-Null" "%~1"
+  if not errorlevel 1 exit /b 0
+)
+start "" "%~1"
+`;
+}
 
 type RpcResponse<T> =
   | { id: number; result: T }
@@ -1298,6 +1568,11 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   env.COLORTERM = "truecolor";
   env.TERM_PROGRAM = "agent-crm";
   env.ACRM_SYNC_ENGINE_URL = syncEngineUrl;
+  const openBridgeEnv = authUrlOpenBridgeEnv();
+  Object.assign(env, openBridgeEnv);
+  if (authUrlOpenBridge) {
+    env.PATH = `${authUrlOpenBridge.helperDir}${path.delimiter}${env.PATH ?? ""}`;
+  }
   const cloudWorkspaceId = cloudWorkspaceIdsByCwd.get(cwd);
   if (cloudWorkspaceId) {
     env.ACRM_CLOUD_WORKSPACE_ID = cloudWorkspaceId;
@@ -1417,7 +1692,11 @@ function createWindow() {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isHostedAuthEntryUrl(url)) {
+      openAuthFlowWindow(url);
+    } else {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 
@@ -1830,7 +2109,10 @@ ipcMain.handle("update:install", () => {
 
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
+    await ensureAuthUrlOpenBridge().catch((error) => {
+      console.warn("Agent CRM auth URL opener is unavailable.", error);
+    });
     if (isDev && process.platform === "darwin") app.dock?.setIcon(devIconPath);
     createWindow();
     setupAutoUpdater();
@@ -1856,5 +2138,6 @@ app.on("before-quit", () => {
   workspaceWatcher.stop();
   stopCloudSync();
   killAllPtys();
+  authUrlOpenServer?.close();
   void sdkClient?.dispose();
 });
