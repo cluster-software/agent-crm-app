@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.10-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.9-295b305...v0.14.10-295b305) (2026-05-27)
+
+
+### Bug Fixes
+
+* support image drops in embedded terminal ([df75feb](https://github.com/cluster-software/agent-crm-app/commit/df75feb0625ee1dd6989668354d48f68eefa4d29))
+* support image drops in embedded terminal ([14e582b](https://github.com/cluster-software/agent-crm-app/commit/14e582bdc9bc3e5d4bd9ca388a62636b17c2e102))
+
 ## [0.14.9-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.14.8-295b305...v0.14.9-295b305) (2026-05-26)
 
 
