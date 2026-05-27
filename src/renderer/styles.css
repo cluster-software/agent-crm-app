@@ -1097,6 +1097,7 @@ body.resizing-terminal * { cursor: col-resize !important; }
 .table-toolbar__sync {
   max-width: min(260px, 30vw);
   height: 22px;
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1111,6 +1112,23 @@ body.resizing-terminal * { cursor: col-resize !important; }
   line-height: 1;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow: hidden;
+  isolation: isolate;
+}
+.table-toolbar__sync--active {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    conic-gradient(
+      from var(--gmail-sync-pill-angle),
+      color-mix(in srgb, var(--accent) 24%, transparent) 0deg,
+      color-mix(in srgb, var(--accent) 24%, transparent) 216deg,
+      color-mix(in srgb, var(--accent) 65%, transparent) 258deg,
+      color-mix(in srgb, var(--accent) 90%, transparent) 294deg,
+      color-mix(in srgb, var(--accent) 65%, transparent) 330deg,
+      color-mix(in srgb, var(--accent) 24%, transparent) 360deg
+    ) border-box;
+  animation: gmail-sync-pill-border 2.8s linear infinite;
 }
 .table-toolbar__sync svg {
   flex: 0 0 auto;
@@ -1120,6 +1138,19 @@ body.resizing-terminal * { cursor: col-resize !important; }
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+@property --gmail-sync-pill-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes gmail-sync-pill-border {
+  to { --gmail-sync-pill-angle: 1turn; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-toolbar__sync--active {
+    animation: none;
+  }
 }
 
 .table-toolbar__pager {
