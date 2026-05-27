@@ -89,6 +89,7 @@ const workspaceWatcher = createWorkspaceWatcher(() => {
 type RpcResponse<T> =
   | { id: number; result: T }
   | { id: number; error: { message: string; name?: string; stack?: string } };
+type RpcEvent = { event: string; workspacePath?: string };
 
 class SdkServiceClient {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -198,11 +199,18 @@ class SdkServiceClient {
   }
 
   private handleLine(line: string) {
-    let message: RpcResponse<unknown>;
+    let message: RpcResponse<unknown> | RpcEvent;
     try {
-      message = JSON.parse(line) as RpcResponse<unknown>;
+      message = JSON.parse(line) as RpcResponse<unknown> | RpcEvent;
     } catch {
       console.warn(`[sdk-service] ${line}`);
+      return;
+    }
+
+    if ("event" in message) {
+      if (message.event === "recordIndexChanged") {
+        sendToMainWindow("workspace:changed");
+      }
       return;
     }
 
