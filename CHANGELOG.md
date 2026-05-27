@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.17.0-295b305...v0.18.0-295b305) (2026-05-27)
+
+
+### Features
+
+* animate Gmail sync status pill ([117a0d9](https://github.com/cluster-software/agent-crm-app/commit/117a0d9312b8be90f03acf10e5ee3addc1837abd))
+* animate Gmail sync status pill ([c17a79b](https://github.com/cluster-software/agent-crm-app/commit/c17a79bb556e48226f8902b9de28fc61d73ddd0f))
+
 ## [0.17.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.16.1-295b305...v0.17.0-295b305) (2026-05-27)
 
 
