@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ComponentType,
   Dispatch,
+  DragEvent as ReactDragEvent,
   FormEvent as ReactFormEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
@@ -2311,6 +2312,68 @@ function sessionIdFor(cwd: string | undefined): string {
 
 const TERMINAL_MIN_WIDTH = 280;
 const TERMINAL_MAX_WIDTH_FRACTION = 0.7;
+const MAX_DROPPED_FILE_BYTES = 50 * 1024 * 1024;
+const TERMINAL_PATH_ESCAPE_PATTERN = /([\s'"\\$`!*?()[\]{}|;<>&#~])/g;
+
+function isHeicLikeFile(file: File): boolean {
+  const type = file.type.toLowerCase();
+  return type.includes("heic") || type.includes("heif") || /\.(heic|heif)$/i.test(file.name);
+}
+
+function isUnstableDropPath(filePath: string): boolean {
+  if (!filePath) return true;
+  if (/^\/(?:private\/)?var\/folders\/.*\/T\/Drops\//.test(filePath)) return true;
+  if (/[\\/](?:tmp|temp)[\\/]/i.test(filePath) && /(?:drop|chromium|electron)/i.test(filePath)) {
+    return true;
+  }
+  if (/[\\/]AppData[\\/]Local[\\/]Temp[\\/]/i.test(filePath)) return true;
+  return false;
+}
+
+function escapeTerminalPath(filePath: string): string {
+  return filePath.replace(TERMINAL_PATH_ESCAPE_PATTERN, "\\$1");
+}
+
+function escapeWindowsTerminalPath(filePath: string): string {
+  return `"${filePath.replace(/"/g, "\"\"")}"`;
+}
+
+function formatTerminalDroppedPaths(paths: string[]): string {
+  if (window.crm?.platform === "win32") {
+    return paths.map(escapeWindowsTerminalPath).join(" ");
+  }
+  return paths.map(escapeTerminalPath).join(" ");
+}
+
+function wrapAsBracketedPaste(text: string): string {
+  return `\x1b[200~${text}\x1b[201~`;
+}
+
+function hasDroppedFiles(event: ReactDragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("Files");
+}
+
+async function resolveDroppedTerminalFile(file: File): Promise<string | null> {
+  const bridge = window.terminal;
+  if (!bridge) return null;
+
+  const originalPath = bridge.getPathForFile(file).trim();
+  if (originalPath && !isUnstableDropPath(originalPath) && !isHeicLikeFile(file)) {
+    return originalPath;
+  }
+
+  if (file.size > MAX_DROPPED_FILE_BYTES) return null;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return await bridge.persistDroppedFile({
+      bytes,
+      name: file.name,
+      mimeType: file.type
+    });
+  } catch {
+    return null;
+  }
+}
 
 function TerminalPane({
   visible,
@@ -2554,8 +2617,40 @@ function TerminalPane({
     window.addEventListener("pointerup", onUp);
   }
 
+  function onTerminalDragOver(event: ReactDragEvent<HTMLElement>) {
+    if (!hasDroppedFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function onTerminalDrop(event: ReactDragEvent<HTMLElement>) {
+    if (!hasDroppedFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const bridge = window.terminal;
+    const term = termRef.current;
+    if (!bridge || !term) return;
+
+    const files = Array.from(event.dataTransfer.files);
+
+    void (async () => {
+      const resolved = await Promise.all(files.map((file) => resolveDroppedTerminalFile(file)));
+      const paths = resolved.filter((filePath): filePath is string => Boolean(filePath));
+      if (paths.length === 0) return;
+      term.focus();
+      bridge.send(sessionIdRef.current, `${wrapAsBracketedPaste(formatTerminalDroppedPaths(paths))} `);
+    })();
+  }
+
   return (
-    <aside className="terminal" hidden={!visible} style={{ width }}>
+    <aside
+      className="terminal"
+      hidden={!visible}
+      style={{ width }}
+      onDragOver={onTerminalDragOver}
+      onDrop={onTerminalDrop}
+    >
       <div
         className="terminal__resizer"
         role="separator"
