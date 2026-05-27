@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
+  AgentCliPreflightStatus,
   AppBridge,
   CreateRecordPayload,
   ImportCsvPayload,
@@ -76,6 +77,15 @@ const terminal = {
   resize: (id: string, cols: number, rows: number) =>
     ipcRenderer.send("pty:resize", id, cols, rows),
   kill: (id: string) => ipcRenderer.send("pty:kill", id),
+  getAgentCliPreflightStatus: () => invoke<AgentCliPreflightStatus>("agent-cli-preflight:get-status"),
+  onAgentCliPreflightStatus: (handler: (status: AgentCliPreflightStatus) => void) => {
+    const listener = (_event: IpcRendererEvent, status: AgentCliPreflightStatus) => handler(status);
+    ipcRenderer.on("agent-cli-preflight:status", listener);
+    void invoke<AgentCliPreflightStatus>("agent-cli-preflight:get-status")
+      .then(handler)
+      .catch(() => undefined);
+    return () => ipcRenderer.off("agent-cli-preflight:status", listener);
+  },
   onData: (id: string, handler: (data: string) => void) => {
     const listener = (_event: IpcRendererEvent, sessionId: string, data: string) => {
       if (sessionId === id) handler(data);

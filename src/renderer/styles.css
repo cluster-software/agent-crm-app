@@ -455,6 +455,22 @@ body.resizing-terminal * { cursor: col-resize !important; }
   color: var(--text-muted);
 }
 .terminal__head .mono-label { padding: 0; }
+.terminal__status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.terminal__status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.terminal__status[data-state="error"] {
+  color: var(--danger);
+}
 .terminal__xterm {
   flex: 1;
   min-height: 0;

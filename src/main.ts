@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { IPty } from "node-pty";
 import * as nodePty from "node-pty";
 import type {
+  AgentCliPreflightStatus,
   CloudIntegrationsStatus,
   CloudSyncStatus,
   CloudSyncProvider,
@@ -45,6 +46,8 @@ let cloudSyncWorkspace: WorkspaceSummary | null = null;
 let cloudSyncInFlight: Promise<CloudSyncStatus> | null = null;
 const CLOUD_SYNC_IDLE_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_ACTIVE_INTERVAL_MS = 5_000;
+const AGENT_CLI_COMMAND_TIMEOUT_MS = 30 * 1000;
+const AGENT_CLI_INSTALL_TIMEOUT_MS = 120 * 1000;
 
 type CommunicationImportStats = {
   people_created: number;
@@ -271,6 +274,178 @@ function defaultCwd() {
   return home && home.length > 0 ? home : process.cwd();
 }
 
+type ShellCommandResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+};
+
+let agentCliPreflightStatus: AgentCliPreflightStatus = { state: "idle" };
+let agentCliPreflightPromise: Promise<void> | null = null;
+
+function publishAgentCliPreflightStatus(status: AgentCliPreflightStatus) {
+  agentCliPreflightStatus = status;
+  sendToMainWindow("agent-cli-preflight:status", status);
+}
+
+function shellCommandArgs(command: string): string[] {
+  if (process.platform === "win32") return ["/d", "/s", "/c", command];
+  return ["-ilc", command];
+}
+
+function runShellCommand(command: string, timeoutMs: number): Promise<ShellCommandResult> {
+  const candidate = shellCandidates()[0];
+  if (!candidate) {
+    return Promise.reject(new Error("No usable shell was found."));
+  }
+
+  return new Promise((resolve, reject) => {
+    const env = {
+      ...process.env,
+      TERM: process.env.TERM && process.env.TERM !== "dumb" ? process.env.TERM : "xterm-256color"
+    };
+    const child = spawn(candidate.command, shellCommandArgs(command), {
+      cwd: defaultCwd(),
+      env
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+      reject(new Error(`Command timed out: ${command}`));
+    }, timeoutMs);
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("exit", (exitCode) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode });
+    });
+  });
+}
+
+async function runSuccessfulShellCommand(command: string, timeoutMs: number): Promise<string> {
+  const result = await runShellCommand(command, timeoutMs);
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr || result.stdout).trim();
+    throw new Error(detail || `Command failed with exit code ${result.exitCode}: ${command}`);
+  }
+  return result.stdout.trim();
+}
+
+function extractVersion(output: string): string | null {
+  return output.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/)?.[0] ?? null;
+}
+
+function compareSemverLike(left: string, right: string): number {
+  const [leftCore, leftPrerelease = ""] = left.split("+")[0].split("-");
+  const [rightCore, rightPrerelease = ""] = right.split("+")[0].split("-");
+  const leftParts = leftCore.split(".").map((part) => Number.parseInt(part, 10));
+  const rightParts = rightCore.split(".").map((part) => Number.parseInt(part, 10));
+  for (let index = 0; index < 3; index++) {
+    const delta = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (delta !== 0) return delta;
+  }
+  if (!leftPrerelease && rightPrerelease) return 1;
+  if (leftPrerelease && !rightPrerelease) return -1;
+  return leftPrerelease.localeCompare(rightPrerelease);
+}
+
+async function getInstalledAgentCliVersion(): Promise<string | null> {
+  const result = await runShellCommand("acrm --version", AGENT_CLI_COMMAND_TIMEOUT_MS);
+  if (result.exitCode !== 0) return null;
+  return extractVersion(`${result.stdout}\n${result.stderr}`);
+}
+
+async function getLatestAgentCliVersion(): Promise<string> {
+  const output = await runSuccessfulShellCommand(
+    "npm view @agent-crm/cli version",
+    AGENT_CLI_COMMAND_TIMEOUT_MS
+  );
+  const version = extractVersion(output);
+  if (!version) throw new Error("Could not read the latest @agent-crm/cli version from npm.");
+  return version;
+}
+
+async function installLatestAgentCli(): Promise<void> {
+  await runSuccessfulShellCommand(
+    "npm install -g @agent-crm/cli@latest",
+    AGENT_CLI_INSTALL_TIMEOUT_MS
+  );
+}
+
+async function runAgentCliPreflight(): Promise<void> {
+  publishAgentCliPreflightStatus({ state: "checking" });
+  let currentVersion = await getInstalledAgentCliVersion();
+  let latestVersion: string;
+
+  try {
+    latestVersion = await getLatestAgentCliVersion();
+  } catch (error) {
+    if (currentVersion) {
+      publishAgentCliPreflightStatus({ state: "ready", version: currentVersion, updated: false });
+      return;
+    }
+    throw error;
+  }
+
+  let updated = false;
+  if (!currentVersion || compareSemverLike(currentVersion, latestVersion) < 0) {
+    publishAgentCliPreflightStatus({
+      state: "updating",
+      ...(currentVersion ? { currentVersion } : {}),
+      latestVersion
+    });
+    await installLatestAgentCli();
+    updated = true;
+    currentVersion = await getInstalledAgentCliVersion();
+    if (!currentVersion) {
+      throw new Error("@agent-crm/cli installed, but `acrm --version` is still unavailable.");
+    }
+  }
+
+  publishAgentCliPreflightStatus({
+    state: "ready",
+    version: currentVersion,
+    updated
+  });
+}
+
+async function ensureAgentCliPreflight(): Promise<void> {
+  if (!agentCliPreflightPromise) {
+    agentCliPreflightPromise = runAgentCliPreflight().catch((error) => {
+      publishAgentCliPreflightStatus({
+        state: "error",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }).finally(() => {
+      agentCliPreflightPromise = null;
+    });
+  }
+  await agentCliPreflightPromise;
+}
+
 const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
 const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
 
@@ -291,9 +466,8 @@ const EMERGENCY_AGENT_WORKSPACE_INSTRUCTIONS = {
     "",
     "The shared Agent CRM SDK instructions were unavailable when this workspace was created.",
     "",
-    "Before using `acrm`:",
-    "- Run `acrm --version`.",
-    "- If `acrm` is missing or reports that a newer `@agent-crm/cli` is available, run `npm install -g @agent-crm/cli@latest`.",
+    "The Agent CRM desktop app checks and updates the installed `acrm` CLI before launching the embedded terminal.",
+    "",
     "- Run `acrm --help` and `acrm execute --help` for current workspace guidance.",
     "<!-- agent-crm-app:end -->",
     "",
@@ -816,12 +990,6 @@ const agentWorkspaceGuide = `${agentWorkspaceGuideStart}
 ## Agent CRM Workspace
 
 This directory is managed by Agent CRM.
-
-Before using \`acrm\`, Agent CRM skills, or any local \`.acrm\` workflow:
-- Run \`acrm --version\`.
-- If \`acrm\` is missing or reports that a newer \`@agent-crm/cli\` is available, run \`npm install -g @agent-crm/cli@latest\`.
-- After updating, run \`acrm --version\` again, then continue with the user's original request.
-- Only ask the user to install or update the CLI themselves if npm requires credentials or permissions you cannot satisfy.
 ${agentWorkspaceGuideEnd}`;
 
 // Mark `cwd` as trusted in `~/.claude.json` so Claude Code skips its first-run
@@ -1215,6 +1383,7 @@ handle("pty:subscribe", async (id: string, cols: number, rows: number, cwd?: str
     // Same session id with a different cwd — wipe and respawn fresh.
     killPtySession(id);
   }
+  await ensureAgentCliPreflight();
   spawnPtySession(id, cols, rows, resolvedCwd);
   return "";
 });
@@ -1239,6 +1408,8 @@ ipcMain.on("pty:resize", (_event, id: string, cols: number, rows: number) => {
 ipcMain.on("pty:kill", (_event, id: string) => {
   killPtySession(id);
 });
+
+handle("agent-cli-preflight:get-status", async () => agentCliPreflightStatus);
 
 let latestUpdateStatus: UpdateStatus = { state: "idle" };
 
