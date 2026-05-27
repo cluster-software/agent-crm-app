@@ -52,6 +52,7 @@ import type {
   IntegrationProviderStatus,
   RecordPreview,
   RecordValue,
+  RecentWorkspaceSummary,
   SchemaObject,
   SignalDefinitionSummary,
   SignalRunFailureSummary,
@@ -70,6 +71,7 @@ import {
   XIcon
 } from "./primitives";
 import agentCrmLogo from "./assets/agent-crm-bg.png";
+import agentCrmWhiteLogo from "./assets/white-logo.png";
 import packageJson from "../../package.json";
 
 const sdkObjectOrder = [
@@ -160,6 +162,7 @@ export function App() {
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
+  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspaceSummary[]>([]);
   const previousWorkspacePathRef = useRef<string | null>(null);
   const sidebarItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const [recordsFocusRequest, setRecordsFocusRequest] = useState(0);
@@ -209,23 +212,6 @@ export function App() {
   }, [terminalWidth]);
 
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const mod = event.metaKey || event.ctrlKey;
-      if (!mod || event.altKey || event.shiftKey) return;
-      const key = event.key.toLowerCase();
-      if (key === "j") {
-        event.preventDefault();
-        setTerminalOpen((open) => !open);
-      } else if (key === "b") {
-        event.preventDefault();
-        setSidebarOpen((open) => !open);
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
     function onEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
@@ -266,6 +252,21 @@ export function App() {
       .catch((err) => setError(statusFromError(err)))
       .finally(() => setLoading(""));
   }, [refreshWorkspace]);
+
+  useEffect(() => {
+    if (workspace) return;
+    let cancelled = false;
+    api.listRecentWorkspaces()
+      .then((workspaces) => {
+        if (!cancelled) setRecentWorkspaces(workspaces);
+      })
+      .catch(() => {
+        if (!cancelled) setRecentWorkspaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -371,7 +372,146 @@ export function App() {
     }
   }
 
+  async function handleCreateWorkspace(name: string, parentDir?: string) {
+    setError(null);
+    const summary = await api.createWorkspace(name, parentDir);
+    if (summary) {
+      setWorkspace(summary);
+      setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
+      setMainView("records");
+    }
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "j") {
+        event.preventDefault();
+        setTerminalOpen((open) => !open);
+      } else if (key === "b") {
+        event.preventDefault();
+        setSidebarOpen((open) => !open);
+      } else if (key === "n") {
+        if (createOpen || isEditableTarget(event.target)) return;
+        event.preventDefault();
+        setCreateOpen(true);
+      } else if (key === "o") {
+        if (createOpen || isEditableTarget(event.target)) return;
+        event.preventDefault();
+        void runWorkspaceAction(api.openWorkspaceDialog);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [createOpen]);
+
   const workspaceLabel = workspace?.filename ?? "No workspace";
+  const createWorkspaceModal = createOpen && (
+    <CreateWorkspaceModal
+      onClose={() => setCreateOpen(false)}
+      onPickDirectory={api.chooseWorkspaceDirectory}
+      onCreate={handleCreateWorkspace}
+    />
+  );
+
+  if (!workspace) {
+    return (
+      <div className="welcome-page" data-screen-label="Welcome">
+        <div className="welcome-page__drag" aria-hidden="true" />
+
+        {(error || loading) && (
+          <div className="welcome-page__status">
+            {error && (
+              <div className="strip strip--error">
+                <span>{error}</span>
+                <button className="strip__close" type="button" onClick={() => setError(null)}>
+                  <X size={14} className="lucide" />
+                </button>
+              </div>
+            )}
+            {loading && (
+              <div className="strip strip--loading">
+                <Loader2 size={14} className="lucide spin" />
+                <span>{loading}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <main className="welcome-page__main" aria-labelledby="welcome-title">
+          <section className="welcome-hero">
+            <img className="welcome-logo" src={agentCrmWhiteLogo} alt="Agent CRM" />
+
+            <h1 id="welcome-title">Open a workspace</h1>
+            <p className="welcome-hero__sub">
+              Pick up an existing <span className="welcome-pill mono">.acrm</span> file, or seed a new one from the SDK.
+            </p>
+
+            <div className="welcome-actions" aria-label="Workspace actions">
+              <button
+                className="welcome-action"
+                type="button"
+                onClick={() => runWorkspaceAction(api.openWorkspaceDialog)}
+              >
+                <span className="welcome-action__icon">
+                  <FolderOpen size={24} className="lucide" />
+                </span>
+                <span className="welcome-action__copy">
+                  <span className="welcome-action__title">Open workspace</span>
+                  <span className="welcome-action__sub">Browse for an existing .acrm file.</span>
+                </span>
+                <span className="welcome-action__kbd mono">⌘O</span>
+              </button>
+
+              <button
+                className="welcome-action welcome-action--primary"
+                type="button"
+                onClick={() => setCreateOpen(true)}
+              >
+                <span className="welcome-action__icon">
+                  <FilePlus2 size={24} className="lucide" />
+                </span>
+                <span className="welcome-action__copy">
+                  <span className="welcome-action__title">Create workspace</span>
+                  <span className="welcome-action__sub">Seed a fresh .acrm from the SDK.</span>
+                </span>
+                <span className="welcome-action__kbd mono">⌘N</span>
+              </button>
+            </div>
+
+            {recentWorkspaces.length > 0 && (
+              <div className="welcome-recents" aria-label="Recent workspaces">
+                {recentWorkspaces.map((recent) => (
+                  <button
+                    className="welcome-recent"
+                    key={recent.path}
+                    type="button"
+                    onClick={() => runWorkspaceAction(() => api.openWorkspacePath(recent.path))}
+                  >
+                    <span className="welcome-recent__icon">
+                      <FolderOpen size={18} className="lucide" />
+                    </span>
+                    <span className="welcome-recent__copy">
+                      <span className="welcome-recent__title">{recent.filename}</span>
+                      <span className="welcome-recent__path mono">{formatWorkspacePath(recent.path)}</span>
+                    </span>
+                    <span className="welcome-recent__time mono">{formatCompactRelativeTime(recent.lastOpenedAt)}</span>
+                    <ChevronRight size={20} className="welcome-recent__chevron lucide" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        </main>
+
+        <footer className="welcome-footer mono">agent-crm v{appDisplayVersion}</footer>
+
+        {createWorkspaceModal}
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell" data-sidebar-open={sidebarOpen}>
@@ -495,32 +635,41 @@ export function App() {
           <div className="toolbar__spacer" />
           <div className="toolbar__actions">
             <button
-              className="icon-btn"
+              className="icon-btn toolbar-tooltip"
               type="button"
-              title="Open workspace"
               aria-label="Open workspace"
               onClick={() => runWorkspaceAction(api.openWorkspaceDialog)}
             >
               <FolderOpen size={14} className="lucide" />
+              <span className="toolbar-tooltip__bubble" role="tooltip">
+                <kbd><span>⌘</span><span>O</span></kbd>
+                <span>Open workspace</span>
+              </span>
             </button>
             <button
-              className="icon-btn"
+              className="icon-btn toolbar-tooltip"
               type="button"
-              title="Create workspace"
               aria-label="Create workspace"
               onClick={() => setCreateOpen(true)}
             >
               <FilePlus2 size={14} className="lucide" />
+              <span className="toolbar-tooltip__bubble" role="tooltip">
+                <kbd><span>⌘</span><span>N</span></kbd>
+                <span>Create workspace</span>
+              </span>
             </button>
             <button
-              className="icon-btn"
+              className="icon-btn toolbar-tooltip"
               type="button"
-              title="Terminal"
               aria-label="Terminal"
               aria-pressed={terminalOpen}
               onClick={() => setTerminalOpen((open) => !open)}
             >
               <Terminal size={14} className="lucide" />
+              <span className="toolbar-tooltip__bubble" role="tooltip">
+                <kbd><span>⌘</span><span>J</span></kbd>
+                <span>Toggle shell</span>
+              </span>
             </button>
           </div>
         </header>
@@ -543,12 +692,7 @@ export function App() {
 
         <div className="main__body">
           <div className="main__content">
-            {!workspace ? (
-              <EmptyWorkspace
-                onOpen={() => runWorkspaceAction(api.openWorkspaceDialog)}
-                onCreate={() => setCreateOpen(true)}
-              />
-            ) : mainView === "settings" ? (
+            {mainView === "settings" ? (
               <SettingsView dataVersion={dataVersion} setError={setError} />
             ) : detailRecord && selectedObject?.object_slug === "people" ? (
               <PersonDetail
@@ -589,21 +733,7 @@ export function App() {
         </div>
 
       </main>
-      {createOpen && (
-        <CreateWorkspaceModal
-          onClose={() => setCreateOpen(false)}
-          onPickDirectory={api.chooseWorkspaceDirectory}
-          onCreate={async (name, parentDir) => {
-            setError(null);
-            const summary = await api.createWorkspace(name, parentDir);
-            if (summary) {
-              setWorkspace(summary);
-              setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
-              setMainView("records");
-            }
-          }}
-        />
-      )}
+      {createWorkspaceModal}
     </div>
   );
 }
@@ -812,28 +942,23 @@ function displayVersion(version: string): string {
   return version.split("-")[0] ?? version;
 }
 
-function EmptyWorkspace({ onOpen, onCreate }: { onOpen: () => void; onCreate: () => void }) {
-  return (
-    <div className="empty-state">
-      <div className="empty-state__mark">
-        <Database size={20} className="lucide" />
-      </div>
-      <h1 className="empty-state__title">Connect a workspace</h1>
-      <p className="empty-state__sub">
-        Open an existing <span className="mono">.acrm</span> file or create a new workspace seeded by the SDK.
-      </p>
-      <div className="empty-state__actions">
-        <button className="btn btn--primary" type="button" onClick={onCreate}>
-          <FilePlus2 size={14} className="lucide" />
-          <span>Create workspace</span>
-        </button>
-        <button className="btn" type="button" onClick={onOpen}>
-          <FolderOpen size={14} className="lucide" />
-          <span>Open workspace</span>
-        </button>
-      </div>
-    </div>
-  );
+function formatWorkspacePath(filePath: string): string {
+  if (filePath.startsWith("/Users/")) {
+    const [, , user, ...rest] = filePath.split("/");
+    if (user && rest.length > 0) return `~/${rest.join("/")}`;
+  }
+  return filePath;
+}
+
+function formatCompactRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 60 * 1000) return "now";
+  if (diffMs < 60 * 60 * 1000) return `${Math.round(diffMs / (60 * 1000))}m ago`;
+  if (diffMs < 24 * 60 * 60 * 1000) return `${Math.round(diffMs / (60 * 60 * 1000))}h ago`;
+  if (diffMs < 48 * 60 * 60 * 1000) return "yesterday";
+  return `${Math.round(diffMs / (24 * 60 * 60 * 1000))}d ago`;
 }
 
 function SettingsView({
