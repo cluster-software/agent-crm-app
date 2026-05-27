@@ -15,11 +15,28 @@ export type RecentWorkspaceSummary = {
 
 export type CloudSyncProvider = "gmail" | "linkedin";
 
+export type GmailSyncProgress = {
+  backfillStatus?: string;
+  listedThreads?: number;
+  fetchedThreads?: number;
+  filteredThreads?: number;
+  writtenThreads?: number;
+  writtenMessages?: number;
+  pageCount?: number;
+  resultSizeEstimate?: number;
+  resumeAfter?: string;
+};
+
 export type CloudSyncStatus =
   | { state: "idle" }
   | { state: "checking" }
   | { state: "disconnected" }
-  | { state: "syncing"; providers?: CloudSyncProvider[]; showInEmptyState?: boolean }
+  | {
+      state: "syncing";
+      providers?: CloudSyncProvider[];
+      showInEmptyState?: boolean;
+      progress?: GmailSyncProgress;
+    }
   | {
       state: "synced";
       lastSyncedAt: string;
@@ -48,6 +65,15 @@ export type IntegrationSyncStatus = {
   peopleSeen?: number;
   communicationThreadsSeen?: number;
   communicationMessagesSeen?: number;
+  backfillStatus?: string;
+  listedThreads?: number;
+  fetchedThreads?: number;
+  filteredThreads?: number;
+  writtenThreads?: number;
+  writtenMessages?: number;
+  pageCount?: number;
+  resultSizeEstimate?: number;
+  resumeAfter?: string;
 };
 
 export type IntegrationProviderStatus = {

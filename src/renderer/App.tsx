@@ -1671,6 +1671,7 @@ function RecordsView({
             </>
           )}
         </div>
+        <CloudSyncToolbarStatus status={cloudSyncStatus} />
         <TableFilterControl
           objectName={object.plural_name}
           value={filterQuery}
@@ -1718,6 +1719,55 @@ function RecordsView({
       />
     </div>
   );
+}
+
+function CloudSyncToolbarStatus({ status }: { status: CloudSyncStatus }) {
+  const text = cloudSyncToolbarStatusText(status);
+  if (!text) return null;
+  return (
+    <div className="table-toolbar__sync" role="status" aria-live="polite" title={cloudSyncToolbarStatusTitle(status)}>
+      <Mail size={12} className="lucide" />
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function cloudSyncToolbarStatusText(status: CloudSyncStatus): string | null {
+  if (status.state !== "syncing") return null;
+  if (!status.providers?.includes("gmail")) return null;
+  const progress = status.progress;
+  if (progress?.backfillStatus === "paused" || isFutureIso(progress?.resumeAfter)) {
+    return "Gmail paused";
+  }
+  if (progress?.writtenThreads != null && progress.writtenThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.writtenThreads)} threads`;
+  }
+  if (progress?.fetchedThreads != null && progress.fetchedThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.fetchedThreads)} scanned`;
+  }
+  if (progress?.listedThreads != null && progress.listedThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.listedThreads)} listed`;
+  }
+  return "Gmail syncing";
+}
+
+function cloudSyncToolbarStatusTitle(status: CloudSyncStatus): string {
+  if (status.state !== "syncing") return "";
+  const progress = status.progress;
+  const parts = [
+    progress?.listedThreads != null ? `${formatNumber(progress.listedThreads)} listed` : undefined,
+    progress?.fetchedThreads != null ? `${formatNumber(progress.fetchedThreads)} fetched` : undefined,
+    progress?.filteredThreads != null ? `${formatNumber(progress.filteredThreads)} filtered` : undefined,
+    progress?.writtenThreads != null ? `${formatNumber(progress.writtenThreads)} threads written` : undefined,
+    progress?.writtenMessages != null ? `${formatNumber(progress.writtenMessages)} messages written` : undefined
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? `Gmail sync in progress: ${parts.join(", ")}` : "Gmail sync in progress";
+}
+
+function isFutureIso(value: string | undefined): boolean {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now();
 }
 
 type RecordsEmptyConfig = {
