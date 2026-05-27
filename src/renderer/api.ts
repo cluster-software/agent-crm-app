@@ -415,21 +415,69 @@ function listPreviewRecords(
 ): RecordListResult {
   const limit = Math.min(250, Math.max(1, Math.floor(options.limit ?? 100)));
   const allRecords = sampleRecordsByObject[objectSlug] ?? [];
+  const searchTerms = normalizePreviewSearchTerms(options.searchQuery);
+  const matchingRecords =
+    searchTerms.length > 0
+      ? allRecords.filter((record) => previewRecordMatchesSearch(record, searchTerms))
+      : allRecords;
   const cursorIndex =
     typeof options.cursor === "string"
-      ? allRecords.findIndex((record) => record.record_id === options.cursor)
+      ? matchingRecords.findIndex((record) => record.record_id === options.cursor)
       : -1;
   const start = cursorIndex >= 0 ? cursorIndex + 1 : 0;
-  const page = allRecords.slice(start, start + limit);
-  const hasMore = start + limit < allRecords.length;
+  const page = matchingRecords.slice(start, start + limit);
+  const hasMore = start + limit < matchingRecords.length;
   return {
     objectSlug,
     records: page,
     limit,
     cursor: options.cursor ?? null,
     nextCursor: hasMore ? page[page.length - 1]?.record_id ?? null : null,
-    hasMore
+    hasMore,
+    ...(searchTerms.length > 0 ? { totalMatches: matchingRecords.length } : {})
   };
+}
+
+function normalizePreviewSearchTerms(query: unknown): string[] {
+  if (typeof query !== "string") return [];
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+}
+
+function previewRecordMatchesSearch(record: RecordPreview, terms: string[]): boolean {
+  const haystack = [
+    record.label,
+    record.subtitle,
+    ...record.values.flatMap((value) => [
+      value.title,
+      value.display,
+      ...value.values.map((item) => previewDisplayUnknown(item))
+    ])
+  ]
+    .join(" ")
+    .toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+function previewDisplayUnknown(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) return value.map(previewDisplayUnknown).filter(Boolean).join(" ");
+  if (typeof value === "object") {
+    const item = value as Record<string, unknown>;
+    const candidate =
+      item.full_name ??
+      item.value ??
+      item.title ??
+      item.email_address ??
+      item.domain ??
+      item.root_domain ??
+      item.date ??
+      item.timestamp;
+    if (candidate != null) return String(candidate);
+  }
+  return "";
 }
 
 function updatePreviewRecord(payload: UpdateRecordPayload) {

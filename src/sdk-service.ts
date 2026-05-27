@@ -386,12 +386,15 @@ async function listRecordsForObject(
     options.valueAttributes,
     options.includeSecondaryLabels ?? true
   );
+  const searchTerms = normalizeRecordSearchTerms(options.searchQuery);
+  const searchPatterns = searchTerms.map((term) => `%${escapeSqlLike(term)}%`);
   const params = [
     objectSlug,
     ...(cursor ? [cursor] : []),
-    ...attributeSlugs
+    ...attributeSlugs,
+    ...searchPatterns
   ];
-  const cursorClause = cursor ? "AND record_id < $2" : "";
+  const cursorClause = cursor ? "AND r.record_id < $2" : "";
   const attrStart = cursor ? 3 : 2;
   const attributeFilter =
     attributeSlugs.length > 0
@@ -399,14 +402,24 @@ async function listRecordsForObject(
           .map((_, index) => `$${attrStart + index}`)
           .join(", ")})`
       : "";
+  const searchStart = attrStart + attributeSlugs.length;
+  const searchClause = recordSearchClause({
+    recordAlias: "r",
+    valueAliasPrefix: "sv",
+    attributeSlugs,
+    attrStart,
+    searchStart,
+    searchTermCount: searchTerms.length
+  });
   const result = await query(
     current,
     `WITH selected AS (
-       SELECT object_slug, record_id
-         FROM acrm_record
-        WHERE object_slug = $1
+       SELECT r.object_slug, r.record_id
+         FROM acrm_record r
+        WHERE r.object_slug = $1
           ${cursorClause}
-        ORDER BY record_id DESC
+          ${searchClause}
+        ORDER BY r.record_id DESC
         LIMIT ${fetchLimit}
      )
      SELECT s.object_slug, s.record_id, v.attribute_slug, v.value_json,
@@ -420,6 +433,10 @@ async function listRecordsForObject(
       ORDER BY s.record_id DESC, v.active_from DESC`,
     params
   );
+  const totalMatches =
+    searchTerms.length > 0
+      ? await countSearchMatches(current, objectSlug, attributeSlugs, searchPatterns)
+      : undefined;
   const rows = result.rows as Array<{
     object_slug: string;
     record_id: string;
@@ -454,7 +471,8 @@ async function listRecordsForObject(
     limit,
     cursor,
     nextCursor: selectedRows.length > limit ? pageRows[pageRows.length - 1]?.record_id ?? null : null,
-    hasMore: selectedRows.length > limit
+    hasMore: selectedRows.length > limit,
+    ...(totalMatches !== undefined ? { totalMatches } : {})
   };
 }
 
@@ -466,6 +484,86 @@ function normalizeRecordLimit(limit: unknown) {
 
 function normalizeCursor(cursor: unknown) {
   return typeof cursor === "string" && cursor.length > 0 ? cursor : null;
+}
+
+function normalizeRecordSearchTerms(query: unknown): string[] {
+  if (typeof query !== "string") return [];
+  return query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((term) => term.slice(0, 80));
+}
+
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+function recordSearchClause({
+  recordAlias,
+  valueAliasPrefix,
+  attributeSlugs,
+  attrStart,
+  searchStart,
+  searchTermCount
+}: {
+  recordAlias: string;
+  valueAliasPrefix: string;
+  attributeSlugs: string[];
+  attrStart: number;
+  searchStart: number;
+  searchTermCount: number;
+}) {
+  if (searchTermCount === 0) return "";
+  const attrClause =
+    attributeSlugs.length > 0
+      ? (alias: string) =>
+          `AND ${alias}.attribute_slug IN (${attributeSlugs
+            .map((_, index) => `$${attrStart + index}`)
+            .join(", ")})`
+      : () => "";
+  return Array.from({ length: searchTermCount })
+    .map((_, index) => {
+      const valueAlias = `${valueAliasPrefix}${index}`;
+      return `AND EXISTS (
+            SELECT 1
+              FROM acrm_value ${valueAlias}
+             WHERE ${valueAlias}.object_slug = ${recordAlias}.object_slug
+               AND ${valueAlias}.record_id = ${recordAlias}.record_id
+               AND ${valueAlias}.active_until IS NULL
+               ${attrClause(valueAlias)}
+               AND lower(CAST(${valueAlias}.value_json AS TEXT)) LIKE $${searchStart + index} ESCAPE '\\'
+          )`;
+    })
+    .join("\n          ");
+}
+
+async function countSearchMatches(
+  current: Workspace,
+  objectSlug: string,
+  attributeSlugs: string[],
+  searchPatterns: string[]
+): Promise<number> {
+  const attrStart = 2;
+  const searchStart = attrStart + attributeSlugs.length;
+  const result = await query(
+    current,
+    `SELECT COUNT(*) AS count
+       FROM acrm_record r
+      WHERE r.object_slug = $1
+        ${recordSearchClause({
+          recordAlias: "r",
+          valueAliasPrefix: "csv",
+          attributeSlugs,
+          attrStart,
+          searchStart,
+          searchTermCount: searchPatterns.length
+        })}`,
+    [objectSlug, ...attributeSlugs, ...searchPatterns]
+  );
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 function relevantAttributeSlugs(
