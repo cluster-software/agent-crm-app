@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.20.2-295b305...v0.20.3-295b305) (2026-05-28)
+
+
+### Bug Fixes
+
+* keep table headers above avatars ([00b8f21](https://github.com/cluster-software/agent-crm-app/commit/00b8f210e5327de887142d189e8f9b90335fd6d3))
+* keep table headers above avatars ([e782117](https://github.com/cluster-software/agent-crm-app/commit/e782117b068bc31d664d38a3a93a8d38d537f15f))
+
 ## [0.20.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.20.1-295b305...v0.20.2-295b305) (2026-05-28)
 
 
