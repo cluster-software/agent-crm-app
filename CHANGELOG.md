@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.1-295b305...v0.19.2-295b305) (2026-05-28)
+
+
+### Bug Fixes
+
+* copy transcript text from person detail ([234865f](https://github.com/cluster-software/agent-crm-app/commit/234865fbbcf640145c0e8e71040eb8bd2dbedfeb))
+* copy transcript text from person detail ([84f9142](https://github.com/cluster-software/agent-crm-app/commit/84f9142c01c37b761f5b97519b8d8a9ae081f70f))
+
 ## [0.19.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.0-295b305...v0.19.1-295b305) (2026-05-28)
 
 
