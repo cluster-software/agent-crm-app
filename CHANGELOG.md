@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.4-295b305...v0.20.0-295b305) (2026-05-28)
+
+
+### Features
+
+* show people profile photos ([3a1f336](https://github.com/cluster-software/agent-crm-app/commit/3a1f3362b380925ce631a147fa6c2fbcdcf9ed31))
+* show people profile photos ([25d4dc2](https://github.com/cluster-software/agent-crm-app/commit/25d4dc2d1ec6ab3200adbd4b6d9420ffbc4f74d6))
+
 ## [0.19.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.3-295b305...v0.19.4-295b305) (2026-05-28)
 
 
