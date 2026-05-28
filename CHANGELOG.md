@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.3-295b305...v0.19.4-295b305) (2026-05-28)
+
+
+### Bug Fixes
+
+* hide empty people message filters ([ac0cd26](https://github.com/cluster-software/agent-crm-app/commit/ac0cd26be000162cd1acf9927567cadafb7ecb98))
+* hide empty people message filters ([f8d2351](https://github.com/cluster-software/agent-crm-app/commit/f8d2351ee95303e7fb150b3564da90f4f155ec84))
+
 ## [0.19.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.2-295b305...v0.19.3-295b305) (2026-05-28)
 
 
