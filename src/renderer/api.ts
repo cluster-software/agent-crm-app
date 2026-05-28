@@ -689,7 +689,8 @@ const browserPreview: AppBridge = {
     workspaceId: "preview",
     integrations: {
       gmail: { connected: false },
-      linkedin: { connected: false }
+      linkedin: { connected: false },
+      granola: { connected: false }
     }
   }),
   onWorkspaceChanged: () => () => undefined,
