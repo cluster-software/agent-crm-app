@@ -406,6 +406,12 @@ function compareSemverLike(left: string, right: string): number {
   return leftPrerelease.localeCompare(rightPrerelease);
 }
 
+async function isAgentCliInstalled(): Promise<boolean> {
+  const command = process.platform === "win32" ? "where acrm" : "command -v acrm";
+  const result = await runShellCommand(command, AGENT_CLI_COMMAND_TIMEOUT_MS);
+  return result.exitCode === 0 && result.stdout.trim().length > 0;
+}
+
 async function getInstalledAgentCliVersion(): Promise<string | null> {
   const result = await runShellCommand("acrm --version", AGENT_CLI_COMMAND_TIMEOUT_MS);
   if (result.exitCode !== 0) return null;
@@ -431,8 +437,26 @@ async function installLatestAgentCli(): Promise<void> {
 
 async function runAgentCliPreflight(): Promise<void> {
   publishAgentCliPreflightStatus({ state: "checking" });
-  let currentVersion = await getInstalledAgentCliVersion();
+  const isInstalled = await isAgentCliInstalled();
+  let currentVersion = isInstalled ? await getInstalledAgentCliVersion() : null;
   let latestVersion: string;
+  let updated = false;
+
+  if (!isInstalled) {
+    publishAgentCliPreflightStatus({ state: "updating" });
+    await installLatestAgentCli();
+    updated = true;
+    currentVersion = await getInstalledAgentCliVersion();
+    if (!currentVersion) {
+      throw new Error("@agent-crm/cli installed, but `acrm --version` is still unavailable.");
+    }
+    publishAgentCliPreflightStatus({
+      state: "ready",
+      version: currentVersion,
+      updated
+    });
+    return;
+  }
 
   try {
     latestVersion = await getLatestAgentCliVersion();
@@ -444,7 +468,6 @@ async function runAgentCliPreflight(): Promise<void> {
     throw error;
   }
 
-  let updated = false;
   if (!currentVersion || compareSemverLike(currentVersion, latestVersion) < 0) {
     publishAgentCliPreflightStatus({
       state: "updating",
