@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.0-295b305...v0.22.1-295b305) (2026-05-28)
+
+
+### Bug Fixes
+
+* clean up people metadata and sync status ([3f9652b](https://github.com/cluster-software/agent-crm-app/commit/3f9652b7d90d47a2fe24dad1d532c3b28de5855d))
+* clean up people metadata and sync status ([fe50f8f](https://github.com/cluster-software/agent-crm-app/commit/fe50f8fbaccfdb1a896d96ec7f03469e8d3d8323))
+
 ## [0.22.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.21.0-295b305...v0.22.0-295b305) (2026-05-28)
 
 
