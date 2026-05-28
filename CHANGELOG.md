@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.20.1-295b305...v0.20.2-295b305) (2026-05-28)
+
+
+### Bug Fixes
+
+* install missing agent crm cli before terminal launch ([e4c2748](https://github.com/cluster-software/agent-crm-app/commit/e4c2748367ee9616c47555d1bbc6fb6c24826251))
+* install missing agent crm cli before terminal launch ([e9d9f18](https://github.com/cluster-software/agent-crm-app/commit/e9d9f1842fd761197e2609a7cd9cab3a4e7e4fac))
+
 ## [0.20.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.20.0-295b305...v0.20.1-295b305) (2026-05-28)
 
 
