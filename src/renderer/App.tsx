@@ -4724,6 +4724,7 @@ function PersonDetail({
   onTabChange: (tab: PersonTab) => void;
 }) {
   const baseMeta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : "";
+  const profilePictureUrl = recordImageUrl(record, "profile_picture_url");
   const [companyName, setCompanyName] = useState("");
   const meta = uniqueNonEmpty([baseMeta, companyName]).join(" · ") || null;
   const contactRows = buildContactRows(record);
@@ -4862,9 +4863,18 @@ function PersonDetail({
 
   return (
     <div ref={detailRef} className="detail" tabIndex={-1}>
-      <header className="detail__header">
-        <h1 className="detail__title display">{record.label}</h1>
-        {meta && <div className="detail__meta">{meta}</div>}
+      <header
+        className={profilePictureUrl ? "detail__header detail__header--person" : "detail__header"}
+      >
+        {profilePictureUrl ? (
+          <div className="detail__photo">
+            <Avatar name={record.label} size={88} src={profilePictureUrl} />
+          </div>
+        ) : null}
+        <div className="detail__identity">
+          <h1 className="detail__title display">{record.label}</h1>
+          {meta && <div className="detail__meta">{meta}</div>}
+        </div>
       </header>
 
       <nav className="detail__tabs tabs">
