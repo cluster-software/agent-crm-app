@@ -1,10 +1,12 @@
 import {
   Building2,
+  Check,
   CircleAlert,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Columns3,
+  Copy,
   Database,
   FileText,
   FilePlus2,
@@ -4617,6 +4619,10 @@ function transcriptSecondary(item: RelatedRecord): string {
   return parts.join(" · ");
 }
 
+function transcriptContent(item: RelatedRecord): string {
+  return getScalar(item.attrs, "content").trim();
+}
+
 function postPrimary(item: RelatedRecord): string {
   const content = getScalar(item.attrs, "content");
   if (content) {
@@ -4660,6 +4666,7 @@ function PersonDetail({
   const [posts, setPosts] = useState<RelatedRecord[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(true);
   const [relatedError, setRelatedError] = useState<string | null>(null);
+  const [copiedTranscriptId, setCopiedTranscriptId] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedThreadId(null);
@@ -4685,6 +4692,7 @@ function PersonDetail({
     setLoadingRelated(true);
     setRelatedError(null);
     setCommunicationThreads([]);
+    setCopiedTranscriptId(null);
 
     fetchCommunicationThreads(record.record_id)
       .then((threads) => {
@@ -4766,6 +4774,20 @@ function PersonDetail({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onTabChange, tab]);
+
+  async function copyTranscript(item: RelatedRecord) {
+    const content = transcriptContent(item);
+    if (!content) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedTranscriptId(item.id);
+      window.setTimeout(() => {
+        setCopiedTranscriptId((current) => current === item.id ? null : current);
+      }, 1400);
+    } catch (err) {
+      setRelatedError(statusFromError(err));
+    }
+  }
 
   return (
     <div ref={detailRef} className="detail" tabIndex={-1}>
@@ -4872,6 +4894,22 @@ function PersonDetail({
               empty="no transcripts linked to this person yet"
               renderPrimary={transcriptPrimary}
               renderSecondary={transcriptSecondary}
+              renderAction={(item) => {
+                const content = transcriptContent(item);
+                if (!content) return null;
+                const copied = copiedTranscriptId === item.id;
+                return (
+                  <button
+                    type="button"
+                    className="icon-btn related-list__copy"
+                    onClick={() => void copyTranscript(item)}
+                    aria-label={copied ? "Transcript copied" : "Copy transcript"}
+                    title={copied ? "Transcript copied" : "Copy transcript"}
+                  >
+                    {copied ? <Check size={13} className="lucide" /> : <Copy size={13} className="lucide" />}
+                  </button>
+                );
+              }}
             />
           ) : (
             <RelatedList
@@ -5327,12 +5365,14 @@ function RelatedList({
   items,
   empty,
   renderPrimary,
-  renderSecondary
+  renderSecondary,
+  renderAction
 }: {
   items: RelatedRecord[];
   empty: string;
   renderPrimary: (item: RelatedRecord) => string;
   renderSecondary: (item: RelatedRecord) => string;
+  renderAction?: (item: RelatedRecord) => ReactNode;
 }) {
   if (items.length === 0) {
     return (
@@ -5345,9 +5385,13 @@ function RelatedList({
     <ul className="related-list">
       {items.map((item) => {
         const secondary = renderSecondary(item);
+        const action = renderAction?.(item);
         return (
           <li key={item.id} className="related-list__item">
-            <div className="related-list__primary">{renderPrimary(item)}</div>
+            <div className="related-list__row">
+              <div className="related-list__primary">{renderPrimary(item)}</div>
+              {action}
+            </div>
             {secondary && <div className="related-list__secondary">{secondary}</div>}
           </li>
         );

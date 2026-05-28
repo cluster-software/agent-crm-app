@@ -3358,11 +3358,24 @@ body.resizing-terminal * { cursor: col-resize !important; }
   gap: 4px;
 }
 .related-list__item:last-child { border-bottom: 0; }
+.related-list__row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .related-list__primary {
+  flex: 1;
+  min-width: 0;
   color: var(--text);
   font-size: 13.5px;
   letter-spacing: -0.005em;
   line-height: 1.4;
+}
+.related-list__copy {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
 }
 .related-list__secondary {
   color: var(--text-dim);
