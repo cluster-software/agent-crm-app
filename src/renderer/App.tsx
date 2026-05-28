@@ -1783,6 +1783,8 @@ function CloudSyncToolbarStatus({ status }: { status: CloudSyncStatus }) {
   const text = cloudSyncToolbarStatusText(status);
   if (!text) return null;
   const active = cloudSyncToolbarStatusActive(status);
+  const providers = status.state === "syncing" ? status.providers ?? [] : [];
+  const linkedInOnly = providers.includes("linkedin") && !providers.includes("gmail");
   return (
     <div
       className={`table-toolbar__sync${active ? " table-toolbar__sync--active" : ""}`}
@@ -1790,7 +1792,7 @@ function CloudSyncToolbarStatus({ status }: { status: CloudSyncStatus }) {
       aria-live="polite"
       title={cloudSyncToolbarStatusTitle(status)}
     >
-      <Mail size={12} className="lucide" />
+      {linkedInOnly ? <LinkedInIcon size={12} className="lucide" /> : <Mail size={12} className="lucide" />}
       <span>{text}</span>
     </div>
   );
@@ -1798,8 +1800,21 @@ function CloudSyncToolbarStatus({ status }: { status: CloudSyncStatus }) {
 
 function cloudSyncToolbarStatusText(status: CloudSyncStatus): string | null {
   if (status.state !== "syncing") return null;
-  if (!status.providers?.includes("gmail")) return null;
+  const providers = status.providers ?? [];
+  const hasGmail = providers.includes("gmail");
+  const hasLinkedIn = providers.includes("linkedin");
+  if (hasGmail && hasLinkedIn) return "Syncing Gmail and LinkedIn";
   const progress = status.progress;
+  if (hasLinkedIn) {
+    if (progress?.writtenMessages != null && progress.writtenMessages > 0) {
+      return `LinkedIn syncing · ${formatNumber(progress.writtenMessages)} messages`;
+    }
+    if (progress?.writtenThreads != null && progress.writtenThreads > 0) {
+      return `LinkedIn syncing · ${formatNumber(progress.writtenThreads)} threads`;
+    }
+    return "LinkedIn syncing";
+  }
+  if (!hasGmail) return null;
   if (progress?.backfillStatus === "paused" || isFutureIso(progress?.resumeAfter)) {
     return "Gmail paused";
   }
@@ -1817,12 +1832,15 @@ function cloudSyncToolbarStatusText(status: CloudSyncStatus): string | null {
 
 function cloudSyncToolbarStatusActive(status: CloudSyncStatus): boolean {
   if (status.state !== "syncing") return false;
+  if (status.providers?.includes("linkedin") && !status.providers?.includes("gmail")) return true;
   if (!status.providers?.includes("gmail")) return false;
   return status.progress?.backfillStatus !== "paused" && !isFutureIso(status.progress?.resumeAfter);
 }
 
 function cloudSyncToolbarStatusTitle(status: CloudSyncStatus): string {
   if (status.state !== "syncing") return "";
+  const providers = status.providers ?? [];
+  const providerName = providers.includes("linkedin") && !providers.includes("gmail") ? "LinkedIn" : "Gmail";
   const progress = status.progress;
   const parts = [
     progress?.listedThreads != null ? `${formatNumber(progress.listedThreads)} listed` : undefined,
@@ -1831,7 +1849,7 @@ function cloudSyncToolbarStatusTitle(status: CloudSyncStatus): string {
     progress?.writtenThreads != null ? `${formatNumber(progress.writtenThreads)} threads written` : undefined,
     progress?.writtenMessages != null ? `${formatNumber(progress.writtenMessages)} messages written` : undefined
   ].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? `Gmail sync in progress: ${parts.join(", ")}` : "Gmail sync in progress";
+  return parts.length > 0 ? `${providerName} sync in progress: ${parts.join(", ")}` : `${providerName} sync in progress`;
 }
 
 function isFutureIso(value: string | undefined): boolean {
