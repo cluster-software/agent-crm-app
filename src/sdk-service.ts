@@ -1200,7 +1200,7 @@ function primaryLabelAttributeSlugs(objectSlug: string): string[] {
     companies: ["name", "domains", "linkedin_url"],
     deals: ["name", "stage"],
     communication_threads: ["subject", "snippet", "provider_thread_id"],
-    communication_messages: ["subject", "snippet", "body_text"],
+    communication_messages: ["subject", "snippet", "body_preview", "body_text"],
     posts: ["content", "url"],
     transcripts: ["title", "source_id"]
   };

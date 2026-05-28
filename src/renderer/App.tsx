@@ -17,6 +17,7 @@ import {
   Loader2,
   Mail,
   Newspaper,
+  Paperclip,
   Phone,
   Search,
   Settings,
@@ -1778,7 +1779,8 @@ function CloudSyncStatusPill({ status }: { status: CloudSyncStatus }) {
   if (!text) return null;
   const active = cloudSyncStatusPillActive(status);
   const isError = status.state === "error";
-  const channel = cloudSyncPrimaryChannel(status);
+  const providers = status.state === "syncing" ? status.providers ?? [] : [];
+  const linkedInOnly = providers.includes("linkedin") && !providers.includes("gmail");
   return (
     <div
       className={`cloud-sync-pill${active ? " cloud-sync-pill--active" : ""}${isError ? " cloud-sync-pill--error" : ""}`}
@@ -1788,8 +1790,10 @@ function CloudSyncStatusPill({ status }: { status: CloudSyncStatus }) {
     >
       {isError ? (
         <CircleAlert size={12} className="lucide" />
-      ) : channel ? (
-        <ChannelMark channel={channel} size={14} />
+      ) : linkedInOnly ? (
+        <LinkedInIcon size={12} className="lucide" />
+      ) : providers.includes("gmail") ? (
+        <Mail size={12} className="lucide" />
       ) : (
         <Loader2 size={12} className="lucide spin" />
       )}
@@ -1801,37 +1805,52 @@ function CloudSyncStatusPill({ status }: { status: CloudSyncStatus }) {
 function cloudSyncStatusPillText(status: CloudSyncStatus): string | null {
   if (status.state === "error") return status.message || "Cloud sync failed";
   if (status.state !== "syncing") return null;
-  const providerText = cloudSyncProviderText(status);
+  const providers = status.providers ?? [];
+  const hasGmail = providers.includes("gmail");
+  const hasLinkedIn = providers.includes("linkedin");
+  if (hasGmail && hasLinkedIn) return "Syncing Gmail and LinkedIn";
   const progress = status.progress;
-  if (progress?.backfillStatus === "paused" || isFutureIso(progress?.resumeAfter)) {
-    return `${providerText} paused`;
-  }
-  if (status.providers?.includes("gmail")) {
+  if (hasLinkedIn) {
+    if (progress?.writtenMessages != null && progress.writtenMessages > 0) {
+      return `LinkedIn syncing · ${formatNumber(progress.writtenMessages)} messages`;
+    }
     if (progress?.writtenThreads != null && progress.writtenThreads > 0) {
-      return `${providerText} syncing · ${formatNumber(progress.writtenThreads)} threads`;
+      return `LinkedIn syncing · ${formatNumber(progress.writtenThreads)} threads`;
     }
-    if (progress?.fetchedThreads != null && progress.fetchedThreads > 0) {
-      return `${providerText} syncing · ${formatNumber(progress.fetchedThreads)} scanned`;
-    }
-    if (progress?.listedThreads != null && progress.listedThreads > 0) {
-      return `${providerText} syncing · ${formatNumber(progress.listedThreads)} listed`;
-    }
+    return "LinkedIn syncing";
   }
-  if (progress?.writtenMessages != null && progress.writtenMessages > 0) {
-    return `${providerText} syncing · ${formatNumber(progress.writtenMessages)} messages`;
+  if (!hasGmail) return null;
+  if (progress?.backfillStatus === "paused" || isFutureIso(progress?.resumeAfter)) {
+    return "Gmail paused";
   }
-  return `${providerText} syncing`;
+  if (progress?.writtenThreads != null && progress.writtenThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.writtenThreads)} threads`;
+  }
+  if (progress?.fetchedThreads != null && progress.fetchedThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.fetchedThreads)} scanned`;
+  }
+  if (progress?.listedThreads != null && progress.listedThreads > 0) {
+    return `Gmail syncing · ${formatNumber(progress.listedThreads)} listed`;
+  }
+  return "Gmail syncing";
 }
 
 function cloudSyncStatusPillActive(status: CloudSyncStatus): boolean {
   if (status.state !== "syncing") return false;
+  if (status.providers?.includes("linkedin") && !status.providers?.includes("gmail")) return true;
+  if (!status.providers?.includes("gmail")) return false;
   return status.progress?.backfillStatus !== "paused" && !isFutureIso(status.progress?.resumeAfter);
 }
 
 function cloudSyncStatusPillTitle(status: CloudSyncStatus): string {
   if (status.state === "error") return status.message || "Cloud sync failed";
   if (status.state !== "syncing") return "";
-  const providerText = cloudSyncProviderText(status);
+  const providers = status.providers ?? [];
+  const providerName = providers.includes("linkedin") && !providers.includes("gmail")
+    ? "LinkedIn"
+    : providers.includes("gmail") && providers.includes("linkedin")
+      ? "Gmail and LinkedIn"
+      : "Gmail";
   const progress = status.progress;
   const parts = [
     progress?.listedThreads != null ? `${formatNumber(progress.listedThreads)} listed` : undefined,
@@ -1840,26 +1859,7 @@ function cloudSyncStatusPillTitle(status: CloudSyncStatus): string {
     progress?.writtenThreads != null ? `${formatNumber(progress.writtenThreads)} threads written` : undefined,
     progress?.writtenMessages != null ? `${formatNumber(progress.writtenMessages)} messages written` : undefined
   ].filter((part): part is string => Boolean(part));
-  return parts.length > 0
-    ? `${providerText} sync in progress: ${parts.join(", ")}`
-    : `${providerText} sync in progress`;
-}
-
-function cloudSyncProviderText(status: Extract<CloudSyncStatus, { state: "syncing" }>): string {
-  const providers = status.providers ?? [];
-  const hasGmail = providers.includes("gmail");
-  const hasLinkedIn = providers.includes("linkedin");
-  if (hasGmail && hasLinkedIn) return "Gmail and LinkedIn";
-  if (hasLinkedIn) return "LinkedIn";
-  if (hasGmail) return "Gmail";
-  return "Integrations";
-}
-
-function cloudSyncPrimaryChannel(status: CloudSyncStatus): CommunicationChannel | null {
-  if (status.state !== "syncing") return null;
-  if (status.providers?.includes("linkedin") && !status.providers.includes("gmail")) return "linkedin";
-  if (status.providers?.includes("gmail")) return "email";
-  return null;
+  return parts.length > 0 ? `${providerName} sync in progress: ${parts.join(", ")}` : `${providerName} sync in progress`;
 }
 
 function isFutureIso(value: string | undefined): boolean {
@@ -4331,6 +4331,29 @@ type RelatedRecord = {
 type CommunicationChannel = "email" | "linkedin" | "other";
 type CommunicationDirection = "inbound" | "outbound" | "unknown";
 
+type EmailBodyTextSegment = {
+  text: string;
+  href?: string;
+};
+
+type EmailBodyRenderBlock =
+  | { type: "paragraph"; text: string; segments?: EmailBodyTextSegment[] }
+  | { type: "forwarded_header"; fields: Record<string, string> }
+  | { type: "quote"; text: string; depth: number }
+  | { type: "signature"; text: string }
+  | { type: "disclaimer"; text: string };
+
+type EmailBodyRender = {
+  version: 1;
+  blocks: EmailBodyRenderBlock[];
+};
+
+type EmailAttachmentMetadata = {
+  filename?: string;
+  mimeType?: string;
+  size?: number;
+};
+
 type CommunicationMessage = RelatedRecord & {
   senderLabel: string;
   recipientLabels: string[];
@@ -4542,6 +4565,11 @@ function getScalar(attrs: Record<string, unknown>, key: string): string {
   return displayUnknown(value);
 }
 
+function getSingleAttrValue(attrs: Record<string, unknown>, key: string): unknown {
+  const value = attrs[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function displayUnknown(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -4574,10 +4602,14 @@ function getRecordRefIds(attrs: Record<string, unknown>, key: string): string[] 
   const value = attrs[key];
   const values = Array.isArray(value) ? value : value == null ? [] : [value];
   return values.flatMap((item) => {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+    if (!isPlainObject(item)) return [];
     const ref = item as Record<string, unknown>;
     return typeof ref.target_record_id === "string" ? [ref.target_record_id] : [];
   });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function communicationChannel(attrs: Record<string, unknown>): CommunicationChannel {
@@ -5073,8 +5105,7 @@ function MessageThreadRow({
     (channel === "linkedin" ? "LinkedIn conversation" : "Email thread");
   const preview =
     getScalar(thread.attrs, "snippet") ||
-    getScalar(latest?.attrs ?? {}, "snippet") ||
-    getScalar(latest?.attrs ?? {}, "body_text");
+    messagePreviewText(latest);
   const latestAt =
     getScalar(thread.attrs, "last_message_at") ||
     getScalar(latest?.attrs ?? {}, "sent_at");
@@ -5177,9 +5208,21 @@ function ThreadMessageCard({
   const direction = communicationDirection(message.attrs);
   const from = messageSenderLabel(message, person);
   const sentAt = getScalar(message.attrs, "sent_at");
-  const body = normalizeEmailBody(getScalar(message.attrs, "body_text") || getScalar(message.attrs, "snippet"));
-  const paragraphs = body ? body.split(/\n{2,}/).filter((paragraph) => paragraph.trim()) : [];
-  const expandable = body.length > 900 || paragraphs.length > 4;
+  const renderBody = emailBodyRenderFromAttrs(message.attrs);
+  const attachments = emailAttachmentsFromAttrs(message.attrs);
+  const fallbackBody = normalizeEmailBody(getScalar(message.attrs, "body_text") || getScalar(message.attrs, "snippet"));
+  const fallbackParagraphs = fallbackBody ? fallbackBody.split(/\n{2,}/).filter((paragraph) => paragraph.trim()) : [];
+  const mainBlocks = renderBody?.blocks.filter((block) => !isEmailDetailBlock(block)) ?? [];
+  const detailBlocks = renderBody?.blocks.filter(isEmailDetailBlock) ?? [];
+  const renderedBlocks = expanded ? renderBody?.blocks ?? [] : mainBlocks;
+  const hasRenderBlocks = Boolean(renderBody?.blocks.length);
+  const longBody = hasRenderBlocks
+    ? mainBlocks.length > 5 || mainBlocks.some((block) => emailBlockText(block).length > 1200)
+    : fallbackBody.length > 900 || fallbackParagraphs.length > 4;
+  const expandable = longBody || detailBlocks.length > 0;
+  const expandLabel = expanded
+    ? longBody ? "Show less" : "Hide quoted details"
+    : longBody ? "Show full message" : "Show quoted details";
 
   return (
     <article className="thread-message" data-direction={direction}>
@@ -5193,27 +5236,197 @@ function ThreadMessageCard({
       </div>
       <div
         className="thread-message__body"
-        data-collapsed={expandable && !expanded ? "true" : undefined}
+        data-collapsed={longBody && !expanded ? "true" : undefined}
       >
-        {body ? (
-          paragraphs.map((paragraph, index) => (
+        {hasRenderBlocks ? (
+          renderedBlocks.map((block, index) => (
+            <EmailBodyBlockView key={`${block.type}-${index}`} block={block} />
+          ))
+        ) : fallbackBody ? (
+          fallbackParagraphs.map((paragraph, index) => (
             <p key={index}>{linkifyText(paragraph)}</p>
           ))
         ) : (
-          <p className="thread-message__empty">No body text saved for this message.</p>
+          <p className="thread-message__empty">No message body saved.</p>
         )}
       </div>
+      {attachments.length > 0 && (
+        <div className="thread-message__attachments">
+          {attachments.map((attachment, index) => (
+            <span key={`${attachment.filename ?? attachment.mimeType ?? "attachment"}-${index}`}>
+              <Paperclip size={13} className="lucide" />
+              <span>{attachmentLabel(attachment)}</span>
+            </span>
+          ))}
+        </div>
+      )}
       {expandable && (
         <button
           type="button"
           className="thread-message__expand"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "Show less" : "Show full message"}
+          {expandLabel}
         </button>
       )}
     </article>
   );
+}
+
+function EmailBodyBlockView({ block }: { block: EmailBodyRenderBlock }) {
+  if (block.type === "paragraph") {
+    return <p>{renderEmailText(block)}</p>;
+  }
+  if (block.type === "forwarded_header") {
+    const entries = forwardedHeaderEntries(block.fields);
+    if (entries.length === 0) return null;
+    return (
+      <dl className="email-forwarded-header">
+        {entries.map(([key, value]) => (
+          <div key={key}>
+            <dt>{key}</dt>
+            <dd>{linkifyText(value)}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+
+  const paragraphs = block.text.split(/\n{2,}/).filter((paragraph) => paragraph.trim());
+  return (
+    <div
+      className="email-detail-block"
+      data-kind={block.type}
+      data-depth={block.type === "quote" ? String(Math.min(Math.max(block.depth, 1), 4)) : undefined}
+    >
+      {paragraphs.map((paragraph, index) => (
+        <p key={index}>{linkifyText(paragraph)}</p>
+      ))}
+    </div>
+  );
+}
+
+function messagePreviewText(message: CommunicationMessage | undefined): string {
+  if (!message) return "";
+  return (
+    getScalar(message.attrs, "body_preview") ||
+    getScalar(message.attrs, "snippet") ||
+    emailRenderPreview(emailBodyRenderFromAttrs(message.attrs)) ||
+    getScalar(message.attrs, "body_text")
+  );
+}
+
+function emailBodyRenderFromAttrs(attrs: Record<string, unknown>): EmailBodyRender | null {
+  const value = getSingleAttrValue(attrs, "body_render_json");
+  if (!isPlainObject(value) || value.version !== 1 || !Array.isArray(value.blocks)) return null;
+  const blocks = value.blocks
+    .map(normalizeEmailRenderBlock)
+    .filter((block): block is EmailBodyRenderBlock => Boolean(block));
+  return { version: 1, blocks };
+}
+
+function normalizeEmailRenderBlock(value: unknown): EmailBodyRenderBlock | null {
+  if (!isPlainObject(value) || typeof value.type !== "string") return null;
+  if (value.type === "forwarded_header") {
+    if (!isPlainObject(value.fields)) return null;
+    const fields = Object.fromEntries(
+      Object.entries(value.fields)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+        .map(([key, fieldValue]) => [key.toLowerCase(), fieldValue.trim()])
+    );
+    return Object.keys(fields).length > 0 ? { type: "forwarded_header", fields } : null;
+  }
+
+  const text = typeof value.text === "string" ? value.text.trim() : "";
+  if (!text) return null;
+  if (value.type === "paragraph") {
+    const segments = normalizeEmailTextSegments(value.segments);
+    return { type: "paragraph", text, ...(segments ? { segments } : {}) };
+  }
+  if (value.type === "quote") {
+    const rawDepth = typeof value.depth === "number" ? value.depth : 1;
+    const depth = Number.isFinite(rawDepth) ? Math.max(1, Math.min(Math.round(rawDepth), 4)) : 1;
+    return { type: "quote", text, depth };
+  }
+  if (value.type === "signature") return { type: "signature", text };
+  if (value.type === "disclaimer") return { type: "disclaimer", text };
+  return null;
+}
+
+function emailAttachmentsFromAttrs(attrs: Record<string, unknown>): EmailAttachmentMetadata[] {
+  const raw = attrs.attachments_json;
+  const value = Array.isArray(raw) && raw.every(isPlainObject) ? raw : getSingleAttrValue(attrs, "attachments_json");
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isPlainObject(item)) return [];
+    const filename = typeof item.filename === "string" ? item.filename.trim() : "";
+    const mimeType = typeof item.mimeType === "string" ? item.mimeType.trim() : "";
+    const size = typeof item.size === "number" && Number.isFinite(item.size) ? item.size : undefined;
+    if (!filename && !mimeType) return [];
+    return [{ ...(filename ? { filename } : {}), ...(mimeType ? { mimeType } : {}), ...(size != null ? { size } : {}) }];
+  });
+}
+
+function emailRenderPreview(renderBody: EmailBodyRender | null): string {
+  const paragraph = renderBody?.blocks.find((block) => block.type === "paragraph");
+  return paragraph ? paragraph.text : "";
+}
+
+function renderEmailText(block: { text: string; segments?: EmailBodyTextSegment[] }): ReactNode[] {
+  if (!block.segments?.length) return linkifyText(block.text);
+  return block.segments.map((segment, index) => {
+    if (!segment.href) return segment.text;
+    return (
+      <a key={`segment-${index}`} href={normalizeLinkHref(segment.href)} target="_blank" rel="noreferrer">
+        {segment.text}
+      </a>
+    );
+  });
+}
+
+function normalizeEmailTextSegments(value: unknown): EmailBodyTextSegment[] | null {
+  if (!Array.isArray(value)) return null;
+  const segments = value.flatMap((item) => {
+    if (!isPlainObject(item) || typeof item.text !== "string") return [];
+    const text = item.text;
+    const href = typeof item.href === "string" ? item.href.trim() : "";
+    if (!text) return [];
+    return [{ text, ...(href ? { href } : {}) }];
+  });
+  return segments.some((segment) => segment.href) ? segments : null;
+}
+
+function isEmailDetailBlock(block: EmailBodyRenderBlock): boolean {
+  return block.type === "quote" || block.type === "signature" || block.type === "disclaimer";
+}
+
+function emailBlockText(block: EmailBodyRenderBlock): string {
+  return block.type === "forwarded_header" ? Object.values(block.fields).join(" ") : block.text;
+}
+
+function forwardedHeaderEntries(fields: Record<string, string>): Array<[string, string]> {
+  const labels: Record<string, string> = {
+    from: "From",
+    date: "Date",
+    subject: "Subject",
+    to: "To",
+    cc: "Cc",
+    bcc: "Bcc"
+  };
+  return ["from", "date", "subject", "to", "cc", "bcc"]
+    .filter((key) => fields[key])
+    .map((key) => [labels[key] ?? key, fields[key]!] as [string, string]);
+}
+
+function attachmentLabel(attachment: EmailAttachmentMetadata): string {
+  const name = attachment.filename || attachment.mimeType || "Attachment";
+  return attachment.size != null ? `${name} · ${formatBytes(attachment.size)}` : name;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function messageSenderLabel(message: CommunicationMessage, person: RecordPreview): string {

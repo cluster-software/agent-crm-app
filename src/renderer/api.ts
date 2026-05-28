@@ -342,9 +342,37 @@ const previewWorkspace: WorkspaceSummary = {
       plural_name: "Communication messages",
       attributes: [
         {
+          attribute_slug: "body_preview",
+          title: "Body preview",
+          attribute_type: "text",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
           attribute_slug: "body_text",
           title: "Body text",
           attribute_type: "text",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
+          attribute_slug: "body_html_sanitized",
+          title: "Body HTML sanitized",
+          attribute_type: "text",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
+          attribute_slug: "body_render_json",
+          title: "Body render JSON",
+          attribute_type: "json",
+          is_multivalued: false,
+          is_unique: false
+        },
+        {
+          attribute_slug: "attachments_json",
+          title: "Attachments JSON",
+          attribute_type: "json",
           is_multivalued: false,
           is_unique: false
         },
@@ -636,13 +664,19 @@ const browserPreview: AppBridge = {
           { rec_id: "preview-message-1", attr: "sender", ref_object: "people", ref_record_id: "preview-user" },
           { rec_id: "preview-message-1", attr: "recipients", ref_object: "people", ref_record_id: "preview-person" },
           { rec_id: "preview-message-1", attr: "sent_at", val: JSON.stringify("2026-05-15T21:10:00.000Z") },
+          { rec_id: "preview-message-1", attr: "body_preview", val: JSON.stringify("Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.") },
           { rec_id: "preview-message-1", attr: "body_text", val: JSON.stringify("Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.") },
+          { rec_id: "preview-message-1", attr: "body_render_json", val: JSON.stringify({ version: 1, source: "gmail", blocks: [{ type: "paragraph", text: "Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.", segments: [{ text: "Great chatting yesterday. Per your ask, here's the " }, { text: "headless CLI quickstart", href: "https://docs.agent-crm.test/cli" }, { text: " and the " }, { text: "auth-token guide", href: "https://docs.agent-crm.test/auth" }, { text: "." }] }] }) },
+          { rec_id: "preview-message-1", attr: "attachments_json", val: JSON.stringify([]) },
           { rec_id: "preview-message-2", attr: "channel", val: JSON.stringify("email") },
           { rec_id: "preview-message-2", attr: "direction", val: JSON.stringify("inbound") },
           { rec_id: "preview-message-2", attr: "sender", ref_object: "people", ref_record_id: "preview-person" },
           { rec_id: "preview-message-2", attr: "recipients", ref_object: "people", ref_record_id: "preview-user" },
           { rec_id: "preview-message-2", attr: "sent_at", val: JSON.stringify("2026-05-25T17:18:00.000Z") },
-          { rec_id: "preview-message-2", attr: "body_text", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?") }
+          { rec_id: "preview-message-2", attr: "body_preview", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us.") },
+          { rec_id: "preview-message-2", attr: "body_text", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?\n\nOn Fri, May 15, 2026 at 2:10 PM Margaret Hamilton wrote:\n> Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.") },
+          { rec_id: "preview-message-2", attr: "body_render_json", val: JSON.stringify({ version: 1, source: "gmail", blocks: [{ type: "paragraph", text: "Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?" }, { type: "quote", depth: 1, text: "On Fri, May 15, 2026 at 2:10 PM Margaret Hamilton wrote:\nGreat chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide." }] }) },
+          { rec_id: "preview-message-2", attr: "attachments_json", val: JSON.stringify([{ filename: "security-overview.pdf", mimeType: "application/pdf", size: 248320 }]) }
         ],
         rowsAffected: 0
       };
