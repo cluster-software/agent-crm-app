@@ -282,6 +282,12 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
   padding-top: 10px;
   min-width: 0;
 }
+.sidebar-footer > .cloud-sync-pill {
+  align-self: stretch;
+  width: calc(100% - 16px);
+  max-width: none;
+  margin: 0 8px 8px;
+}
 .sidebar-footer__settings {
   all: unset;
   box-sizing: border-box;
@@ -931,6 +937,74 @@ body.resizing-terminal * { cursor: col-resize !important; }
   border-radius: 50%;
   flex-shrink: 0;
 }
+.cloud-sync-pill {
+  max-width: 260px;
+  height: 22px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  isolation: isolate;
+}
+.cloud-sync-pill--active {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    conic-gradient(
+      from var(--cloud-sync-pill-angle),
+      color-mix(in srgb, var(--accent) 24%, transparent) 0deg,
+      color-mix(in srgb, var(--accent) 24%, transparent) 216deg,
+      color-mix(in srgb, var(--accent) 65%, transparent) 258deg,
+      color-mix(in srgb, var(--accent) 90%, transparent) 294deg,
+      color-mix(in srgb, var(--accent) 65%, transparent) 330deg,
+      color-mix(in srgb, var(--accent) 24%, transparent) 360deg
+    ) border-box;
+  animation: cloud-sync-pill-border 2.8s linear infinite;
+}
+.cloud-sync-pill--error {
+  border-color: color-mix(in oklch, var(--danger) 30%, var(--bg));
+  color: var(--danger);
+}
+.cloud-sync-pill > .channel-mark,
+.cloud-sync-pill > .lucide {
+  flex: 0 0 auto;
+}
+.cloud-sync-pill > .lucide {
+  color: var(--text-dim);
+}
+.cloud-sync-pill--error > .lucide {
+  color: currentColor;
+}
+.cloud-sync-pill__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@property --cloud-sync-pill-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes cloud-sync-pill-border {
+  to { --cloud-sync-pill-angle: 1turn; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cloud-sync-pill--active {
+    animation: none;
+  }
+}
 
 /* ─── Avatar / CompanyMark ─────────────────────────────── */
 
@@ -1122,65 +1196,6 @@ body.resizing-terminal * { cursor: col-resize !important; }
   font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-}
-
-.table-toolbar__sync {
-  max-width: min(260px, 30vw);
-  height: 22px;
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 1 auto;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  isolation: isolate;
-}
-.table-toolbar__sync--active {
-  border-color: transparent;
-  background:
-    linear-gradient(var(--surface), var(--surface)) padding-box,
-    conic-gradient(
-      from var(--gmail-sync-pill-angle),
-      color-mix(in srgb, var(--accent) 24%, transparent) 0deg,
-      color-mix(in srgb, var(--accent) 24%, transparent) 216deg,
-      color-mix(in srgb, var(--accent) 65%, transparent) 258deg,
-      color-mix(in srgb, var(--accent) 90%, transparent) 294deg,
-      color-mix(in srgb, var(--accent) 65%, transparent) 330deg,
-      color-mix(in srgb, var(--accent) 24%, transparent) 360deg
-    ) border-box;
-  animation: gmail-sync-pill-border 2.8s linear infinite;
-}
-.table-toolbar__sync svg {
-  flex: 0 0 auto;
-  color: var(--text-dim);
-}
-.table-toolbar__sync span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-@property --gmail-sync-pill-angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
-}
-@keyframes gmail-sync-pill-border {
-  to { --gmail-sync-pill-angle: 1turn; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .table-toolbar__sync--active {
-    animation: none;
-  }
 }
 
 .table-toolbar__pager {
@@ -2584,26 +2599,6 @@ body.resizing-terminal * { cursor: col-resize !important; }
 .records-empty__cli {
   margin-top: 28px;
   width: 100%;
-}
-.records-empty__sync {
-  margin-top: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.4;
-}
-.records-empty__sync svg {
-  color: var(--text-dim);
-  flex: 0 0 auto;
-}
-.records-empty__sync--error {
-  color: var(--danger);
-}
-.records-empty__sync--error svg {
-  color: currentColor;
 }
 
 .schema-table {

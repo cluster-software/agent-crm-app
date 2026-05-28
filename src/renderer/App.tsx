@@ -612,6 +612,7 @@ export function App() {
         <div className="sidebar-spacer" />
 
         <div className="sidebar-footer">
+          <CloudSyncStatusPill status={cloudSyncStatus} />
           <button
             type="button"
             className="sidebar-footer__settings"
@@ -753,7 +754,6 @@ export function App() {
                 object={selectedObject}
                 dataVersion={dataVersion}
                 totalRecords={workspace.counts[selectedObject.object_slug] ?? 0}
-                cloudSyncStatus={cloudSyncStatus}
                 onRowClick={setDetailRecord}
                 focusRequest={recordsFocusRequest}
                 setError={setError}
@@ -1333,7 +1333,6 @@ function RecordsView({
   object,
   dataVersion,
   totalRecords,
-  cloudSyncStatus,
   onRowClick,
   focusRequest,
   setError
@@ -1341,7 +1340,6 @@ function RecordsView({
   object: SchemaObject;
   dataVersion: number;
   totalRecords: number;
-  cloudSyncStatus: CloudSyncStatus;
   onRowClick?: (record: RecordPreview) => void;
   focusRequest: number;
   setError: (error: string | null) => void;
@@ -1668,10 +1666,7 @@ function RecordsView({
 
   if (totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
     return (
-      <RecordsEmptyState
-        slug={object.object_slug}
-        syncStatus={!loadingRecords ? cloudSyncStatus : null}
-      />
+      <RecordsEmptyState slug={object.object_slug} />
     );
   }
 
@@ -1729,7 +1724,6 @@ function RecordsView({
             </>
           )}
         </div>
-        <CloudSyncToolbarStatus status={cloudSyncStatus} />
         <TableFilterControl
           objectName={object.plural_name}
           value={filterQuery}
@@ -1779,50 +1773,65 @@ function RecordsView({
   );
 }
 
-function CloudSyncToolbarStatus({ status }: { status: CloudSyncStatus }) {
-  const text = cloudSyncToolbarStatusText(status);
+function CloudSyncStatusPill({ status }: { status: CloudSyncStatus }) {
+  const text = cloudSyncStatusPillText(status);
   if (!text) return null;
-  const active = cloudSyncToolbarStatusActive(status);
+  const active = cloudSyncStatusPillActive(status);
+  const isError = status.state === "error";
+  const channel = cloudSyncPrimaryChannel(status);
   return (
     <div
-      className={`table-toolbar__sync${active ? " table-toolbar__sync--active" : ""}`}
-      role="status"
+      className={`cloud-sync-pill${active ? " cloud-sync-pill--active" : ""}${isError ? " cloud-sync-pill--error" : ""}`}
+      role={isError ? "alert" : "status"}
       aria-live="polite"
-      title={cloudSyncToolbarStatusTitle(status)}
+      title={cloudSyncStatusPillTitle(status)}
     >
-      <Mail size={12} className="lucide" />
-      <span>{text}</span>
+      {isError ? (
+        <CircleAlert size={12} className="lucide" />
+      ) : channel ? (
+        <ChannelMark channel={channel} size={14} />
+      ) : (
+        <Loader2 size={12} className="lucide spin" />
+      )}
+      <span className="cloud-sync-pill__text">{text}</span>
     </div>
   );
 }
 
-function cloudSyncToolbarStatusText(status: CloudSyncStatus): string | null {
+function cloudSyncStatusPillText(status: CloudSyncStatus): string | null {
+  if (status.state === "error") return status.message || "Cloud sync failed";
   if (status.state !== "syncing") return null;
-  if (!status.providers?.includes("gmail")) return null;
+  const providerText = cloudSyncProviderText(status);
   const progress = status.progress;
   if (progress?.backfillStatus === "paused" || isFutureIso(progress?.resumeAfter)) {
-    return "Gmail paused";
+    return `${providerText} paused`;
   }
-  if (progress?.writtenThreads != null && progress.writtenThreads > 0) {
-    return `Gmail syncing · ${formatNumber(progress.writtenThreads)} threads`;
+  if (status.providers?.includes("gmail")) {
+    if (progress?.writtenThreads != null && progress.writtenThreads > 0) {
+      return `${providerText} syncing · ${formatNumber(progress.writtenThreads)} threads`;
+    }
+    if (progress?.fetchedThreads != null && progress.fetchedThreads > 0) {
+      return `${providerText} syncing · ${formatNumber(progress.fetchedThreads)} scanned`;
+    }
+    if (progress?.listedThreads != null && progress.listedThreads > 0) {
+      return `${providerText} syncing · ${formatNumber(progress.listedThreads)} listed`;
+    }
   }
-  if (progress?.fetchedThreads != null && progress.fetchedThreads > 0) {
-    return `Gmail syncing · ${formatNumber(progress.fetchedThreads)} scanned`;
+  if (progress?.writtenMessages != null && progress.writtenMessages > 0) {
+    return `${providerText} syncing · ${formatNumber(progress.writtenMessages)} messages`;
   }
-  if (progress?.listedThreads != null && progress.listedThreads > 0) {
-    return `Gmail syncing · ${formatNumber(progress.listedThreads)} listed`;
-  }
-  return "Gmail syncing";
+  return `${providerText} syncing`;
 }
 
-function cloudSyncToolbarStatusActive(status: CloudSyncStatus): boolean {
+function cloudSyncStatusPillActive(status: CloudSyncStatus): boolean {
   if (status.state !== "syncing") return false;
-  if (!status.providers?.includes("gmail")) return false;
   return status.progress?.backfillStatus !== "paused" && !isFutureIso(status.progress?.resumeAfter);
 }
 
-function cloudSyncToolbarStatusTitle(status: CloudSyncStatus): string {
+function cloudSyncStatusPillTitle(status: CloudSyncStatus): string {
+  if (status.state === "error") return status.message || "Cloud sync failed";
   if (status.state !== "syncing") return "";
+  const providerText = cloudSyncProviderText(status);
   const progress = status.progress;
   const parts = [
     progress?.listedThreads != null ? `${formatNumber(progress.listedThreads)} listed` : undefined,
@@ -1831,7 +1840,26 @@ function cloudSyncToolbarStatusTitle(status: CloudSyncStatus): string {
     progress?.writtenThreads != null ? `${formatNumber(progress.writtenThreads)} threads written` : undefined,
     progress?.writtenMessages != null ? `${formatNumber(progress.writtenMessages)} messages written` : undefined
   ].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? `Gmail sync in progress: ${parts.join(", ")}` : "Gmail sync in progress";
+  return parts.length > 0
+    ? `${providerText} sync in progress: ${parts.join(", ")}`
+    : `${providerText} sync in progress`;
+}
+
+function cloudSyncProviderText(status: Extract<CloudSyncStatus, { state: "syncing" }>): string {
+  const providers = status.providers ?? [];
+  const hasGmail = providers.includes("gmail");
+  const hasLinkedIn = providers.includes("linkedin");
+  if (hasGmail && hasLinkedIn) return "Gmail and LinkedIn";
+  if (hasLinkedIn) return "LinkedIn";
+  if (hasGmail) return "Gmail";
+  return "Integrations";
+}
+
+function cloudSyncPrimaryChannel(status: CloudSyncStatus): CommunicationChannel | null {
+  if (status.state !== "syncing") return null;
+  if (status.providers?.includes("linkedin") && !status.providers.includes("gmail")) return "linkedin";
+  if (status.providers?.includes("gmail")) return "email";
+  return null;
 }
 
 function isFutureIso(value: string | undefined): boolean {
@@ -1879,11 +1907,9 @@ const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
 };
 
 function RecordsEmptyState({
-  slug,
-  syncStatus
+  slug
 }: {
   slug: string;
-  syncStatus: CloudSyncStatus | null;
 }) {
   const config = RECORDS_EMPTY_STATES[slug];
   if (!config) return null;
@@ -1900,43 +1926,9 @@ function RecordsEmptyState({
         <div className="records-empty__cli">
           <CliBlock comment={config.comment} command={ACRM_ONBOARDING_PROMPT} />
         </div>
-        <RecordsEmptySyncStatus status={syncStatus} />
       </div>
     </div>
   );
-}
-
-function RecordsEmptySyncStatus({ status }: { status: CloudSyncStatus | null }) {
-  const statusText = cloudSyncStatusText(status);
-  if (!statusText) return null;
-  const isError = status?.state === "error";
-  return (
-    <div
-      className={`records-empty__sync${isError ? " records-empty__sync--error" : ""}`}
-      role={isError ? "alert" : "status"}
-      aria-live="polite"
-    >
-      {isError ? (
-        <CircleAlert size={13} className="lucide" />
-      ) : (
-        <Loader2 size={13} className="lucide spin" />
-      )}
-      <span>{statusText}</span>
-    </div>
-  );
-}
-
-function cloudSyncStatusText(status: CloudSyncStatus | null): string | null {
-  if (!status) return null;
-  if (status.state === "error") return status.message || "Gmail sync failed";
-  if (status.state !== "syncing" || status.showInEmptyState !== true) return null;
-  const providers = status.providers ?? [];
-  const hasGmail = providers.includes("gmail");
-  const hasLinkedIn = providers.includes("linkedin");
-  if (hasGmail && hasLinkedIn) return "Syncing Gmail and LinkedIn";
-  if (hasGmail) return "Syncing Gmail";
-  if (hasLinkedIn) return "Syncing LinkedIn";
-  return "Syncing integrations";
 }
 
 function SchemaTablePreview({
@@ -4725,8 +4717,7 @@ function PersonDetail({
 }) {
   const baseMeta = record.subtitle && record.subtitle !== "Person" ? record.subtitle : "";
   const profilePictureUrl = recordImageUrl(record, "profile_picture_url");
-  const [companyName, setCompanyName] = useState("");
-  const meta = uniqueNonEmpty([baseMeta, companyName]).join(" · ") || null;
+  const meta = baseMeta || null;
   const contactRows = buildContactRows(record);
   const detailRef = useRef<HTMLDivElement | null>(null);
   const handledFocusRequestRef = useRef(0);
@@ -4743,21 +4734,6 @@ function PersonDetail({
   useEffect(() => {
     setSelectedThreadId(null);
   }, [record.record_id, tab]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setCompanyName("");
-    fetchPersonCompanyName(record.record_id)
-      .then((name) => {
-        if (!cancelled) setCompanyName(name);
-      })
-      .catch(() => {
-        if (!cancelled) setCompanyName("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [record.record_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5481,25 +5457,6 @@ function RelatedList({
       })}
     </ul>
   );
-}
-
-async function fetchPersonCompanyName(personRecordId: string): Promise<string> {
-  const result = await api.runQuery(
-    `SELECT cv.value_json AS company_name
-       FROM acrm_value pv
-       LEFT JOIN acrm_value cv
-         ON cv.object_slug = 'companies'
-        AND cv.record_id = pv.ref_record_id
-        AND cv.attribute_slug = 'name'
-        AND cv.active_until IS NULL
-      WHERE pv.object_slug = 'people'
-        AND pv.record_id = $1
-        AND pv.attribute_slug = 'company'
-        AND pv.active_until IS NULL
-      LIMIT 1`,
-    [personRecordId]
-  );
-  return scalarText(parseValueJson(result.rows[0]?.company_name));
 }
 
 function uniqueNonEmpty(values: string[]): string[] {
