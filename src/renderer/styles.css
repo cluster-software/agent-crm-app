@@ -935,9 +935,11 @@ body.resizing-terminal * { cursor: col-resize !important; }
 /* ─── Avatar / CompanyMark ─────────────────────────────── */
 
 .avatar {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   border-radius: 50%;
   border: 1px solid var(--border);
   color: oklch(0.95 0.01 80);
@@ -947,6 +949,18 @@ body.resizing-terminal * { cursor: col-resize !important; }
   box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
   flex-shrink: 0;
   text-transform: uppercase;
+}
+.avatar__initials {
+  position: relative;
+  z-index: 0;
+}
+.avatar__image {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .company-mark {

@@ -2092,7 +2092,10 @@ function requestedRecordAttributes(
   signals: SignalDefinitionSummary[],
 ) {
   const attrs = new Set(pickValueColumns(object, [], signals).map((column) => column.slug));
-  if (object.object_slug === "people") attrs.add("job_title");
+  if (object.object_slug === "people") {
+    attrs.add("job_title");
+    attrs.add("profile_picture_url");
+  }
   if (object.object_slug === "deals") {
     for (const attr of [
       "stage",
@@ -2299,7 +2302,7 @@ function useRecordColumns(
             record.subtitle !== object.singular_name;
           return (
             <span className="cell-identity">
-              <IdentityMark object={object} name={record.label} />
+              <IdentityMark object={object} record={record} />
               <span className="cell-identity__name">{record.label}</span>
               {showSubtitle && (
                 <span className="cell-identity__domain">{record.subtitle}</span>
@@ -3418,10 +3421,23 @@ function TableSkeleton({ columnCount }: { columnCount: number }) {
   );
 }
 
-function IdentityMark({ object, name }: { object: SchemaObject; name: string }) {
-  if (object.object_slug === "people") return <Avatar name={name} size={20} />;
-  if (object.object_slug === "companies") return <CompanyMark name={name} size={20} />;
-  return <CompanyMark name={`${object.singular_name} ${name}`} size={20} />;
+function IdentityMark({ object, record }: { object: SchemaObject; record: RecordPreview }) {
+  if (object.object_slug === "people") {
+    return <Avatar name={record.label} size={20} src={recordImageUrl(record, "profile_picture_url")} />;
+  }
+  if (object.object_slug === "companies") return <CompanyMark name={record.label} size={20} />;
+  return <CompanyMark name={`${object.singular_name} ${record.label}`} size={20} />;
+}
+
+function recordImageUrl(record: RecordPreview, attributeSlug: string): string | undefined {
+  const value = record.values.find((item) => item.attribute_slug === attributeSlug);
+  const display = value?.display.trim();
+  if (display) return display;
+  for (const raw of value?.values ?? []) {
+    const text = scalarText(raw).trim();
+    if (text) return text;
+  }
+  return undefined;
 }
 
 function ValueCell({
