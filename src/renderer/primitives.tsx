@@ -97,10 +97,12 @@ function hashHue(str: string): number {
 
 export function Avatar({
   name,
-  size = 22
+  size = 22,
+  src
 }: {
   name: string;
   size?: number;
+  src?: string;
 }) {
   const parts = name.trim().split(/\s+/).slice(0, 2);
   const initials = parts.map((p) => p[0] ?? "").join("") || "?";
@@ -115,7 +117,19 @@ export function Avatar({
         fontSize: Math.max(9, size * 0.42)
       }}
     >
-      {initials}
+      <span className="avatar__initials">{initials}</span>
+      {src ? (
+        <img
+          className="avatar__image"
+          src={src}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      ) : null}
     </span>
   );
 }
