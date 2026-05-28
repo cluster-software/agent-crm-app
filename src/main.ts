@@ -1374,7 +1374,8 @@ async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
         gmail: normalizeIntegrationProvider(integrations.gmail),
         linkedin: normalizeIntegrationProvider(
           integrations.linkedin ?? integrations.linkedIn ?? integrations.linkedin_unipile
-        )
+        ),
+        granola: normalizeIntegrationProvider(integrations.granola)
       }
     };
   } catch (error) {

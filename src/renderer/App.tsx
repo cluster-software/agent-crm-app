@@ -100,6 +100,7 @@ type DealsViewMode = "table" | "kanban";
 const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
+const WORKSPACE_LOCK_RETRY_MS = 1000;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -133,6 +134,11 @@ function formatNumber(value: number) {
 function statusFromError(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isDatabaseLockedError(error: unknown) {
+  const message = statusFromError(error).toLowerCase();
+  return message.includes("database is locked") || message.includes("sqlite_busy");
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
@@ -252,9 +258,30 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    refreshWorkspace()
-      .catch((err) => setError(statusFromError(err)))
-      .finally(() => setLoading(""));
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const load = () => {
+      refreshWorkspace()
+        .catch((err) => {
+          if (cancelled) return;
+          if (isDatabaseLockedError(err)) {
+            retryTimer = setTimeout(() => {
+              retryTimer = null;
+              load();
+            }, WORKSPACE_LOCK_RETRY_MS);
+            return;
+          }
+          setError(statusFromError(err));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading("");
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [refreshWorkspace]);
 
   useEffect(() => {
@@ -283,8 +310,17 @@ export function App() {
             if (!isDefaultRecordsWorkspaceEmpty(summary)) return;
             return api.triggerCloudSync();
           })
-          .catch((err) => setError(statusFromError(err)));
-        setDataVersion((v) => v + 1);
+          .then(() => setDataVersion((v) => v + 1))
+          .catch((err) => {
+            if (isDatabaseLockedError(err)) {
+              timer = setTimeout(() => {
+                timer = null;
+                trigger();
+              }, WORKSPACE_LOCK_RETRY_MS);
+              return;
+            }
+            setError(statusFromError(err));
+          });
       }, 150);
     };
     const onVisible = () => {
@@ -1193,10 +1229,17 @@ function IntegrationsSettingsPanel({
           channel="linkedin"
           status={integrations.integrations.linkedin}
         />
+        <IntegrationProviderRow
+          title="Granola"
+          channel="granola"
+          status={integrations.integrations.granola}
+        />
       </div>
     </section>
   );
 }
+
+type IntegrationProviderChannel = "email" | "linkedin" | "granola";
 
 function IntegrationProviderRow({
   title,
@@ -1204,7 +1247,7 @@ function IntegrationProviderRow({
   status
 }: {
   title: string;
-  channel: "email" | "linkedin";
+  channel: IntegrationProviderChannel;
   status: IntegrationProviderStatus;
 }) {
   const accounts = integrationAccounts(status);
@@ -1213,7 +1256,7 @@ function IntegrationProviderRow({
       <header className="settings-integration__header">
         <div className="settings-integration__provider">
           <span className="settings-integration__icon">
-            <ChannelMark channel={channel} size={24} />
+            <IntegrationProviderMark channel={channel} />
           </span>
           <div className="settings-integration__title">
             <h2>{title}</h2>
@@ -1240,6 +1283,17 @@ function IntegrationProviderRow({
       )}
     </article>
   );
+}
+
+function IntegrationProviderMark({ channel }: { channel: IntegrationProviderChannel }) {
+  if (channel === "granola") {
+    return (
+      <span className="integration-mark" title="Granola">
+        <FileText size={14} className="lucide" />
+      </span>
+    );
+  }
+  return <ChannelMark channel={channel} size={24} />;
 }
 
 function integrationAccounts(status: IntegrationProviderStatus): IntegrationAccountSummary[] {
@@ -1439,6 +1493,7 @@ function RecordsView({
       setLoadedSearchQuery(searchQuery);
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
+      if (isDatabaseLockedError(err)) return;
       setError(statusFromError(err));
     } finally {
       if (requestId === requestIdRef.current && !quiet) {

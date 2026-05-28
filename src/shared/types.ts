@@ -94,6 +94,7 @@ export type CloudIntegrationsStatus =
       integrations: {
         gmail: IntegrationProviderStatus;
         linkedin: IntegrationProviderStatus;
+        granola: IntegrationProviderStatus;
       };
     }
   | { state: "error"; message: string };
