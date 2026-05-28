@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.21.0-295b305...v0.22.0-295b305) (2026-05-28)
+
+
+### Features
+
+* import linkedin sync chunks ([54985f1](https://github.com/cluster-software/agent-crm-app/commit/54985f1372fa36a8bb0bc6f86823bbb4186f0531))
+
 ## [0.21.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.20.3-295b305...v0.21.0-295b305) (2026-05-28)
 
 
