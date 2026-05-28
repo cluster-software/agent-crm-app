@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.2-295b305...v0.19.3-295b305) (2026-05-28)
+
+
+### Bug Fixes
+
+* prevent workspace lock errors during imports ([e88b478](https://github.com/cluster-software/agent-crm-app/commit/e88b47887dd3026414936e5bcec7936dfe2e2d39))
+* prevent workspace lock errors during imports ([cd5b1d3](https://github.com/cluster-software/agent-crm-app/commit/cd5b1d3e9501883f70ddd79417379d5e7290e307))
+
 ## [0.19.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.1-295b305...v0.19.2-295b305) (2026-05-28)
 
 
