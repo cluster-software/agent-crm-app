@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.19.0-295b305...v0.19.1-295b305) (2026-05-28)
+
+
+### Bug Fixes
+
+* open auth flows in system browser ([31c9d12](https://github.com/cluster-software/agent-crm-app/commit/31c9d12932a4e8c88a6ce69f215318026db01680))
+* preflight acrm cli before terminal launch ([15aeef1](https://github.com/cluster-software/agent-crm-app/commit/15aeef18efbfc3b7f9026d8649b9cd594e000c34))
+* preflight acrm cli before terminal launch ([dd10843](https://github.com/cluster-software/agent-crm-app/commit/dd1084350f358423f42d0c7e9e71bd3d41ae20eb))
+
 ## [0.19.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.18.1-295b305...v0.19.0-295b305) (2026-05-27)
 
 
