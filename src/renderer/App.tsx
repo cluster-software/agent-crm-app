@@ -5012,22 +5012,24 @@ function MessagesList({
 
   return (
     <div className="messages-panel">
-      <div className="messages-subhead">
-        <div className="messages-segmented" role="tablist" aria-label="Message channel">
-          {segments.map((segment) => (
-            <button
-              key={segment.id}
-              type="button"
-              className="messages-segment"
-              aria-selected={active === segment.id}
-              onClick={() => onActive(segment.id)}
-            >
-              <span>{segment.label}</span>
-              <span className="messages-segment__count">{segment.count}</span>
-            </button>
-          ))}
+      {allThreads.length > 0 && (
+        <div className="messages-subhead">
+          <div className="messages-segmented" role="tablist" aria-label="Message channel">
+            {segments.map((segment) => (
+              <button
+                key={segment.id}
+                type="button"
+                className="messages-segment"
+                aria-selected={active === segment.id}
+                onClick={() => onActive(segment.id)}
+              >
+                <span>{segment.label}</span>
+                <span className="messages-segment__count">{segment.count}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {threads.length === 0 ? (
         <div className="empty-inline">
