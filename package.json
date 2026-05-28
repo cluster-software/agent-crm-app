@@ -1,6 +1,6 @@
 {
   "name": "agent-crm-app",
-  "version": "0.19.4-295b305",
+  "version": "0.20.0-295b305",
   "private": true,
   "type": "module",
   "main": "dist/electron/main.js",
