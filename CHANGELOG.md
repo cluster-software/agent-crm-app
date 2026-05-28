@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.20.3-295b305...v0.21.0-295b305) (2026-05-28)
+
+
+### Features
+
+* render structured email messages ([#133](https://github.com/cluster-software/agent-crm-app/issues/133)) ([e1a7f15](https://github.com/cluster-software/agent-crm-app/commit/e1a7f158ae18a62d0de3f402396a5054525d6a7d))
+
 ## [0.20.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.20.2-295b305...v0.20.3-295b305) (2026-05-28)
 
 
