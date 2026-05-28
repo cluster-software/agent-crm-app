@@ -59,8 +59,10 @@ const AGENT_CLI_INSTALL_TIMEOUT_MS = 120 * 1000;
 const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
 const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
-const gmailPartialImportsByWorkspace = new Map<string, GmailPartialImportState>();
+const gmailPartialImportsByWorkspace = new Map<string, CommunicationPartialImportState>();
 const gmailCompletedImportsByWorkspace = new Map<string, string>();
+const linkedInPartialImportsByWorkspace = new Map<string, CommunicationPartialImportState>();
+const linkedInCompletedImportsByWorkspace = new Map<string, string>();
 
 type CommunicationImportStats = {
   people_created: number;
@@ -68,7 +70,7 @@ type CommunicationImportStats = {
   communication_messages_created: number;
 };
 
-type GmailPartialImportState = {
+type CommunicationPartialImportState = {
   importedWrittenThreads: number;
   importedWrittenMessages: number;
   lastImportAtMs: number;
@@ -858,6 +860,7 @@ function stopCloudSync() {
   cloudSyncWorkspace = null;
   cloudSyncShowInEmptyState = false;
   gmailPartialImportsByWorkspace.clear();
+  linkedInPartialImportsByWorkspace.clear();
   setCloudSyncStatus({ state: "idle" });
 }
 
@@ -958,11 +961,51 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
           connected: boolean;
           providerAccountId?: string;
           lastSyncedAt?: string;
+          last_synced_at?: string;
+          sync?: {
+            state?: string;
+            errorMessage?: string;
+            error_message?: string;
+            peopleSeen?: number;
+            people_seen?: number;
+            communicationThreadsSeen?: number;
+            communication_threads_seen?: number;
+            communicationMessagesSeen?: number;
+            communication_messages_seen?: number;
+            backfillStatus?: string;
+            backfill_status?: string;
+            writtenThreads?: number;
+            written_threads?: number;
+            writtenMessages?: number;
+            written_messages?: number;
+            pageCount?: number;
+            page_count?: number;
+          };
         };
         linkedin_unipile?: {
           connected: boolean;
           providerAccountId?: string;
           lastSyncedAt?: string;
+          last_synced_at?: string;
+          sync?: {
+            state?: string;
+            errorMessage?: string;
+            error_message?: string;
+            peopleSeen?: number;
+            people_seen?: number;
+            communicationThreadsSeen?: number;
+            communication_threads_seen?: number;
+            communicationMessagesSeen?: number;
+            communication_messages_seen?: number;
+            backfillStatus?: string;
+            backfill_status?: string;
+            writtenThreads?: number;
+            written_threads?: number;
+            writtenMessages?: number;
+            written_messages?: number;
+            pageCount?: number;
+            page_count?: number;
+          };
         };
       };
     }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
@@ -971,30 +1014,42 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
     const gmailStatus = status.integrations.gmail;
     const linkedInStatus = status.integrations.linkedin ?? status.integrations.linkedin_unipile;
     const gmailSync = normalizeIntegrationSync(gmailStatus?.sync).sync;
+    const linkedInSync = normalizeIntegrationSync(linkedInStatus?.sync).sync;
     const gmailSyncState = gmailSync?.state;
+    const linkedInSyncState = linkedInSync?.state;
     const gmailLastSyncedAt = gmailStatus?.lastSyncedAt ?? gmailStatus?.last_synced_at;
+    const linkedInLastSyncedAt = linkedInStatus?.lastSyncedAt ?? linkedInStatus?.last_synced_at;
     const gmailSyncActive = gmailSyncState === "pending" || gmailSyncState === "running";
+    const linkedInSyncActive = linkedInSyncState === "pending" || linkedInSyncState === "running";
     const gmailSyncFailed = gmailSyncState === "failed";
+    const linkedInSyncFailed = linkedInSyncState === "failed";
     const gmailImportable =
       gmailStatus?.connected === true &&
       gmailSyncState === "succeeded" &&
       !hasCompletedGmailImported(summary.cloudWorkspaceId, gmailSync, gmailLastSyncedAt);
+    const linkedInImportable =
+      linkedInStatus?.connected === true &&
+      linkedInSyncState === "succeeded" &&
+      !hasCompletedLinkedInImported(summary.cloudWorkspaceId, linkedInSync, linkedInLastSyncedAt);
     const connectedProviders: CloudSyncProvider[] = [];
     const importableProviders: CloudSyncProvider[] = [];
     if (gmailStatus?.connected || gmailSyncActive || gmailSyncFailed) connectedProviders.push("gmail");
-    if (linkedInStatus?.connected) connectedProviders.push("linkedin");
+    if (linkedInStatus?.connected || linkedInSyncActive || linkedInSyncFailed) connectedProviders.push("linkedin");
     if (gmailImportable) importableProviders.push("gmail");
-    if (linkedInStatus?.connected) importableProviders.push("linkedin");
+    if (linkedInImportable) importableProviders.push("linkedin");
 
     if (connectedProviders.length === 0) {
       return setCloudSyncStatusForRun(run, { state: "disconnected" });
     }
 
-    if (gmailSyncActive) {
-      const progress = gmailSyncProgress(gmailSync);
+    if (gmailSyncActive || linkedInSyncActive) {
+      const providers: CloudSyncProvider[] = [];
+      if (gmailSyncActive) providers.push("gmail");
+      if (linkedInSyncActive) providers.push("linkedin");
+      const progress = gmailSyncActive ? gmailSyncProgress(gmailSync) : linkedInSyncProgress(linkedInSync);
       const syncingStatus: CloudSyncStatus = {
         state: "syncing",
-        providers: ["gmail"],
+        providers,
         showInEmptyState: cloudSyncShowInEmptyState,
         ...(progress ? { progress } : {})
       };
@@ -1015,6 +1070,21 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
         }
       }
 
+      if (linkedInSyncState === "running" && shouldImportPartialLinkedIn(summary.cloudWorkspaceId, linkedInSync)) {
+        try {
+          const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "linkedin", {
+            expectedWorkspacePath: summary.path,
+            partial: true
+          });
+          markPartialLinkedInImported(summary.cloudWorkspaceId, linkedInSync);
+          if (isCurrentCloudSyncRun(run) && stats) {
+            sendToMainWindow("workspace:changed");
+          }
+        } catch (error) {
+          console.warn(`[cloud-sync] partial LinkedIn import failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
       scheduleCloudSyncForRun(run, CLOUD_SYNC_ACTIVE_INTERVAL_MS);
       return cloudSyncStatus;
     }
@@ -1023,6 +1093,13 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
       return setCloudSyncStatusForRun(run, {
         state: "error",
         message: gmailSync?.errorMessage ?? "Gmail sync failed."
+      });
+    }
+    if (linkedInSyncFailed) {
+      clearEmptyStateSyncForRun(run);
+      return setCloudSyncStatusForRun(run, {
+        state: "error",
+        message: linkedInSync?.errorMessage ?? "LinkedIn sync failed."
       });
     }
     if (importableProviders.length === 0) {
@@ -1056,15 +1133,16 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
       markCompletedGmailImported(summary.cloudWorkspaceId, gmailSync, gmailLastSyncedAt);
     }
 
-    if (linkedInStatus?.connected) {
+    if (linkedInImportable) {
       if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
       const stats = await importCloudCommunicationExport(summary.cloudWorkspaceId, clientToken, "linkedin", {
-        ignoreMissingEndpoint: true,
         expectedWorkspacePath: summary.path
       });
       if (stats) {
         addCommunicationStats(aggregateStats, stats);
       }
+      markPartialLinkedInImported(summary.cloudWorkspaceId, linkedInSync);
+      markCompletedLinkedInImported(summary.cloudWorkspaceId, linkedInSync, linkedInLastSyncedAt);
     }
 
     if (isCurrentCloudSyncRun(run)) {
@@ -1104,6 +1182,19 @@ function gmailSyncProgress(sync: IntegrationSyncStatus | undefined): GmailSyncPr
     ...(sync.pageCount != null ? { pageCount: sync.pageCount } : {}),
     ...(sync.resultSizeEstimate != null ? { resultSizeEstimate: sync.resultSizeEstimate } : {}),
     ...(sync.resumeAfter ? { resumeAfter: sync.resumeAfter } : {})
+  };
+  return Object.keys(progress).length > 0 ? progress : undefined;
+}
+
+function linkedInSyncProgress(sync: IntegrationSyncStatus | undefined): GmailSyncProgress | undefined {
+  if (!sync) return undefined;
+  const progress: GmailSyncProgress = {
+    ...(sync.backfillStatus ? { backfillStatus: sync.backfillStatus } : {}),
+    ...(sync.writtenThreads != null ? { writtenThreads: sync.writtenThreads } : {}),
+    ...(sync.writtenMessages != null ? { writtenMessages: sync.writtenMessages } : {}),
+    ...(sync.communicationThreadsSeen != null ? { filteredThreads: sync.communicationThreadsSeen } : {}),
+    ...(sync.communicationMessagesSeen != null ? { fetchedThreads: sync.communicationMessagesSeen } : {}),
+    ...(sync.pageCount != null ? { pageCount: sync.pageCount } : {})
   };
   return Object.keys(progress).length > 0 ? progress : undefined;
 }
@@ -1166,7 +1257,84 @@ function markCompletedGmailImported(
   gmailCompletedImportsByWorkspace.set(workspaceId, fingerprint);
 }
 
+function shouldImportPartialLinkedIn(workspaceId: string, sync: IntegrationSyncStatus | undefined): boolean {
+  if (!sync) return false;
+  const writtenThreads = sync.writtenThreads ?? sync.communicationThreadsSeen ?? 0;
+  const writtenMessages = sync.writtenMessages ?? sync.communicationMessagesSeen ?? 0;
+  if (writtenThreads <= 0 && writtenMessages <= 0) return false;
+
+  const previous = linkedInPartialImportsByWorkspace.get(workspaceId);
+  if (!previous) return true;
+  if (
+    writtenThreads < previous.importedWrittenThreads ||
+    writtenMessages < previous.importedWrittenMessages
+  ) {
+    return true;
+  }
+  if (
+    writtenThreads === previous.importedWrittenThreads &&
+    writtenMessages === previous.importedWrittenMessages
+  ) {
+    return false;
+  }
+
+  const threadDelta = writtenThreads - previous.importedWrittenThreads;
+  const messageDelta = writtenMessages - previous.importedWrittenMessages;
+  return (
+    threadDelta >= GMAIL_PARTIAL_IMPORT_MIN_DELTA ||
+    messageDelta >= GMAIL_PARTIAL_IMPORT_MIN_DELTA ||
+    Date.now() - previous.lastImportAtMs >= GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS
+  );
+}
+
+function markPartialLinkedInImported(workspaceId: string, sync: IntegrationSyncStatus | undefined): void {
+  if (!sync) return;
+  linkedInPartialImportsByWorkspace.set(workspaceId, {
+    importedWrittenThreads: sync.writtenThreads ?? sync.communicationThreadsSeen ?? 0,
+    importedWrittenMessages: sync.writtenMessages ?? sync.communicationMessagesSeen ?? 0,
+    lastImportAtMs: Date.now()
+  });
+}
+
+function hasCompletedLinkedInImported(
+  workspaceId: string,
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): boolean {
+  const fingerprint = linkedInCompletedSyncFingerprint(sync, lastSyncedAt);
+  return fingerprint != null && linkedInCompletedImportsByWorkspace.get(workspaceId) === fingerprint;
+}
+
+function markCompletedLinkedInImported(
+  workspaceId: string,
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): void {
+  const fingerprint = linkedInCompletedSyncFingerprint(sync, lastSyncedAt);
+  if (!fingerprint) return;
+  linkedInCompletedImportsByWorkspace.set(workspaceId, fingerprint);
+}
+
 function gmailCompletedSyncFingerprint(
+  sync: IntegrationSyncStatus | undefined,
+  lastSyncedAt: string | undefined
+): string | null {
+  if (!sync || sync.state !== "succeeded") return null;
+  const fingerprint = {
+    lastSyncedAt,
+    startedAt: sync.startedAt,
+    finishedAt: sync.finishedAt,
+    peopleSeen: sync.peopleSeen,
+    communicationThreadsSeen: sync.communicationThreadsSeen,
+    communicationMessagesSeen: sync.communicationMessagesSeen,
+    writtenThreads: sync.writtenThreads,
+    writtenMessages: sync.writtenMessages
+  };
+  if (Object.values(fingerprint).every((value) => value == null || value === "")) return null;
+  return JSON.stringify(fingerprint);
+}
+
+function linkedInCompletedSyncFingerprint(
   sync: IntegrationSyncStatus | undefined,
   lastSyncedAt: string | undefined
 ): string | null {
