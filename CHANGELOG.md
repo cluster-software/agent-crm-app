@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.1-295b305...v0.22.2-295b305) (2026-05-29)
+
+
+### Bug Fixes
+
+* aadil onboarding feedback ([#139](https://github.com/cluster-software/agent-crm-app/issues/139)) ([438e63e](https://github.com/cluster-software/agent-crm-app/commit/438e63efa31645cdfe9d5c9575f0167baa0a23a5))
+
 ## [0.22.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.0-295b305...v0.22.1-295b305) (2026-05-28)
 
 
