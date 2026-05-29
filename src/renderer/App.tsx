@@ -494,8 +494,8 @@ export function App() {
 
             <h1 id="welcome-title">Open a workspace</h1>
             <p className="welcome-hero__sub">
-              Give your Claude agents one shared workspace for every company, person,
-              deal, post, and transcript they need to remember.
+              Give your agents one shared workspace for every company, person,
+              deal, post and transcript they need to remember.
             </p>
 
             <div className="welcome-context" aria-label="What a workspace holds">
