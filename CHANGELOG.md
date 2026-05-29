@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.2-295b305...v0.22.3-295b305) (2026-05-29)
+
+
+### Bug Fixes
+
+* improve detail layouts and team query ([#141](https://github.com/cluster-software/agent-crm-app/issues/141)) ([2696e9f](https://github.com/cluster-software/agent-crm-app/commit/2696e9f7c04a9da9b2db01e69751a61d6763a0e9))
+
 ## [0.22.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.1-295b305...v0.22.2-295b305) (2026-05-29)
 
 
