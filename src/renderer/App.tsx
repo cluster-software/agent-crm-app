@@ -93,14 +93,14 @@ const appVersion = packageJson.version;
 const appDisplayVersion = displayVersion(appVersion);
 
 type PersonTab = "overview" | "messages" | "transcripts" | "posts";
-type CompanyTab = "team" | "signals";
+type CompanyTab = "overview" | "team" | "signals";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
 type DealsViewMode = "table" | "kanban";
 
 const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"];
-const COMPANY_TABS: CompanyTab[] = ["team", "signals"];
+const COMPANY_TABS: CompanyTab[] = ["overview", "team", "signals"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
 const WORKSPACE_LOCK_RETRY_MS = 1000;
@@ -179,7 +179,7 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
-  const [companyTab, setCompanyTab] = useState<CompanyTab>("team");
+  const [companyTab, setCompanyTab] = useState<CompanyTab>("overview");
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
@@ -203,7 +203,7 @@ export function App() {
 
   useEffect(() => {
     setPersonTab("overview");
-    setCompanyTab("team");
+    setCompanyTab("overview");
   }, [detailRecord?.record_id]);
 
   useEffect(() => {
@@ -373,7 +373,7 @@ export function App() {
     setMainView("records");
     setDetailRecord(null);
     setPersonTab("overview");
-    setCompanyTab("team");
+    setCompanyTab("overview");
     if (focus) {
       window.requestAnimationFrame(() => {
         sidebarItemRefs.current.get(objectSlug)?.focus();
@@ -3938,6 +3938,14 @@ function CompanyDetail({
         <button
           type="button"
           className="tab"
+          aria-current={tab === "overview"}
+          onClick={() => onTabChange("overview")}
+        >
+          Overview
+        </button>
+        <button
+          type="button"
+          className="tab"
           aria-current={tab === "team"}
           onClick={() => onTabChange("team")}
         >
@@ -3955,7 +3963,9 @@ function CompanyDetail({
 
       <div className="company-detail__body">
         <section className="company-detail__main">
-          {tab === "team" ? (
+          {tab === "overview" ? (
+            <RecordFieldsSection values={otherValues} />
+          ) : tab === "team" ? (
             teamError ? (
               <div className="empty-inline"><span>{teamError}</span></div>
             ) : loadingTeam ? (
@@ -3980,7 +3990,6 @@ function CompanyDetail({
             <RecordSignalsSection signalValues={signalValues} />
           )}
         </section>
-        <RecordFieldsAside values={otherValues} />
       </div>
     </div>
   );
@@ -4113,6 +4122,25 @@ function RecordSignalsSection({ signalValues }: { signalValues: RecordValue[] })
         <div className="record-fields">
           {signalValues.map((value) => (
             <RecordField key={value.attribute_slug} value={value} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RecordFieldsSection({ values }: { values: RecordValue[] }) {
+  return (
+    <section className="record-detail__section">
+      <MonoLabel>Fields</MonoLabel>
+      {values.length === 0 ? (
+        <div className="empty-inline">
+          <span>no other fields on file</span>
+        </div>
+      ) : (
+        <div className="record-fields">
+          {values.map((value) => (
+            <RecordField key={value.attribute_slug} value={value} compact />
           ))}
         </div>
       )}
@@ -5362,37 +5390,13 @@ function PersonDetail({
 
       {tab === "overview" ? (
         <div className="detail__body">
+          <ContactSection rows={contactRows} />
           <section className="detail__activity">
             <MonoLabel>Recent activity</MonoLabel>
             <div className="empty-inline">
               <span>no activity yet · messages, agent runs, and transcripts will appear here</span>
             </div>
           </section>
-
-          <aside className="detail__aside">
-            <MonoLabel>Contact</MonoLabel>
-            {contactRows.length === 0 ? (
-              <div className="empty-inline">
-                <span>no contact info on file</span>
-              </div>
-            ) : (
-              <div className="detail__contact">
-                {contactRows.map((row, index) => (
-                  row.href ? (
-                    <a key={index} className="detail__contact-row detail__contact-link" href={row.href} target="_blank" rel="noreferrer">
-                      <row.Icon size={13} className="lucide" />
-                      <span className="mono">{row.value}</span>
-                    </a>
-                  ) : (
-                    <div key={index} className="detail__contact-row">
-                      <row.Icon size={13} className="lucide" />
-                      <span className="mono">{row.value}</span>
-                    </div>
-                  )
-                ))}
-              </div>
-            )}
-          </aside>
         </div>
       ) : (
         <section className="detail__tab-panel">
@@ -6191,6 +6195,35 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
     }
   }
   return rows;
+}
+
+function ContactSection({ rows }: { rows: ContactRow[] }) {
+  return (
+    <section className="detail__contact-section">
+      <MonoLabel>Contact</MonoLabel>
+      {rows.length === 0 ? (
+        <div className="empty-inline">
+          <span>no contact info on file</span>
+        </div>
+      ) : (
+        <div className="detail__contact">
+          {rows.map((row, index) => (
+            row.href ? (
+              <a key={index} className="detail__contact-row detail__contact-link" href={row.href} target="_blank" rel="noreferrer">
+                <row.Icon size={13} className="lucide" />
+                <span className="mono">{row.value}</span>
+              </a>
+            ) : (
+              <div key={index} className="detail__contact-row">
+                <row.Icon size={13} className="lucide" />
+                <span className="mono">{row.value}</span>
+              </div>
+            )
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function scalarText(value: unknown): string {
