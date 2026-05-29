@@ -1919,7 +1919,6 @@ type RecordsEmptyConfig = {
   markShape: "square" | "circle";
   title: string;
   body: string;
-  comment: string;
 };
 
 const ACRM_ONBOARDING_PROMPT = "Onboard me into Agent CRM for this workspace";
@@ -1930,24 +1929,21 @@ const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
     cols: ["company", "domain", "linkedin"],
     markShape: "square",
     title: "Companies",
-    body: "The accounts in your world — design partners, customers, prospects.",
-    comment: "Paste this into Claude Code to kickoff onboarding"
+    body: "The accounts in your world — design partners, customers, prospects."
   },
   people: {
     marks: ["a", "b", "c"],
     cols: ["name", "email", "company"],
     markShape: "circle",
     title: "People",
-    body: "The humans behind the accounts — champions, decision makers, the person who replied last Tuesday.",
-    comment: "Paste this into Claude Code to kickoff onboarding"
+    body: "The humans behind the accounts — champions, decision makers, the person who replied last Tuesday."
   },
   deals: {
     marks: ["$", "$", "$"],
     cols: ["deal", "stage", "value"],
     markShape: "square",
     title: "Deals",
-    body: "The pipeline you're working — eval, trial, expansion, anything you call a stage.",
-    comment: "Paste this into Claude Code to kickoff onboarding"
+    body: "The pipeline you're working — eval, trial, expansion, anything you call a stage."
   }
 };
 
@@ -1968,9 +1964,7 @@ function RecordsEmptyState({
         />
         <h2 className="records-empty__title">{config.title}</h2>
         <p className="records-empty__body">{config.body}</p>
-        <div className="records-empty__cli">
-          <CliBlock comment={config.comment} command={ACRM_ONBOARDING_PROMPT} />
-        </div>
+        <OnboardingPromptSteps command={ACRM_ONBOARDING_PROMPT} />
       </div>
     </div>
   );
@@ -2004,6 +1998,47 @@ function SchemaTablePreview({
           <span className="schema-table__dot" />
         </div>
       ))}
+    </div>
+  );
+}
+
+function OnboardingPromptSteps({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  async function onCopy() {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <div className="onboarding-steps" aria-label="Onboarding steps">
+      <div className="onboarding-step onboarding-step--primary">
+        <span className="onboarding-step__number">1</span>
+        <div className="onboarding-step__content">
+          <span className="onboarding-step__title">Copy the onboarding prompt</span>
+          <div className="onboarding-step__command-row">
+            <code className="onboarding-step__command">
+              <span aria-hidden="true">&gt;</span>
+              <span>{command}</span>
+            </code>
+            <button type="button" className="onboarding-step__copy" onClick={onCopy}>
+              <Copy size={13} className="lucide" />
+              <span>{copied ? "Copied" : "Copy prompt"}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="onboarding-step">
+        <span className="onboarding-step__number">2</span>
+        <span className="onboarding-step__text">Paste this into the terminal</span>
+      </div>
+      <div className="onboarding-step">
+        <span className="onboarding-step__number">3</span>
+        <span className="onboarding-step__text">Watch this page fill in</span>
+      </div>
     </div>
   );
 }
