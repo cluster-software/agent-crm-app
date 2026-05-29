@@ -3964,7 +3964,11 @@ async function resolveDroppedTerminalFile(file: File): Promise<string | null> {
   const bridge = window.terminal;
   if (!bridge) return null;
 
-  const originalPath = bridge.getPathForFile(file).trim();
+  const directPath = (file as File & { path?: unknown }).path;
+  const originalPath =
+    typeof directPath === "string" && directPath.trim().length > 0
+      ? directPath.trim()
+      : bridge.getPathForFile(file).trim();
   if (originalPath && !isUnstableDropPath(originalPath) && !isHeicLikeFile(file)) {
     return originalPath;
   }
@@ -4149,7 +4153,7 @@ function TerminalPane({
             bridge.resize(sessionId, term.cols, term.rows);
           }
           if (!backlog) {
-            bridge.send(sessionId, "claude\n");
+            bridge.send(sessionId, "claude --dangerously-skip-permissions\n");
           }
           focusXterm();
         })
@@ -4246,6 +4250,7 @@ function TerminalPane({
   function onTerminalDragOver(event: ReactDragEvent<HTMLElement>) {
     if (!hasDroppedFiles(event)) return;
     event.preventDefault();
+    event.stopPropagation();
     event.dataTransfer.dropEffect = "copy";
   }
 
@@ -4274,8 +4279,8 @@ function TerminalPane({
       className="terminal"
       hidden={!visible}
       style={{ width }}
-      onDragOver={onTerminalDragOver}
-      onDrop={onTerminalDrop}
+      onDragOverCapture={onTerminalDragOver}
+      onDropCapture={onTerminalDrop}
     >
       <div
         className="terminal__resizer"
