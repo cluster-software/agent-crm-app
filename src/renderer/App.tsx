@@ -787,6 +787,7 @@ export function App() {
             ) : detailRecord && selectedObject?.object_slug === "companies" ? (
               <CompanyDetail
                 object={selectedObject}
+                peopleObject={schemaObjects.find((object) => object.object_slug === "people")}
                 record={detailRecord}
                 tab={companyTab}
                 focusRequest={detailFocusRequest}
@@ -3842,29 +3843,39 @@ function RecordDetail({
 
 function CompanyDetail({
   object,
+  peopleObject,
   record,
   tab,
   focusRequest,
   onTabChange
 }: {
   object: SchemaObject;
+  peopleObject?: SchemaObject;
   record: RecordPreview;
   tab: CompanyTab;
   focusRequest: number;
   onTabChange: (tab: CompanyTab) => void;
 }) {
   const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
+  const teamObject = peopleObject ?? FALLBACK_PEOPLE_OBJECT;
+  const teamColumns = useMemo(() => companyTeamValueColumns(teamObject), [teamObject]);
+  const { signalValues, otherValues } = useRecordDetailValues(object, record);
   const detailRef = useRef<HTMLDivElement | null>(null);
   const handledFocusRequestRef = useRef(0);
   const [team, setTeam] = useState<RecordPreview[]>([]);
   const [loadingTeam, setLoadingTeam] = useState(true);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [focusedTeamRecordId, setFocusedTeamRecordId] = useState<string | null>(null);
+  const emptySignalFailures = useMemo(() => new Map<string, SignalRunFailureSummary>(), []);
+  const emptyRunningSignals = useMemo(() => new Set<string>(), []);
+  const emptyRetryingSignals = useMemo(() => new Set<string>(), []);
 
   useEffect(() => {
     let cancelled = false;
     setLoadingTeam(true);
     setTeamError(null);
     setTeam([]);
+    setFocusedTeamRecordId(null);
     fetchCompanyTeam(record.record_id)
       .then((people) => {
         if (!cancelled) setTeam(people);
@@ -3942,79 +3953,85 @@ function CompanyDetail({
         </button>
       </nav>
 
-      {tab === "team" ? (
-        <section className="detail__tab-panel">
-          {teamError ? (
-            <div className="empty-inline"><span>{teamError}</span></div>
-          ) : loadingTeam ? (
-            <div className="empty-inline"><span>loading team…</span></div>
+      <div className="company-detail__body">
+        <section className="company-detail__main">
+          {tab === "team" ? (
+            teamError ? (
+              <div className="empty-inline"><span>{teamError}</span></div>
+            ) : loadingTeam ? (
+              <div className="empty-inline"><span>loading team…</span></div>
+            ) : (
+              <div className="company-detail__table table">
+                <RecordsTable
+                  object={teamObject}
+                  records={team}
+                  valueColumns={teamColumns}
+                  failureBySignal={emptySignalFailures}
+                  runningBySignal={emptyRunningSignals}
+                  retryingSignals={emptyRetryingSignals}
+                  focusedRecordId={focusedTeamRecordId}
+                  onFocusedRecordChange={setFocusedTeamRecordId}
+                  loading={false}
+                  emptyMessage={`no people linked to ${record.label} yet`}
+                />
+              </div>
+            )
           ) : (
-            <CompanyTeamTable people={team} companyName={record.label} />
+            <RecordSignalsSection signalValues={signalValues} />
           )}
         </section>
-      ) : (
-        <section className="detail__tab-panel detail__tab-panel--flush">
-          <RecordSignalsPanel object={object} record={record} />
-        </section>
-      )}
+        <RecordFieldsAside values={otherValues} />
+      </div>
     </div>
   );
 }
 
-function CompanyTeamTable({
-  people,
-  companyName
-}: {
-  people: RecordPreview[];
-  companyName: string;
-}) {
-  return (
-    <div className="company-team-table">
-      <div className="company-team-table__head">
-        <span>Person</span>
-        <span>Title</span>
-        <span>Email</span>
-        <span>LinkedIn</span>
-      </div>
-      <div className="company-team-table__body">
-        {people.length === 0 ? (
-          <div className="empty-inline">
-            <span>no people linked to {companyName} yet</span>
-          </div>
-        ) : (
-          people.map((person) => {
-            const email = recordValue(person, "email_addresses", "email")?.display.trim() ?? "";
-            const linkedin = recordValue(person, "linkedin_url")?.display.trim() ?? "";
-            const title = recordValue(person, "job_title", "title")?.display.trim() ?? "";
-            return (
-              <div className="company-team-table__row" key={person.record_id}>
-                <span className="company-team-table__person">
-                  <Avatar name={person.label} size={24} src={recordImageUrl(person, "profile_picture_url")} />
-                  <span>
-                    <span>{person.label}</span>
-                    {person.subtitle && person.subtitle !== "Person" ? (
-                      <span>{person.subtitle}</span>
-                    ) : null}
-                  </span>
-                </span>
-                <span>{title || "--"}</span>
-                <span className="company-team-table__mono">
-                  {email ? <a href={`mailto:${email}`}>{email}</a> : "--"}
-                </span>
-                <span className="company-team-table__mono">
-                  {linkedin ? (
-                    <a href={externalUrl(linkedin)} target="_blank" rel="noreferrer">
-                      {stripUrl(linkedin)}
-                    </a>
-                  ) : "--"}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
+const FALLBACK_PEOPLE_OBJECT: SchemaObject = {
+  object_slug: "people",
+  singular_name: "Person",
+  plural_name: "People",
+  attributes: [
+    {
+      attribute_slug: "name",
+      title: "Name",
+      attribute_type: "personal-name",
+      is_multivalued: false,
+      is_unique: false
+    },
+    {
+      attribute_slug: "job_title",
+      title: "Title",
+      attribute_type: "text",
+      is_multivalued: false,
+      is_unique: false
+    },
+    {
+      attribute_slug: "email_addresses",
+      title: "Email",
+      attribute_type: "email-address",
+      is_multivalued: true,
+      is_unique: true
+    },
+    {
+      attribute_slug: "linkedin_url",
+      title: "LinkedIn",
+      attribute_type: "url",
+      is_multivalued: false,
+      is_unique: true
+    }
+  ]
+};
+
+function companyTeamValueColumns(peopleObject: SchemaObject): ValueColumn[] {
+  const titles = new Map(peopleObject.attributes.map((attribute) => [
+    attribute.attribute_slug,
+    attribute.title
+  ]));
+  return [
+    { slug: "job_title", title: titles.get("job_title") ?? "Title", isSignal: false },
+    { slug: "email_addresses", title: titles.get("email_addresses") ?? "Email", isSignal: false },
+    { slug: "linkedin_url", title: titles.get("linkedin_url") ?? "LinkedIn", isSignal: false }
+  ];
 }
 
 function RecordSignalsPanel({
@@ -4024,6 +4041,23 @@ function RecordSignalsPanel({
   object: SchemaObject;
   record: RecordPreview;
 }) {
+  const { signalValues, otherValues } = useRecordDetailValues(object, record);
+
+  return (
+    <div className="record-detail">
+      <RecordSignalsSection signalValues={signalValues} />
+      <RecordFieldsAside values={otherValues} />
+    </div>
+  );
+}
+
+function useRecordDetailValues(
+  object: SchemaObject,
+  record: RecordPreview
+): {
+  signalValues: RecordValue[];
+  otherValues: RecordValue[];
+} {
   const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
 
   useEffect(() => {
@@ -4061,41 +4095,47 @@ function RecordSignalsPanel({
     (value) => value.display && !isSignalValue(value) && value.attribute_slug !== "name",
   );
 
-  return (
-    <div className="record-detail">
-      <section className="record-detail__section">
-        <div className="record-detail__label">
-          <MonoLabel>Signals</MonoLabel>
-          <Zap size={12} className="lucide" />
-        </div>
-        {signalValues.length === 0 ? (
-          <div className="empty-inline">
-            <span>no signal values on this record yet</span>
-          </div>
-        ) : (
-          <div className="record-fields">
-            {signalValues.map((value) => (
-              <RecordField key={value.attribute_slug} value={value} />
-            ))}
-          </div>
-        )}
-      </section>
+  return { signalValues, otherValues };
+}
 
-      <aside className="record-detail__aside">
-        <MonoLabel>Fields</MonoLabel>
-        {otherValues.length === 0 ? (
-          <div className="empty-inline">
-            <span>no other fields on file</span>
-          </div>
-        ) : (
-          <div className="record-fields">
-            {otherValues.map((value) => (
-              <RecordField key={value.attribute_slug} value={value} compact />
-            ))}
-          </div>
-        )}
-      </aside>
-    </div>
+function RecordSignalsSection({ signalValues }: { signalValues: RecordValue[] }) {
+  return (
+    <section className="record-detail__section">
+      <div className="record-detail__label">
+        <MonoLabel>Signals</MonoLabel>
+        <Zap size={12} className="lucide" />
+      </div>
+      {signalValues.length === 0 ? (
+        <div className="empty-inline">
+          <span>no signal values on this record yet</span>
+        </div>
+      ) : (
+        <div className="record-fields">
+          {signalValues.map((value) => (
+            <RecordField key={value.attribute_slug} value={value} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RecordFieldsAside({ values }: { values: RecordValue[] }) {
+  return (
+    <aside className="record-detail__aside">
+      <MonoLabel>Fields</MonoLabel>
+      {values.length === 0 ? (
+        <div className="empty-inline">
+          <span>no other fields on file</span>
+        </div>
+      ) : (
+        <div className="record-fields">
+          {values.map((value) => (
+            <RecordField key={value.attribute_slug} value={value} compact />
+          ))}
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -4743,17 +4783,24 @@ async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[
 }
 
 function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
-  const values = Object.entries(item.attrs)
+  const attrs = { ...item.attrs };
+  if (attrs.email_addresses === undefined && attrs.email !== undefined) {
+    attrs.email_addresses = attrs.email;
+  }
+  if (attrs.job_title === undefined && attrs.title !== undefined) {
+    attrs.job_title = attrs.title;
+  }
+  const values = Object.entries(attrs)
     .map(([attributeSlug, value]) => relatedAttrToRecordValue(attributeSlug, value))
     .filter((value) => value.display);
   const label =
-    getScalar(item.attrs, "name") ||
-    getScalar(item.attrs, "email_addresses") ||
-    stripUrl(getScalar(item.attrs, "linkedin_url")) ||
+    getScalar(attrs, "name") ||
+    getScalar(attrs, "email_addresses") ||
+    stripUrl(getScalar(attrs, "linkedin_url")) ||
     item.id.slice(0, 8);
   const subtitle = [
-    getScalar(item.attrs, "job_title") || getScalar(item.attrs, "title"),
-    getScalar(item.attrs, "email_addresses") || stripUrl(getScalar(item.attrs, "linkedin_url"))
+    getScalar(attrs, "job_title"),
+    getScalar(attrs, "email_addresses") || stripUrl(getScalar(attrs, "linkedin_url"))
   ].filter(Boolean).join(" · ");
   return {
     object_slug: "people",
