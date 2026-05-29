@@ -422,6 +422,15 @@ async function getWorkspaceSummary(): Promise<WorkspaceSummary> {
   };
 }
 
+async function summarizeWorkspaceAt(filePath: string): Promise<Pick<WorkspaceSummary, "counts">> {
+  const current = await Workspace.open(normalizePath(filePath));
+  try {
+    return { counts: await countRecords(current) };
+  } finally {
+    await current.close();
+  }
+}
+
 function getSignalsDir(): string {
   if (!workspacePath) {
     throw new Error("No .acrm workspace is open.");
@@ -1549,6 +1558,8 @@ async function dispatch(method: string, params: unknown[] = []) {
       return closeWorkspaceHandle();
     case "getWorkspace":
       return workspace ? getWorkspaceSummary() : null;
+    case "summarizeWorkspace":
+      return summarizeWorkspaceAt(String(params[0]));
     case "ensureWorkspaceIdentity":
       return ensureWorkspaceIdentity();
     case "listRecords":

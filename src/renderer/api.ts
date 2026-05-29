@@ -443,19 +443,22 @@ const previewRecentWorkspaces: RecentWorkspaceSummary[] = [
     path: "/Users/example/workspaces/cluster.acrm",
     filename: "cluster.acrm",
     lastOpenedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
-    timestampSource: "opened"
+    timestampSource: "opened",
+    counts: { companies: 128, people: 540, deals: 12 }
   },
   {
     path: "/Users/example/workspaces/anthropic-design.acrm",
     filename: "anthropic-design.acrm",
     lastOpenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    timestampSource: "opened"
+    timestampSource: "opened",
+    counts: { companies: 22, people: 88, deals: 5 }
   },
   {
     path: "/Users/example/Downloads/yc-w26-leads.acrm",
     filename: "yc-w26-leads.acrm",
     lastOpenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
-    timestampSource: "opened"
+    timestampSource: "opened",
+    counts: { companies: 64, people: 210, deals: 8 }
   }
 ];
 const forceWelcomePreview =

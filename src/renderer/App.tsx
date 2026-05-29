@@ -102,6 +102,13 @@ const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
 const WORKSPACE_LOCK_RETRY_MS = 1000;
+const WELCOME_WORKSPACE_CONTENTS = [
+  { label: "Companies", icon: Building2 },
+  { label: "People", icon: Users },
+  { label: "Deals", icon: Handshake },
+  { label: "Posts", icon: Newspaper },
+  { label: "Transcripts", icon: FileText }
+];
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -487,8 +494,21 @@ export function App() {
 
             <h1 id="welcome-title">Open a workspace</h1>
             <p className="welcome-hero__sub">
-              Pick up an existing <span className="welcome-pill mono">.acrm</span> file, or seed a new one from the SDK.
+              Give your Claude agents one shared workspace for every company, person,
+              deal, post, and transcript they need to remember.
             </p>
+
+            <div className="welcome-context" aria-label="What a workspace holds">
+              <div className="welcome-context__label mono">What a workspace holds</div>
+              <div className="welcome-context__chips">
+                {WELCOME_WORKSPACE_CONTENTS.map(({ label, icon: Icon }) => (
+                  <span className="welcome-context__chip" key={label}>
+                    <Icon size={12} className="lucide" />
+                    <span>{label}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
 
             <div className="welcome-actions" aria-label="Workspace actions">
               <button
@@ -501,7 +521,7 @@ export function App() {
                 </span>
                 <span className="welcome-action__copy">
                   <span className="welcome-action__title">Open workspace</span>
-                  <span className="welcome-action__sub">Browse for an existing .acrm file.</span>
+                  <span className="welcome-action__sub">Browse for one on your machine.</span>
                 </span>
                 <span className="welcome-action__kbd mono">⌘O</span>
               </button>
@@ -516,38 +536,54 @@ export function App() {
                 </span>
                 <span className="welcome-action__copy">
                   <span className="welcome-action__title">Create workspace</span>
-                  <span className="welcome-action__sub">Seed a fresh .acrm from the SDK.</span>
+                  <span className="welcome-action__sub">Start fresh in seconds.</span>
                 </span>
                 <span className="welcome-action__kbd mono">⌘N</span>
               </button>
             </div>
 
-            {recentWorkspaces.length > 0 && (
-              <div className="welcome-recents" aria-label="Recent workspaces">
-                {recentWorkspaces.map((recent) => (
-                  <button
-                    className="welcome-recent"
-                    key={recent.path}
-                    type="button"
-                    onClick={() => runWorkspaceAction(() => api.openWorkspacePath(recent.path))}
-                  >
-                    <span className="welcome-recent__icon">
-                      <FolderOpen size={18} className="lucide" />
-                    </span>
-                    <span className="welcome-recent__copy">
-                      <span className="welcome-recent__title">{recent.filename}</span>
-                      <span className="welcome-recent__path mono">{formatWorkspacePath(recent.path)}</span>
-                    </span>
-                    <span className="welcome-recent__time mono">{formatCompactRelativeTime(recent.lastOpenedAt)}</span>
-                    <ChevronRight size={20} className="welcome-recent__chevron lucide" />
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="welcome-recents-wrap" aria-label="Recent workspaces">
+              <div className="welcome-recents__label mono">Recent</div>
+              {recentWorkspaces.length > 0 ? (
+                <div className="welcome-recents">
+                  {recentWorkspaces.map((recent) => (
+                    <button
+                      className="welcome-recent"
+                      key={recent.path}
+                      type="button"
+                      onClick={() => runWorkspaceAction(() => api.openWorkspacePath(recent.path))}
+                    >
+                      <span className="welcome-recent__icon">
+                        <FolderOpen size={18} className="lucide" />
+                      </span>
+                      <span className="welcome-recent__copy">
+                        <span className="welcome-recent__title">{formatWorkspaceName(recent.filename)}</span>
+                        <span className="welcome-recent__counts mono">{formatRecentWorkspaceCounts(recent.counts)}</span>
+                      </span>
+                      <span className="welcome-recent__time mono">{formatCompactRelativeTime(recent.lastOpenedAt)}</span>
+                      <ChevronRight size={20} className="welcome-recent__chevron lucide" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="welcome-empty">
+                  <span className="welcome-empty__icon">
+                    <Database size={14} className="lucide" />
+                  </span>
+                  <span className="welcome-empty__copy">
+                    <span className="welcome-empty__title">No workspaces yet</span>
+                    <span className="welcome-empty__sub">Open one from your machine, or create one to get started.</span>
+                  </span>
+                </div>
+              )}
+            </div>
           </section>
         </main>
 
-        <footer className="welcome-footer mono">agent-crm v{appDisplayVersion}</footer>
+        <footer className="welcome-footer mono">
+          <span>agent-crm v{appDisplayVersion}</span>
+          <span className="welcome-footer__ready">runtime ready</span>
+        </footer>
 
         {createWorkspaceModal}
       </div>
@@ -983,12 +1019,21 @@ function displayVersion(version: string): string {
   return version.split("-")[0] ?? version;
 }
 
-function formatWorkspacePath(filePath: string): string {
-  if (filePath.startsWith("/Users/")) {
-    const [, , user, ...rest] = filePath.split("/");
-    if (user && rest.length > 0) return `~/${rest.join("/")}`;
-  }
-  return filePath;
+function formatWorkspaceName(filename: string): string {
+  return filename.replace(/\.acrm$/i, "");
+}
+
+function formatCount(value: number, singular: string, plural: string): string {
+  return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
+}
+
+function formatRecentWorkspaceCounts(counts: Record<string, number> | undefined): string {
+  if (!counts) return "Recently opened workspace";
+  return [
+    formatCount(counts.companies ?? 0, "company", "companies"),
+    formatCount(counts.people ?? 0, "person", "people"),
+    formatCount(counts.deals ?? 0, "deal", "deals")
+  ].join(" · ");
 }
 
 function formatCompactRelativeTime(iso: string): string {

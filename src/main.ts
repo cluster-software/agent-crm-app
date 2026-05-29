@@ -1920,6 +1920,17 @@ async function listRecentWorkspaces(): Promise<RecentWorkspaceSummary[]> {
   const seen = new Set<string>();
   const isRecentWorkspace = (item: RecentWorkspaceSummary | null): item is RecentWorkspaceSummary =>
     item !== null;
+  const enrichCounts = async (workspace: RecentWorkspaceSummary): Promise<RecentWorkspaceSummary> => {
+    try {
+      const summary = await getSdkClient().request<Pick<WorkspaceSummary, "counts">>(
+        "summarizeWorkspace",
+        workspace.path
+      );
+      return { ...workspace, counts: summary.counts };
+    } catch {
+      return workspace;
+    }
+  };
   const persisted: Array<Promise<RecentWorkspaceSummary | null>> = (await readRecentWorkspaces()).map(async (workspace) => {
     try {
       await fs.stat(workspace.path);
@@ -1953,7 +1964,7 @@ async function listRecentWorkspaces(): Promise<RecentWorkspaceSummary[]> {
     findWorkspaceFiles(dir, depth)
   ));
 
-  return [
+  const workspaces = [
     ...(await Promise.all(persisted)).filter(isRecentWorkspace),
     ...(await Promise.all(recentDocuments)).filter(isRecentWorkspace),
     ...scanned.flat()
@@ -1966,6 +1977,7 @@ async function listRecentWorkspaces(): Promise<RecentWorkspaceSummary[]> {
     })
     .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
     .slice(0, 3);
+  return Promise.all(workspaces.map(enrichCounts));
 }
 
 handle("workspace:open-dialog", async () => {
