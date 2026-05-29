@@ -3246,9 +3246,11 @@ body.resizing-terminal * { cursor: col-resize !important; }
   overflow-wrap: anywhere;
 }
 .detail__meta {
-  color: var(--text-muted);
-  font-size: 13.5px;
+  color: color-mix(in oklch, var(--text) 78%, var(--text-muted));
+  font-size: 14.5px;
+  font-weight: 500;
   letter-spacing: -0.005em;
+  line-height: 1.35;
 }
 .detail__tabs {
   margin: 0 28px;
