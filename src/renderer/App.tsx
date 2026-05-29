@@ -93,14 +93,14 @@ const appVersion = packageJson.version;
 const appDisplayVersion = displayVersion(appVersion);
 
 type PersonTab = "overview" | "messages" | "transcripts" | "posts";
-type CompanyTab = "team" | "signals";
+type CompanyTab = "overview" | "team" | "signals";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
 type DealsViewMode = "table" | "kanban";
 
 const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"];
-const COMPANY_TABS: CompanyTab[] = ["team", "signals"];
+const COMPANY_TABS: CompanyTab[] = ["overview", "team", "signals"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
 const WORKSPACE_LOCK_RETRY_MS = 1000;
@@ -179,7 +179,7 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
-  const [companyTab, setCompanyTab] = useState<CompanyTab>("team");
+  const [companyTab, setCompanyTab] = useState<CompanyTab>("overview");
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
@@ -203,7 +203,7 @@ export function App() {
 
   useEffect(() => {
     setPersonTab("overview");
-    setCompanyTab("team");
+    setCompanyTab("overview");
   }, [detailRecord?.record_id]);
 
   useEffect(() => {
@@ -373,7 +373,7 @@ export function App() {
     setMainView("records");
     setDetailRecord(null);
     setPersonTab("overview");
-    setCompanyTab("team");
+    setCompanyTab("overview");
     if (focus) {
       window.requestAnimationFrame(() => {
         sidebarItemRefs.current.get(objectSlug)?.focus();
@@ -3938,6 +3938,14 @@ function CompanyDetail({
         <button
           type="button"
           className="tab"
+          aria-current={tab === "overview"}
+          onClick={() => onTabChange("overview")}
+        >
+          Overview
+        </button>
+        <button
+          type="button"
+          className="tab"
           aria-current={tab === "team"}
           onClick={() => onTabChange("team")}
         >
@@ -3955,7 +3963,9 @@ function CompanyDetail({
 
       <div className="company-detail__body">
         <section className="company-detail__main">
-          {tab === "team" ? (
+          {tab === "overview" ? (
+            <RecordFieldsSection values={otherValues} />
+          ) : tab === "team" ? (
             teamError ? (
               <div className="empty-inline"><span>{teamError}</span></div>
             ) : loadingTeam ? (
@@ -3980,7 +3990,6 @@ function CompanyDetail({
             <RecordSignalsSection signalValues={signalValues} />
           )}
         </section>
-        <RecordFieldsAside values={otherValues} />
       </div>
     </div>
   );
@@ -4113,6 +4122,25 @@ function RecordSignalsSection({ signalValues }: { signalValues: RecordValue[] })
         <div className="record-fields">
           {signalValues.map((value) => (
             <RecordField key={value.attribute_slug} value={value} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RecordFieldsSection({ values }: { values: RecordValue[] }) {
+  return (
+    <section className="record-detail__section">
+      <MonoLabel>Fields</MonoLabel>
+      {values.length === 0 ? (
+        <div className="empty-inline">
+          <span>no other fields on file</span>
+        </div>
+      ) : (
+        <div className="record-fields">
+          {values.map((value) => (
+            <RecordField key={value.attribute_slug} value={value} compact />
           ))}
         </div>
       )}
@@ -4729,31 +4757,50 @@ async function fetchAssociated(
 }
 
 async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[]> {
-  const result = await api.runQuery(
-    `WITH team_people AS (
-       SELECT v.ref_record_id AS record_id
+  const [companyTeamResult, peopleCompanyResult] = await Promise.all([
+    api.runQuery(
+      `SELECT v.ref_record_id AS record_id
          FROM acrm_value v
         WHERE v.object_slug = 'companies'
           AND v.record_id = $1
           AND v.attribute_slug = 'team'
           AND v.ref_object = 'people'
-          AND v.active_until IS NULL
-        UNION
-       SELECT v.record_id AS record_id
+          AND v.active_until IS NULL`,
+      [companyRecordId]
+    ),
+    api.runQuery(
+      `SELECT v.record_id AS record_id
          FROM acrm_value v
         WHERE v.object_slug = 'people'
           AND v.attribute_slug = 'company'
           AND v.ref_object = 'companies'
           AND v.ref_record_id = $1
-          AND v.active_until IS NULL
-     )
-     SELECT p.record_id AS rec_id, pv.attribute_slug AS attr, pv.value_json AS val
-       FROM team_people p
-       LEFT JOIN acrm_value pv
-         ON pv.object_slug = 'people'
-        AND pv.record_id = p.record_id
-        AND pv.active_until IS NULL
-        AND pv.attribute_slug IN (
+          AND v.active_until IS NULL`,
+      [companyRecordId]
+    )
+  ]);
+
+  const teamRecordIds = uniqueNonEmpty(
+    [...companyTeamResult.rows, ...peopleCompanyResult.rows].map((row) =>
+      row.record_id == null ? "" : String(row.record_id)
+    )
+  );
+  if (teamRecordIds.length === 0) return [];
+
+  const teamRecords = await Promise.all(teamRecordIds.map(fetchCompanyTeamPerson));
+  return teamRecords
+    .map(teamRelatedRecordToPreview)
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+async function fetchCompanyTeamPerson(personRecordId: string): Promise<RelatedRecord> {
+  const result = await api.runQuery(
+    `SELECT record_id AS rec_id, attribute_slug AS attr, value_json AS val
+       FROM acrm_value
+      WHERE object_slug = 'people'
+        AND record_id = $1
+        AND active_until IS NULL
+        AND attribute_slug IN (
           'name',
           'email_addresses',
           'email',
@@ -4761,25 +4808,17 @@ async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[
           'title',
           'linkedin_url',
           'profile_picture_url'
-        )
-      ORDER BY p.record_id DESC, pv.active_from DESC`,
-    [companyRecordId]
+        )`,
+    [personRecordId]
   );
 
-  const map = new Map<string, RelatedRecord>();
+  const entry: RelatedRecord = { id: personRecordId, attrs: {} };
   for (const row of result.rows) {
-    const id = row.rec_id == null ? "" : String(row.rec_id);
-    if (!id) continue;
-    const entry = map.get(id) ?? { id, attrs: {} };
-    map.set(id, entry);
     if (row.attr != null) {
       pushAttrValue(entry.attrs, String(row.attr), parseValueJson(row.val));
     }
   }
-
-  return [...map.values()]
-    .map(teamRelatedRecordToPreview)
-    .sort((a, b) => a.label.localeCompare(b.label));
+  return entry;
 }
 
 function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
@@ -5362,37 +5401,13 @@ function PersonDetail({
 
       {tab === "overview" ? (
         <div className="detail__body">
+          <ContactSection rows={contactRows} />
           <section className="detail__activity">
             <MonoLabel>Recent activity</MonoLabel>
             <div className="empty-inline">
               <span>no activity yet · messages, agent runs, and transcripts will appear here</span>
             </div>
           </section>
-
-          <aside className="detail__aside">
-            <MonoLabel>Contact</MonoLabel>
-            {contactRows.length === 0 ? (
-              <div className="empty-inline">
-                <span>no contact info on file</span>
-              </div>
-            ) : (
-              <div className="detail__contact">
-                {contactRows.map((row, index) => (
-                  row.href ? (
-                    <a key={index} className="detail__contact-row detail__contact-link" href={row.href} target="_blank" rel="noreferrer">
-                      <row.Icon size={13} className="lucide" />
-                      <span className="mono">{row.value}</span>
-                    </a>
-                  ) : (
-                    <div key={index} className="detail__contact-row">
-                      <row.Icon size={13} className="lucide" />
-                      <span className="mono">{row.value}</span>
-                    </div>
-                  )
-                ))}
-              </div>
-            )}
-          </aside>
         </div>
       ) : (
         <section className="detail__tab-panel">
@@ -6191,6 +6206,35 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
     }
   }
   return rows;
+}
+
+function ContactSection({ rows }: { rows: ContactRow[] }) {
+  return (
+    <section className="detail__contact-section">
+      <MonoLabel>Contact</MonoLabel>
+      {rows.length === 0 ? (
+        <div className="empty-inline">
+          <span>no contact info on file</span>
+        </div>
+      ) : (
+        <div className="detail__contact">
+          {rows.map((row, index) => (
+            row.href ? (
+              <a key={index} className="detail__contact-row detail__contact-link" href={row.href} target="_blank" rel="noreferrer">
+                <row.Icon size={13} className="lucide" />
+                <span className="mono">{row.value}</span>
+              </a>
+            ) : (
+              <div key={index} className="detail__contact-row">
+                <row.Icon size={13} className="lucide" />
+                <span className="mono">{row.value}</span>
+              </div>
+            )
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function scalarText(value: unknown): string {
