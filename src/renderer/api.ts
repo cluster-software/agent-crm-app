@@ -443,19 +443,22 @@ const previewRecentWorkspaces: RecentWorkspaceSummary[] = [
     path: "/Users/example/workspaces/cluster.acrm",
     filename: "cluster.acrm",
     lastOpenedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
-    timestampSource: "opened"
+    timestampSource: "opened",
+    counts: { companies: 128, people: 540, deals: 12 }
   },
   {
     path: "/Users/example/workspaces/anthropic-design.acrm",
     filename: "anthropic-design.acrm",
     lastOpenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    timestampSource: "opened"
+    timestampSource: "opened",
+    counts: { companies: 22, people: 88, deals: 5 }
   },
   {
     path: "/Users/example/Downloads/yc-w26-leads.acrm",
     filename: "yc-w26-leads.acrm",
     lastOpenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
-    timestampSource: "opened"
+    timestampSource: "opened",
+    counts: { companies: 64, people: 210, deals: 8 }
   }
 ];
 const forceWelcomePreview =
@@ -644,6 +647,20 @@ const browserPreview: AppBridge = {
   }),
   updateRecord: async (payload: UpdateRecordPayload) => updatePreviewRecord(payload),
   runQuery: async (sql: string, params?: unknown[]) => {
+    if (sql.includes("WITH team_people AS")) {
+      return {
+        rows: [
+          { rec_id: "preview-person", attr: "name", val: JSON.stringify({ full_name: "Maya Chen" }) },
+          { rec_id: "preview-person", attr: "job_title", val: JSON.stringify("VP Sales") },
+          { rec_id: "preview-person", attr: "email_addresses", val: JSON.stringify("maya@lumin.ai") },
+          { rec_id: "preview-person", attr: "linkedin_url", val: JSON.stringify("https://linkedin.com/in/mayachen") },
+          { rec_id: "preview-person-2", attr: "name", val: JSON.stringify({ full_name: "Andres Soto" }) },
+          { rec_id: "preview-person-2", attr: "job_title", val: JSON.stringify("Founder") },
+          { rec_id: "preview-person-2", attr: "email_addresses", val: JSON.stringify("andres@orbitops.io") }
+        ],
+        rowsAffected: 0
+      };
+    }
     if (sql.includes("v.object_slug = 'people'") && params?.[1] === "communication_threads") {
       return {
         rows: [

@@ -11,6 +11,7 @@ export type RecentWorkspaceSummary = {
   filename: string;
   lastOpenedAt: string;
   timestampSource: "opened" | "modified";
+  counts?: Record<string, number>;
 };
 
 export type CloudSyncProvider = "gmail" | "linkedin";

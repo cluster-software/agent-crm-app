@@ -93,15 +93,24 @@ const appVersion = packageJson.version;
 const appDisplayVersion = displayVersion(appVersion);
 
 type PersonTab = "overview" | "messages" | "transcripts" | "posts";
+type CompanyTab = "team" | "signals";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
 type DealsViewMode = "table" | "kanban";
 
 const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"];
+const COMPANY_TABS: CompanyTab[] = ["team", "signals"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
 const WORKSPACE_LOCK_RETRY_MS = 1000;
+const WELCOME_WORKSPACE_CONTENTS = [
+  { label: "Companies", icon: Building2 },
+  { label: "People", icon: Users },
+  { label: "Deals", icon: Handshake },
+  { label: "Posts", icon: Newspaper },
+  { label: "Transcripts", icon: FileText }
+];
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -170,6 +179,7 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
+  const [companyTab, setCompanyTab] = useState<CompanyTab>("team");
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
@@ -193,6 +203,7 @@ export function App() {
 
   useEffect(() => {
     setPersonTab("overview");
+    setCompanyTab("team");
   }, [detailRecord?.record_id]);
 
   useEffect(() => {
@@ -362,6 +373,7 @@ export function App() {
     setMainView("records");
     setDetailRecord(null);
     setPersonTab("overview");
+    setCompanyTab("team");
     if (focus) {
       window.requestAnimationFrame(() => {
         sidebarItemRefs.current.get(objectSlug)?.focus();
@@ -487,8 +499,21 @@ export function App() {
 
             <h1 id="welcome-title">Open a workspace</h1>
             <p className="welcome-hero__sub">
-              Pick up an existing <span className="welcome-pill mono">.acrm</span> file, or seed a new one from the SDK.
+              Give your agents one shared workspace for every company, person,
+              deal, post and transcript they need to remember.
             </p>
+
+            <div className="welcome-context" aria-label="What a workspace holds">
+              <div className="welcome-context__label mono">What a workspace holds</div>
+              <div className="welcome-context__chips">
+                {WELCOME_WORKSPACE_CONTENTS.map(({ label, icon: Icon }) => (
+                  <span className="welcome-context__chip" key={label}>
+                    <Icon size={12} className="lucide" />
+                    <span>{label}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
 
             <div className="welcome-actions" aria-label="Workspace actions">
               <button
@@ -501,7 +526,7 @@ export function App() {
                 </span>
                 <span className="welcome-action__copy">
                   <span className="welcome-action__title">Open workspace</span>
-                  <span className="welcome-action__sub">Browse for an existing .acrm file.</span>
+                  <span className="welcome-action__sub">Browse for one on your machine.</span>
                 </span>
                 <span className="welcome-action__kbd mono">⌘O</span>
               </button>
@@ -516,38 +541,54 @@ export function App() {
                 </span>
                 <span className="welcome-action__copy">
                   <span className="welcome-action__title">Create workspace</span>
-                  <span className="welcome-action__sub">Seed a fresh .acrm from the SDK.</span>
+                  <span className="welcome-action__sub">Start fresh in seconds.</span>
                 </span>
                 <span className="welcome-action__kbd mono">⌘N</span>
               </button>
             </div>
 
-            {recentWorkspaces.length > 0 && (
-              <div className="welcome-recents" aria-label="Recent workspaces">
-                {recentWorkspaces.map((recent) => (
-                  <button
-                    className="welcome-recent"
-                    key={recent.path}
-                    type="button"
-                    onClick={() => runWorkspaceAction(() => api.openWorkspacePath(recent.path))}
-                  >
-                    <span className="welcome-recent__icon">
-                      <FolderOpen size={18} className="lucide" />
-                    </span>
-                    <span className="welcome-recent__copy">
-                      <span className="welcome-recent__title">{recent.filename}</span>
-                      <span className="welcome-recent__path mono">{formatWorkspacePath(recent.path)}</span>
-                    </span>
-                    <span className="welcome-recent__time mono">{formatCompactRelativeTime(recent.lastOpenedAt)}</span>
-                    <ChevronRight size={20} className="welcome-recent__chevron lucide" />
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="welcome-recents-wrap" aria-label="Recent workspaces">
+              <div className="welcome-recents__label mono">Recent</div>
+              {recentWorkspaces.length > 0 ? (
+                <div className="welcome-recents">
+                  {recentWorkspaces.map((recent) => (
+                    <button
+                      className="welcome-recent"
+                      key={recent.path}
+                      type="button"
+                      onClick={() => runWorkspaceAction(() => api.openWorkspacePath(recent.path))}
+                    >
+                      <span className="welcome-recent__icon">
+                        <FolderOpen size={18} className="lucide" />
+                      </span>
+                      <span className="welcome-recent__copy">
+                        <span className="welcome-recent__title">{formatWorkspaceName(recent.filename)}</span>
+                        <span className="welcome-recent__counts mono">{formatRecentWorkspaceCounts(recent.counts)}</span>
+                      </span>
+                      <span className="welcome-recent__time mono">{formatCompactRelativeTime(recent.lastOpenedAt)}</span>
+                      <ChevronRight size={20} className="welcome-recent__chevron lucide" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="welcome-empty">
+                  <span className="welcome-empty__icon">
+                    <Database size={14} className="lucide" />
+                  </span>
+                  <span className="welcome-empty__copy">
+                    <span className="welcome-empty__title">No workspaces yet</span>
+                    <span className="welcome-empty__sub">Open one from your machine, or create one to get started.</span>
+                  </span>
+                </div>
+              )}
+            </div>
           </section>
         </main>
 
-        <footer className="welcome-footer mono">agent-crm v{appDisplayVersion}</footer>
+        <footer className="welcome-footer mono">
+          <span>agent-crm v{appDisplayVersion}</span>
+          <span className="welcome-footer__ready">runtime ready</span>
+        </footer>
 
         {createWorkspaceModal}
       </div>
@@ -742,6 +783,15 @@ export function App() {
                 tab={personTab}
                 focusRequest={detailFocusRequest}
                 onTabChange={setPersonTab}
+              />
+            ) : detailRecord && selectedObject?.object_slug === "companies" ? (
+              <CompanyDetail
+                object={selectedObject}
+                peopleObject={schemaObjects.find((object) => object.object_slug === "people")}
+                record={detailRecord}
+                tab={companyTab}
+                focusRequest={detailFocusRequest}
+                onTabChange={setCompanyTab}
               />
             ) : detailRecord && selectedObject ? (
               <RecordDetail
@@ -983,12 +1033,21 @@ function displayVersion(version: string): string {
   return version.split("-")[0] ?? version;
 }
 
-function formatWorkspacePath(filePath: string): string {
-  if (filePath.startsWith("/Users/")) {
-    const [, , user, ...rest] = filePath.split("/");
-    if (user && rest.length > 0) return `~/${rest.join("/")}`;
-  }
-  return filePath;
+function formatWorkspaceName(filename: string): string {
+  return filename.replace(/\.acrm$/i, "");
+}
+
+function formatCount(value: number, singular: string, plural: string): string {
+  return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
+}
+
+function formatRecentWorkspaceCounts(counts: Record<string, number> | undefined): string {
+  if (!counts) return "Recently opened workspace";
+  return [
+    formatCount(counts.companies ?? 0, "company", "companies"),
+    formatCount(counts.people ?? 0, "person", "people"),
+    formatCount(counts.deals ?? 0, "deal", "deals")
+  ].join(" · ");
 }
 
 function formatCompactRelativeTime(iso: string): string {
@@ -1874,7 +1933,6 @@ type RecordsEmptyConfig = {
   markShape: "square" | "circle";
   title: string;
   body: string;
-  comment: string;
 };
 
 const ACRM_ONBOARDING_PROMPT = "Onboard me into Agent CRM for this workspace";
@@ -1885,24 +1943,21 @@ const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
     cols: ["company", "domain", "linkedin"],
     markShape: "square",
     title: "Companies",
-    body: "The accounts in your world — design partners, customers, prospects.",
-    comment: "Paste this into Claude Code to kickoff onboarding"
+    body: "The accounts in your world — design partners, customers, prospects."
   },
   people: {
     marks: ["a", "b", "c"],
     cols: ["name", "email", "company"],
     markShape: "circle",
     title: "People",
-    body: "The humans behind the accounts — champions, decision makers, the person who replied last Tuesday.",
-    comment: "Paste this into Claude Code to kickoff onboarding"
+    body: "The humans behind the accounts — champions, decision makers, the person who replied last Tuesday."
   },
   deals: {
     marks: ["$", "$", "$"],
     cols: ["deal", "stage", "value"],
     markShape: "square",
     title: "Deals",
-    body: "The pipeline you're working — eval, trial, expansion, anything you call a stage.",
-    comment: "Paste this into Claude Code to kickoff onboarding"
+    body: "The pipeline you're working — eval, trial, expansion, anything you call a stage."
   }
 };
 
@@ -1923,9 +1978,7 @@ function RecordsEmptyState({
         />
         <h2 className="records-empty__title">{config.title}</h2>
         <p className="records-empty__body">{config.body}</p>
-        <div className="records-empty__cli">
-          <CliBlock comment={config.comment} command={ACRM_ONBOARDING_PROMPT} />
-        </div>
+        <OnboardingPromptSteps command={ACRM_ONBOARDING_PROMPT} />
       </div>
     </div>
   );
@@ -1959,6 +2012,47 @@ function SchemaTablePreview({
           <span className="schema-table__dot" />
         </div>
       ))}
+    </div>
+  );
+}
+
+function OnboardingPromptSteps({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  async function onCopy() {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <div className="onboarding-steps" aria-label="Onboarding steps">
+      <div className="onboarding-step onboarding-step--primary">
+        <span className="onboarding-step__number">1</span>
+        <div className="onboarding-step__content">
+          <span className="onboarding-step__title">Copy the onboarding prompt</span>
+          <div className="onboarding-step__command-row">
+            <code className="onboarding-step__command">
+              <span aria-hidden="true">&gt;</span>
+              <span>{command}</span>
+            </code>
+            <button type="button" className="onboarding-step__copy" onClick={onCopy}>
+              <Copy size={13} className="lucide" />
+              <span>{copied ? "Copied" : "Copy prompt"}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="onboarding-step">
+        <span className="onboarding-step__number">2</span>
+        <span className="onboarding-step__text">Paste this into the terminal</span>
+      </div>
+      <div className="onboarding-step">
+        <span className="onboarding-step__number">3</span>
+        <span className="onboarding-step__text">Watch this page fill in</span>
+      </div>
     </div>
   );
 }
@@ -3725,9 +3819,246 @@ function RecordDetail({
   focusRequest: number;
 }) {
   const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
-  const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
   const detailRef = useRef<HTMLDivElement | null>(null);
   const handledFocusRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
+  return (
+    <div ref={detailRef} className="detail" tabIndex={-1}>
+      <header className="detail__header">
+        <h1 className="detail__title display">{record.label}</h1>
+        {meta && <div className="detail__meta">{meta}</div>}
+      </header>
+
+      <RecordSignalsPanel object={object} record={record} />
+    </div>
+  );
+}
+
+function CompanyDetail({
+  object,
+  peopleObject,
+  record,
+  tab,
+  focusRequest,
+  onTabChange
+}: {
+  object: SchemaObject;
+  peopleObject?: SchemaObject;
+  record: RecordPreview;
+  tab: CompanyTab;
+  focusRequest: number;
+  onTabChange: (tab: CompanyTab) => void;
+}) {
+  const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
+  const teamObject = peopleObject ?? FALLBACK_PEOPLE_OBJECT;
+  const teamColumns = useMemo(() => companyTeamValueColumns(teamObject), [teamObject]);
+  const { signalValues, otherValues } = useRecordDetailValues(object, record);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const handledFocusRequestRef = useRef(0);
+  const [team, setTeam] = useState<RecordPreview[]>([]);
+  const [loadingTeam, setLoadingTeam] = useState(true);
+  const [teamError, setTeamError] = useState<string | null>(null);
+  const [focusedTeamRecordId, setFocusedTeamRecordId] = useState<string | null>(null);
+  const emptySignalFailures = useMemo(() => new Map<string, SignalRunFailureSummary>(), []);
+  const emptyRunningSignals = useMemo(() => new Set<string>(), []);
+  const emptyRetryingSignals = useMemo(() => new Set<string>(), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingTeam(true);
+    setTeamError(null);
+    setTeam([]);
+    setFocusedTeamRecordId(null);
+    fetchCompanyTeam(record.record_id)
+      .then((people) => {
+        if (!cancelled) setTeam(people);
+      })
+      .catch((err) => {
+        if (!cancelled) setTeamError(statusFromError(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTeam(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record.record_id]);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditableTarget(event.target) || isTerminalTarget(event.target)) return;
+      if (event.target instanceof Element && event.target.closest(".sidebar")) return;
+
+      const currentIndex = COMPANY_TABS.indexOf(tab);
+      if (currentIndex === -1) return;
+      const nextIndex =
+        event.key === "ArrowRight"
+          ? Math.min(COMPANY_TABS.length - 1, currentIndex + 1)
+          : Math.max(0, currentIndex - 1);
+      const nextTab = COMPANY_TABS[nextIndex];
+      if (nextTab === tab) return;
+
+      event.preventDefault();
+      onTabChange(nextTab);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onTabChange, tab]);
+
+  return (
+    <div ref={detailRef} className="detail" tabIndex={-1}>
+      <header className="detail__header detail__header--company">
+        <div className="detail__photo detail__photo--company">
+          <CompanyMark name={record.label} size={64} />
+        </div>
+        <div className="detail__identity">
+          <h1 className="detail__title display">{record.label}</h1>
+          {meta && <div className="detail__meta">{meta}</div>}
+        </div>
+      </header>
+
+      <nav className="detail__tabs tabs">
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "team"}
+          onClick={() => onTabChange("team")}
+        >
+          Team <span className="tab__count">{team.length}</span>
+        </button>
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "signals"}
+          onClick={() => onTabChange("signals")}
+        >
+          Signals
+        </button>
+      </nav>
+
+      <div className="company-detail__body">
+        <section className="company-detail__main">
+          {tab === "team" ? (
+            teamError ? (
+              <div className="empty-inline"><span>{teamError}</span></div>
+            ) : loadingTeam ? (
+              <div className="empty-inline"><span>loading team…</span></div>
+            ) : (
+              <div className="company-detail__table table">
+                <RecordsTable
+                  object={teamObject}
+                  records={team}
+                  valueColumns={teamColumns}
+                  failureBySignal={emptySignalFailures}
+                  runningBySignal={emptyRunningSignals}
+                  retryingSignals={emptyRetryingSignals}
+                  focusedRecordId={focusedTeamRecordId}
+                  onFocusedRecordChange={setFocusedTeamRecordId}
+                  loading={false}
+                  emptyMessage={`no people linked to ${record.label} yet`}
+                />
+              </div>
+            )
+          ) : (
+            <RecordSignalsSection signalValues={signalValues} />
+          )}
+        </section>
+        <RecordFieldsAside values={otherValues} />
+      </div>
+    </div>
+  );
+}
+
+const FALLBACK_PEOPLE_OBJECT: SchemaObject = {
+  object_slug: "people",
+  singular_name: "Person",
+  plural_name: "People",
+  attributes: [
+    {
+      attribute_slug: "name",
+      title: "Name",
+      attribute_type: "personal-name",
+      is_multivalued: false,
+      is_unique: false
+    },
+    {
+      attribute_slug: "job_title",
+      title: "Title",
+      attribute_type: "text",
+      is_multivalued: false,
+      is_unique: false
+    },
+    {
+      attribute_slug: "email_addresses",
+      title: "Email",
+      attribute_type: "email-address",
+      is_multivalued: true,
+      is_unique: true
+    },
+    {
+      attribute_slug: "linkedin_url",
+      title: "LinkedIn",
+      attribute_type: "url",
+      is_multivalued: false,
+      is_unique: true
+    }
+  ]
+};
+
+function companyTeamValueColumns(peopleObject: SchemaObject): ValueColumn[] {
+  const titles = new Map(peopleObject.attributes.map((attribute) => [
+    attribute.attribute_slug,
+    attribute.title
+  ]));
+  return [
+    { slug: "job_title", title: titles.get("job_title") ?? "Title", isSignal: false },
+    { slug: "email_addresses", title: titles.get("email_addresses") ?? "Email", isSignal: false },
+    { slug: "linkedin_url", title: titles.get("linkedin_url") ?? "LinkedIn", isSignal: false }
+  ];
+}
+
+function RecordSignalsPanel({
+  object,
+  record
+}: {
+  object: SchemaObject;
+  record: RecordPreview;
+}) {
+  const { signalValues, otherValues } = useRecordDetailValues(object, record);
+
+  return (
+    <div className="record-detail">
+      <RecordSignalsSection signalValues={signalValues} />
+      <RecordFieldsAside values={otherValues} />
+    </div>
+  );
+}
+
+function useRecordDetailValues(
+  object: SchemaObject,
+  record: RecordPreview
+): {
+  signalValues: RecordValue[];
+  otherValues: RecordValue[];
+} {
+  const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -3764,55 +4095,47 @@ function RecordDetail({
     (value) => value.display && !isSignalValue(value) && value.attribute_slug !== "name",
   );
 
-  useEffect(() => {
-    if (!focusRequest) return;
-    if (handledFocusRequestRef.current === focusRequest) return;
-    handledFocusRequestRef.current = focusRequest;
-    detailRef.current?.focus({ preventScroll: true });
-  }, [focusRequest]);
+  return { signalValues, otherValues };
+}
 
+function RecordSignalsSection({ signalValues }: { signalValues: RecordValue[] }) {
   return (
-    <div ref={detailRef} className="detail" tabIndex={-1}>
-      <header className="detail__header">
-        <h1 className="detail__title display">{record.label}</h1>
-        {meta && <div className="detail__meta">{meta}</div>}
-      </header>
-
-      <div className="record-detail">
-        <section className="record-detail__section">
-          <div className="record-detail__label">
-            <MonoLabel>Signals</MonoLabel>
-            <Zap size={12} className="lucide" />
-          </div>
-          {signalValues.length === 0 ? (
-            <div className="empty-inline">
-              <span>no signal values on this record yet</span>
-            </div>
-          ) : (
-            <div className="record-fields">
-              {signalValues.map((value) => (
-                <RecordField key={value.attribute_slug} value={value} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <aside className="record-detail__aside">
-          <MonoLabel>Fields</MonoLabel>
-          {otherValues.length === 0 ? (
-            <div className="empty-inline">
-              <span>no other fields on file</span>
-            </div>
-          ) : (
-            <div className="record-fields">
-              {otherValues.map((value) => (
-                <RecordField key={value.attribute_slug} value={value} compact />
-              ))}
-            </div>
-          )}
-        </aside>
+    <section className="record-detail__section">
+      <div className="record-detail__label">
+        <MonoLabel>Signals</MonoLabel>
+        <Zap size={12} className="lucide" />
       </div>
-    </div>
+      {signalValues.length === 0 ? (
+        <div className="empty-inline">
+          <span>no signal values on this record yet</span>
+        </div>
+      ) : (
+        <div className="record-fields">
+          {signalValues.map((value) => (
+            <RecordField key={value.attribute_slug} value={value} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RecordFieldsAside({ values }: { values: RecordValue[] }) {
+  return (
+    <aside className="record-detail__aside">
+      <MonoLabel>Fields</MonoLabel>
+      {values.length === 0 ? (
+        <div className="empty-inline">
+          <span>no other fields on file</span>
+        </div>
+      ) : (
+        <div className="record-fields">
+          {values.map((value) => (
+            <RecordField key={value.attribute_slug} value={value} compact />
+          ))}
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -3964,7 +4287,11 @@ async function resolveDroppedTerminalFile(file: File): Promise<string | null> {
   const bridge = window.terminal;
   if (!bridge) return null;
 
-  const originalPath = bridge.getPathForFile(file).trim();
+  const directPath = (file as File & { path?: unknown }).path;
+  const originalPath =
+    typeof directPath === "string" && directPath.trim().length > 0
+      ? directPath.trim()
+      : bridge.getPathForFile(file).trim();
   if (originalPath && !isUnstableDropPath(originalPath) && !isHeicLikeFile(file)) {
     return originalPath;
   }
@@ -4149,7 +4476,7 @@ function TerminalPane({
             bridge.resize(sessionId, term.cols, term.rows);
           }
           if (!backlog) {
-            bridge.send(sessionId, "claude\n");
+            bridge.send(sessionId, "claude --dangerously-skip-permissions\n");
           }
           focusXterm();
         })
@@ -4246,6 +4573,7 @@ function TerminalPane({
   function onTerminalDragOver(event: ReactDragEvent<HTMLElement>) {
     if (!hasDroppedFiles(event)) return;
     event.preventDefault();
+    event.stopPropagation();
     event.dataTransfer.dropEffect = "copy";
   }
 
@@ -4274,8 +4602,8 @@ function TerminalPane({
       className="terminal"
       hidden={!visible}
       style={{ width }}
-      onDragOver={onTerminalDragOver}
-      onDrop={onTerminalDrop}
+      onDragOverCapture={onTerminalDragOver}
+      onDropCapture={onTerminalDrop}
     >
       <div
         className="terminal__resizer"
@@ -4398,6 +4726,118 @@ async function fetchAssociated(
     }
   }
   return [...map.values()];
+}
+
+async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[]> {
+  const result = await api.runQuery(
+    `WITH team_people AS (
+       SELECT v.ref_record_id AS record_id
+         FROM acrm_value v
+        WHERE v.object_slug = 'companies'
+          AND v.record_id = $1
+          AND v.attribute_slug = 'team'
+          AND v.ref_object = 'people'
+          AND v.active_until IS NULL
+        UNION
+       SELECT v.record_id AS record_id
+         FROM acrm_value v
+        WHERE v.object_slug = 'people'
+          AND v.attribute_slug = 'company'
+          AND v.ref_object = 'companies'
+          AND v.ref_record_id = $1
+          AND v.active_until IS NULL
+     )
+     SELECT p.record_id AS rec_id, pv.attribute_slug AS attr, pv.value_json AS val
+       FROM team_people p
+       LEFT JOIN acrm_value pv
+         ON pv.object_slug = 'people'
+        AND pv.record_id = p.record_id
+        AND pv.active_until IS NULL
+        AND pv.attribute_slug IN (
+          'name',
+          'email_addresses',
+          'email',
+          'job_title',
+          'title',
+          'linkedin_url',
+          'profile_picture_url'
+        )
+      ORDER BY p.record_id DESC, pv.active_from DESC`,
+    [companyRecordId]
+  );
+
+  const map = new Map<string, RelatedRecord>();
+  for (const row of result.rows) {
+    const id = row.rec_id == null ? "" : String(row.rec_id);
+    if (!id) continue;
+    const entry = map.get(id) ?? { id, attrs: {} };
+    map.set(id, entry);
+    if (row.attr != null) {
+      pushAttrValue(entry.attrs, String(row.attr), parseValueJson(row.val));
+    }
+  }
+
+  return [...map.values()]
+    .map(teamRelatedRecordToPreview)
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
+  const attrs = { ...item.attrs };
+  if (attrs.email_addresses === undefined && attrs.email !== undefined) {
+    attrs.email_addresses = attrs.email;
+  }
+  if (attrs.job_title === undefined && attrs.title !== undefined) {
+    attrs.job_title = attrs.title;
+  }
+  const values = Object.entries(attrs)
+    .map(([attributeSlug, value]) => relatedAttrToRecordValue(attributeSlug, value))
+    .filter((value) => value.display);
+  const label =
+    getScalar(attrs, "name") ||
+    getScalar(attrs, "email_addresses") ||
+    stripUrl(getScalar(attrs, "linkedin_url")) ||
+    item.id.slice(0, 8);
+  const subtitle = [
+    getScalar(attrs, "job_title"),
+    getScalar(attrs, "email_addresses") || stripUrl(getScalar(attrs, "linkedin_url"))
+  ].filter(Boolean).join(" · ");
+  return {
+    object_slug: "people",
+    record_id: item.id,
+    label,
+    subtitle: subtitle || "Person",
+    values
+  };
+}
+
+function relatedAttrToRecordValue(attributeSlug: string, value: unknown): RecordValue {
+  const values = Array.isArray(value) ? value : [value];
+  return {
+    attribute_slug: attributeSlug,
+    title: relatedAttributeTitle(attributeSlug),
+    type: relatedAttributeType(attributeSlug),
+    display: values.map(displayUnknown).filter(Boolean).join(", "),
+    raw: values.length === 1 ? values[0] : values,
+    values
+  };
+}
+
+function relatedAttributeTitle(attributeSlug: string): string {
+  const titles: Record<string, string> = {
+    email_addresses: "Email",
+    email: "Email",
+    job_title: "Title",
+    linkedin_url: "LinkedIn",
+    profile_picture_url: "Profile picture"
+  };
+  return titles[attributeSlug] ?? attributeSlug.replace(/_/g, " ");
+}
+
+function relatedAttributeType(attributeSlug: string): string {
+  if (attributeSlug === "email_addresses" || attributeSlug === "email") return "email-address";
+  if (attributeSlug.endsWith("_url")) return "url";
+  return "text";
 }
 
 async function fetchCommunicationThreads(personRecordId: string): Promise<CommunicationThread[]> {
@@ -5684,6 +6124,11 @@ function uniqueNonEmpty(values: string[]): string[] {
   return out;
 }
 
+function emailHref(value: string): string {
+  const match = value.match(/[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/);
+  return `mailto:${match?.[0] ?? value}`;
+}
+
 type ContactRow = {
   Icon: ComponentType<{ size?: number; className?: string }>;
   value: string;
@@ -5707,7 +6152,7 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
       case "email_addresses":
       case "email":
         for (const item of display.split(",").map((s) => s.trim()).filter(Boolean)) {
-          push(Mail, item);
+          push(Mail, item, emailHref(item));
         }
         break;
       case "phone":
