@@ -6124,6 +6124,11 @@ function uniqueNonEmpty(values: string[]): string[] {
   return out;
 }
 
+function emailHref(value: string): string {
+  const match = value.match(/[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+/);
+  return `mailto:${match?.[0] ?? value}`;
+}
+
 type ContactRow = {
   Icon: ComponentType<{ size?: number; className?: string }>;
   value: string;
@@ -6147,7 +6152,7 @@ function buildContactRows(record: RecordPreview): ContactRow[] {
       case "email_addresses":
       case "email":
         for (const item of display.split(",").map((s) => s.trim()).filter(Boolean)) {
-          push(Mail, item);
+          push(Mail, item, emailHref(item));
         }
         break;
       case "phone":
