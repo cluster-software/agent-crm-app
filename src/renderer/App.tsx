@@ -4757,31 +4757,50 @@ async function fetchAssociated(
 }
 
 async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[]> {
-  const result = await api.runQuery(
-    `WITH team_people AS (
-       SELECT v.ref_record_id AS record_id
+  const [companyTeamResult, peopleCompanyResult] = await Promise.all([
+    api.runQuery(
+      `SELECT v.ref_record_id AS record_id
          FROM acrm_value v
         WHERE v.object_slug = 'companies'
           AND v.record_id = $1
           AND v.attribute_slug = 'team'
           AND v.ref_object = 'people'
-          AND v.active_until IS NULL
-        UNION
-       SELECT v.record_id AS record_id
+          AND v.active_until IS NULL`,
+      [companyRecordId]
+    ),
+    api.runQuery(
+      `SELECT v.record_id AS record_id
          FROM acrm_value v
         WHERE v.object_slug = 'people'
           AND v.attribute_slug = 'company'
           AND v.ref_object = 'companies'
           AND v.ref_record_id = $1
-          AND v.active_until IS NULL
-     )
-     SELECT p.record_id AS rec_id, pv.attribute_slug AS attr, pv.value_json AS val
-       FROM team_people p
-       LEFT JOIN acrm_value pv
-         ON pv.object_slug = 'people'
-        AND pv.record_id = p.record_id
-        AND pv.active_until IS NULL
-        AND pv.attribute_slug IN (
+          AND v.active_until IS NULL`,
+      [companyRecordId]
+    )
+  ]);
+
+  const teamRecordIds = uniqueNonEmpty(
+    [...companyTeamResult.rows, ...peopleCompanyResult.rows].map((row) =>
+      row.record_id == null ? "" : String(row.record_id)
+    )
+  );
+  if (teamRecordIds.length === 0) return [];
+
+  const teamRecords = await Promise.all(teamRecordIds.map(fetchCompanyTeamPerson));
+  return teamRecords
+    .map(teamRelatedRecordToPreview)
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+async function fetchCompanyTeamPerson(personRecordId: string): Promise<RelatedRecord> {
+  const result = await api.runQuery(
+    `SELECT record_id AS rec_id, attribute_slug AS attr, value_json AS val
+       FROM acrm_value
+      WHERE object_slug = 'people'
+        AND record_id = $1
+        AND active_until IS NULL
+        AND attribute_slug IN (
           'name',
           'email_addresses',
           'email',
@@ -4789,25 +4808,17 @@ async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[
           'title',
           'linkedin_url',
           'profile_picture_url'
-        )
-      ORDER BY p.record_id DESC, pv.active_from DESC`,
-    [companyRecordId]
+        )`,
+    [personRecordId]
   );
 
-  const map = new Map<string, RelatedRecord>();
+  const entry: RelatedRecord = { id: personRecordId, attrs: {} };
   for (const row of result.rows) {
-    const id = row.rec_id == null ? "" : String(row.rec_id);
-    if (!id) continue;
-    const entry = map.get(id) ?? { id, attrs: {} };
-    map.set(id, entry);
     if (row.attr != null) {
       pushAttrValue(entry.attrs, String(row.attr), parseValueJson(row.val));
     }
   }
-
-  return [...map.values()]
-    .map(teamRelatedRecordToPreview)
-    .sort((a, b) => a.label.localeCompare(b.label));
+  return entry;
 }
 
 function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {

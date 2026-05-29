@@ -647,17 +647,38 @@ const browserPreview: AppBridge = {
   }),
   updateRecord: async (payload: UpdateRecordPayload) => updatePreviewRecord(payload),
   runQuery: async (sql: string, params?: unknown[]) => {
-    if (sql.includes("WITH team_people AS")) {
+    if (sql.includes("v.object_slug = 'companies'") && sql.includes("v.attribute_slug = 'team'")) {
       return {
         rows: [
+          { record_id: "preview-person" }
+        ],
+        rowsAffected: 0
+      };
+    }
+    if (sql.includes("v.object_slug = 'people'") && sql.includes("v.attribute_slug = 'company'")) {
+      return {
+        rows: [
+          { record_id: "preview-person-2" }
+        ],
+        rowsAffected: 0
+      };
+    }
+    if (sql.includes("record_id AS rec_id") && sql.includes("object_slug = 'people'") && sql.includes("attribute_slug IN")) {
+      const rowsById: Record<string, Record<string, unknown>[]> = {
+        "preview-person": [
           { rec_id: "preview-person", attr: "name", val: JSON.stringify({ full_name: "Maya Chen" }) },
           { rec_id: "preview-person", attr: "job_title", val: JSON.stringify("VP Sales") },
           { rec_id: "preview-person", attr: "email_addresses", val: JSON.stringify("maya@lumin.ai") },
-          { rec_id: "preview-person", attr: "linkedin_url", val: JSON.stringify("https://linkedin.com/in/mayachen") },
+          { rec_id: "preview-person", attr: "linkedin_url", val: JSON.stringify("https://linkedin.com/in/mayachen") }
+        ],
+        "preview-person-2": [
           { rec_id: "preview-person-2", attr: "name", val: JSON.stringify({ full_name: "Andres Soto" }) },
           { rec_id: "preview-person-2", attr: "job_title", val: JSON.stringify("Founder") },
           { rec_id: "preview-person-2", attr: "email_addresses", val: JSON.stringify("andres@orbitops.io") }
-        ],
+        ]
+      };
+      return {
+        rows: rowsById[String(params?.[0] ?? "")] ?? [],
         rowsAffected: 0
       };
     }
