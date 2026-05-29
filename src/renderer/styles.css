@@ -432,11 +432,8 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
 }
 
 .terminal {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 80;
+  position: relative;
+  flex: 0 0 auto;
   min-width: 280px;
   max-width: 70vw;
   border-left: 1px solid var(--border);
@@ -444,7 +441,6 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  box-shadow: -16px 0 40px rgba(0,0,0,.22);
 }
 .terminal[hidden] { display: none; }
 
