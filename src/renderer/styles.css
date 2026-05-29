@@ -415,10 +415,12 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
 }
 
 .main__body {
+  position: relative;
   flex: 1;
   display: flex;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 .main__content {
   flex: 1;
@@ -430,15 +432,19 @@ a:hover { border-bottom: 1px solid var(--accent-soft); }
 }
 
 .terminal {
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
   min-width: 280px;
   max-width: 70vw;
-  flex-shrink: 0;
   border-left: 1px solid var(--border);
   background: var(--bg);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  box-shadow: -16px 0 40px rgba(0,0,0,.22);
 }
 .terminal[hidden] { display: none; }
 
