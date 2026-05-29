@@ -93,12 +93,14 @@ const appVersion = packageJson.version;
 const appDisplayVersion = displayVersion(appVersion);
 
 type PersonTab = "overview" | "messages" | "transcripts" | "posts";
+type CompanyTab = "team" | "signals";
 type SignalPopoverTab = "sources" | "reasoning";
 type MainView = "records" | "settings";
 type SettingsTab = "signals" | "integrations";
 type DealsViewMode = "table" | "kanban";
 
 const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"];
+const COMPANY_TABS: CompanyTab[] = ["team", "signals"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
 const WORKSPACE_LOCK_RETRY_MS = 1000;
@@ -177,6 +179,7 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
+  const [companyTab, setCompanyTab] = useState<CompanyTab>("team");
   const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
@@ -200,6 +203,7 @@ export function App() {
 
   useEffect(() => {
     setPersonTab("overview");
+    setCompanyTab("team");
   }, [detailRecord?.record_id]);
 
   useEffect(() => {
@@ -369,6 +373,7 @@ export function App() {
     setMainView("records");
     setDetailRecord(null);
     setPersonTab("overview");
+    setCompanyTab("team");
     if (focus) {
       window.requestAnimationFrame(() => {
         sidebarItemRefs.current.get(objectSlug)?.focus();
@@ -778,6 +783,14 @@ export function App() {
                 tab={personTab}
                 focusRequest={detailFocusRequest}
                 onTabChange={setPersonTab}
+              />
+            ) : detailRecord && selectedObject?.object_slug === "companies" ? (
+              <CompanyDetail
+                object={selectedObject}
+                record={detailRecord}
+                tab={companyTab}
+                focusRequest={detailFocusRequest}
+                onTabChange={setCompanyTab}
               />
             ) : detailRecord && selectedObject ? (
               <RecordDetail
@@ -3805,9 +3818,213 @@ function RecordDetail({
   focusRequest: number;
 }) {
   const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
-  const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
   const detailRef = useRef<HTMLDivElement | null>(null);
   const handledFocusRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
+  return (
+    <div ref={detailRef} className="detail" tabIndex={-1}>
+      <header className="detail__header">
+        <h1 className="detail__title display">{record.label}</h1>
+        {meta && <div className="detail__meta">{meta}</div>}
+      </header>
+
+      <RecordSignalsPanel object={object} record={record} />
+    </div>
+  );
+}
+
+function CompanyDetail({
+  object,
+  record,
+  tab,
+  focusRequest,
+  onTabChange
+}: {
+  object: SchemaObject;
+  record: RecordPreview;
+  tab: CompanyTab;
+  focusRequest: number;
+  onTabChange: (tab: CompanyTab) => void;
+}) {
+  const meta = record.subtitle && record.subtitle !== object.singular_name ? record.subtitle : null;
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const handledFocusRequestRef = useRef(0);
+  const [team, setTeam] = useState<RecordPreview[]>([]);
+  const [loadingTeam, setLoadingTeam] = useState(true);
+  const [teamError, setTeamError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingTeam(true);
+    setTeamError(null);
+    setTeam([]);
+    fetchCompanyTeam(record.record_id)
+      .then((people) => {
+        if (!cancelled) setTeam(people);
+      })
+      .catch((err) => {
+        if (!cancelled) setTeamError(statusFromError(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTeam(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record.record_id]);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusRequestRef.current === focusRequest) return;
+    handledFocusRequestRef.current = focusRequest;
+    detailRef.current?.focus({ preventScroll: true });
+  }, [focusRequest]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isEditableTarget(event.target) || isTerminalTarget(event.target)) return;
+      if (event.target instanceof Element && event.target.closest(".sidebar")) return;
+
+      const currentIndex = COMPANY_TABS.indexOf(tab);
+      if (currentIndex === -1) return;
+      const nextIndex =
+        event.key === "ArrowRight"
+          ? Math.min(COMPANY_TABS.length - 1, currentIndex + 1)
+          : Math.max(0, currentIndex - 1);
+      const nextTab = COMPANY_TABS[nextIndex];
+      if (nextTab === tab) return;
+
+      event.preventDefault();
+      onTabChange(nextTab);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onTabChange, tab]);
+
+  return (
+    <div ref={detailRef} className="detail" tabIndex={-1}>
+      <header className="detail__header detail__header--company">
+        <div className="detail__photo detail__photo--company">
+          <CompanyMark name={record.label} size={64} />
+        </div>
+        <div className="detail__identity">
+          <h1 className="detail__title display">{record.label}</h1>
+          {meta && <div className="detail__meta">{meta}</div>}
+        </div>
+      </header>
+
+      <nav className="detail__tabs tabs">
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "team"}
+          onClick={() => onTabChange("team")}
+        >
+          Team <span className="tab__count">{team.length}</span>
+        </button>
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "signals"}
+          onClick={() => onTabChange("signals")}
+        >
+          Signals
+        </button>
+      </nav>
+
+      {tab === "team" ? (
+        <section className="detail__tab-panel">
+          {teamError ? (
+            <div className="empty-inline"><span>{teamError}</span></div>
+          ) : loadingTeam ? (
+            <div className="empty-inline"><span>loading team…</span></div>
+          ) : (
+            <CompanyTeamTable people={team} companyName={record.label} />
+          )}
+        </section>
+      ) : (
+        <section className="detail__tab-panel detail__tab-panel--flush">
+          <RecordSignalsPanel object={object} record={record} />
+        </section>
+      )}
+    </div>
+  );
+}
+
+function CompanyTeamTable({
+  people,
+  companyName
+}: {
+  people: RecordPreview[];
+  companyName: string;
+}) {
+  return (
+    <div className="company-team-table">
+      <div className="company-team-table__head">
+        <span>Person</span>
+        <span>Title</span>
+        <span>Email</span>
+        <span>LinkedIn</span>
+      </div>
+      <div className="company-team-table__body">
+        {people.length === 0 ? (
+          <div className="empty-inline">
+            <span>no people linked to {companyName} yet</span>
+          </div>
+        ) : (
+          people.map((person) => {
+            const email = recordValue(person, "email_addresses", "email")?.display.trim() ?? "";
+            const linkedin = recordValue(person, "linkedin_url")?.display.trim() ?? "";
+            const title = recordValue(person, "job_title", "title")?.display.trim() ?? "";
+            return (
+              <div className="company-team-table__row" key={person.record_id}>
+                <span className="company-team-table__person">
+                  <Avatar name={person.label} size={24} src={recordImageUrl(person, "profile_picture_url")} />
+                  <span>
+                    <span>{person.label}</span>
+                    {person.subtitle && person.subtitle !== "Person" ? (
+                      <span>{person.subtitle}</span>
+                    ) : null}
+                  </span>
+                </span>
+                <span>{title || "--"}</span>
+                <span className="company-team-table__mono">
+                  {email ? <a href={`mailto:${email}`}>{email}</a> : "--"}
+                </span>
+                <span className="company-team-table__mono">
+                  {linkedin ? (
+                    <a href={externalUrl(linkedin)} target="_blank" rel="noreferrer">
+                      {stripUrl(linkedin)}
+                    </a>
+                  ) : "--"}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RecordSignalsPanel({
+  object,
+  record
+}: {
+  object: SchemaObject;
+  record: RecordPreview;
+}) {
+  const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -3844,54 +4061,40 @@ function RecordDetail({
     (value) => value.display && !isSignalValue(value) && value.attribute_slug !== "name",
   );
 
-  useEffect(() => {
-    if (!focusRequest) return;
-    if (handledFocusRequestRef.current === focusRequest) return;
-    handledFocusRequestRef.current = focusRequest;
-    detailRef.current?.focus({ preventScroll: true });
-  }, [focusRequest]);
-
   return (
-    <div ref={detailRef} className="detail" tabIndex={-1}>
-      <header className="detail__header">
-        <h1 className="detail__title display">{record.label}</h1>
-        {meta && <div className="detail__meta">{meta}</div>}
-      </header>
-
-      <div className="record-detail">
-        <section className="record-detail__section">
-          <div className="record-detail__label">
-            <MonoLabel>Signals</MonoLabel>
-            <Zap size={12} className="lucide" />
+    <div className="record-detail">
+      <section className="record-detail__section">
+        <div className="record-detail__label">
+          <MonoLabel>Signals</MonoLabel>
+          <Zap size={12} className="lucide" />
+        </div>
+        {signalValues.length === 0 ? (
+          <div className="empty-inline">
+            <span>no signal values on this record yet</span>
           </div>
-          {signalValues.length === 0 ? (
-            <div className="empty-inline">
-              <span>no signal values on this record yet</span>
-            </div>
-          ) : (
-            <div className="record-fields">
-              {signalValues.map((value) => (
-                <RecordField key={value.attribute_slug} value={value} />
-              ))}
-            </div>
-          )}
-        </section>
+        ) : (
+          <div className="record-fields">
+            {signalValues.map((value) => (
+              <RecordField key={value.attribute_slug} value={value} />
+            ))}
+          </div>
+        )}
+      </section>
 
-        <aside className="record-detail__aside">
-          <MonoLabel>Fields</MonoLabel>
-          {otherValues.length === 0 ? (
-            <div className="empty-inline">
-              <span>no other fields on file</span>
-            </div>
-          ) : (
-            <div className="record-fields">
-              {otherValues.map((value) => (
-                <RecordField key={value.attribute_slug} value={value} compact />
-              ))}
-            </div>
-          )}
-        </aside>
-      </div>
+      <aside className="record-detail__aside">
+        <MonoLabel>Fields</MonoLabel>
+        {otherValues.length === 0 ? (
+          <div className="empty-inline">
+            <span>no other fields on file</span>
+          </div>
+        ) : (
+          <div className="record-fields">
+            {otherValues.map((value) => (
+              <RecordField key={value.attribute_slug} value={value} compact />
+            ))}
+          </div>
+        )}
+      </aside>
     </div>
   );
 }
@@ -4483,6 +4686,111 @@ async function fetchAssociated(
     }
   }
   return [...map.values()];
+}
+
+async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[]> {
+  const result = await api.runQuery(
+    `WITH team_people AS (
+       SELECT v.ref_record_id AS record_id
+         FROM acrm_value v
+        WHERE v.object_slug = 'companies'
+          AND v.record_id = $1
+          AND v.attribute_slug = 'team'
+          AND v.ref_object = 'people'
+          AND v.active_until IS NULL
+        UNION
+       SELECT v.record_id AS record_id
+         FROM acrm_value v
+        WHERE v.object_slug = 'people'
+          AND v.attribute_slug = 'company'
+          AND v.ref_object = 'companies'
+          AND v.ref_record_id = $1
+          AND v.active_until IS NULL
+     )
+     SELECT p.record_id AS rec_id, pv.attribute_slug AS attr, pv.value_json AS val
+       FROM team_people p
+       LEFT JOIN acrm_value pv
+         ON pv.object_slug = 'people'
+        AND pv.record_id = p.record_id
+        AND pv.active_until IS NULL
+        AND pv.attribute_slug IN (
+          'name',
+          'email_addresses',
+          'email',
+          'job_title',
+          'title',
+          'linkedin_url',
+          'profile_picture_url'
+        )
+      ORDER BY p.record_id DESC, pv.active_from DESC`,
+    [companyRecordId]
+  );
+
+  const map = new Map<string, RelatedRecord>();
+  for (const row of result.rows) {
+    const id = row.rec_id == null ? "" : String(row.rec_id);
+    if (!id) continue;
+    const entry = map.get(id) ?? { id, attrs: {} };
+    map.set(id, entry);
+    if (row.attr != null) {
+      pushAttrValue(entry.attrs, String(row.attr), parseValueJson(row.val));
+    }
+  }
+
+  return [...map.values()]
+    .map(teamRelatedRecordToPreview)
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
+  const values = Object.entries(item.attrs)
+    .map(([attributeSlug, value]) => relatedAttrToRecordValue(attributeSlug, value))
+    .filter((value) => value.display);
+  const label =
+    getScalar(item.attrs, "name") ||
+    getScalar(item.attrs, "email_addresses") ||
+    stripUrl(getScalar(item.attrs, "linkedin_url")) ||
+    item.id.slice(0, 8);
+  const subtitle = [
+    getScalar(item.attrs, "job_title") || getScalar(item.attrs, "title"),
+    getScalar(item.attrs, "email_addresses") || stripUrl(getScalar(item.attrs, "linkedin_url"))
+  ].filter(Boolean).join(" · ");
+  return {
+    object_slug: "people",
+    record_id: item.id,
+    label,
+    subtitle: subtitle || "Person",
+    values
+  };
+}
+
+function relatedAttrToRecordValue(attributeSlug: string, value: unknown): RecordValue {
+  const values = Array.isArray(value) ? value : [value];
+  return {
+    attribute_slug: attributeSlug,
+    title: relatedAttributeTitle(attributeSlug),
+    type: relatedAttributeType(attributeSlug),
+    display: values.map(displayUnknown).filter(Boolean).join(", "),
+    raw: values.length === 1 ? values[0] : values,
+    values
+  };
+}
+
+function relatedAttributeTitle(attributeSlug: string): string {
+  const titles: Record<string, string> = {
+    email_addresses: "Email",
+    email: "Email",
+    job_title: "Title",
+    linkedin_url: "LinkedIn",
+    profile_picture_url: "Profile picture"
+  };
+  return titles[attributeSlug] ?? attributeSlug.replace(/_/g, " ");
+}
+
+function relatedAttributeType(attributeSlug: string): string {
+  if (attributeSlug === "email_addresses" || attributeSlug === "email") return "email-address";
+  if (attributeSlug.endsWith("_url")) return "url";
+  return "text";
 }
 
 async function fetchCommunicationThreads(personRecordId: string): Promise<CommunicationThread[]> {

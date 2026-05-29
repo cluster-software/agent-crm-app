@@ -647,6 +647,20 @@ const browserPreview: AppBridge = {
   }),
   updateRecord: async (payload: UpdateRecordPayload) => updatePreviewRecord(payload),
   runQuery: async (sql: string, params?: unknown[]) => {
+    if (sql.includes("WITH team_people AS")) {
+      return {
+        rows: [
+          { rec_id: "preview-person", attr: "name", val: JSON.stringify({ full_name: "Maya Chen" }) },
+          { rec_id: "preview-person", attr: "job_title", val: JSON.stringify("VP Sales") },
+          { rec_id: "preview-person", attr: "email_addresses", val: JSON.stringify("maya@lumin.ai") },
+          { rec_id: "preview-person", attr: "linkedin_url", val: JSON.stringify("https://linkedin.com/in/mayachen") },
+          { rec_id: "preview-person-2", attr: "name", val: JSON.stringify({ full_name: "Andres Soto" }) },
+          { rec_id: "preview-person-2", attr: "job_title", val: JSON.stringify("Founder") },
+          { rec_id: "preview-person-2", attr: "email_addresses", val: JSON.stringify("andres@orbitops.io") }
+        ],
+        rowsAffected: 0
+      };
+    }
     if (sql.includes("v.object_slug = 'people'") && params?.[1] === "communication_threads") {
       return {
         rows: [
