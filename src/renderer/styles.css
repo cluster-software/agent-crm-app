@@ -3293,13 +3293,22 @@ body.resizing-terminal * { cursor: col-resize !important; }
   min-width: 0;
 }
 .detail__contact-link {
+  align-self: flex-start;
+  max-width: 100%;
+  border-bottom: 0;
   text-decoration: none;
 }
 .detail__contact-link:hover {
+  border-bottom: 0;
   color: var(--accent);
 }
 .detail__contact-row > svg { color: var(--text-dim); flex-shrink: 0; }
 .detail__contact-link:hover > svg { color: var(--accent); }
+.detail__contact-link:hover > .mono {
+  text-decoration: underline;
+  text-decoration-color: var(--accent-soft);
+  text-underline-offset: 4px;
+}
 .detail__contact-row > .mono {
   font-family: var(--font-mono);
   font-size: 11.5px;
