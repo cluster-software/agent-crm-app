@@ -51,6 +51,15 @@ jobs:
 
       - run: npm run build
 
+      - name: Packaged SDK service smoke
+        run: |
+          npx electron-builder --mac --arm64 --dir -c.mac.identity=null -c.mac.notarize=false
+          output=$(printf '{"id":1,"method":"getWorkspace","params":[]}\n' | \
+            ELECTRON_RUN_AS_NODE=1 \
+            "release/mac-arm64/Agent CRM.app/Contents/MacOS/Agent CRM" \
+            "release/mac-arm64/Agent CRM.app/Contents/Resources/app.asar.unpacked/dist/electron/sdk-service.js")
+          test "$output" = '{"id":1,"result":null}'
+
       - name: Decode Apple signing assets
         env:
           MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
