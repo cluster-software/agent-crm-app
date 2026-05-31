@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.3-295b305...v1.0.0-295b305) (2026-05-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* migrate workspaces to Postgres databases ([#143](https://github.com/cluster-software/agent-crm-app/issues/143))
+
+### Features
+
+* migrate workspaces to Postgres databases ([#143](https://github.com/cluster-software/agent-crm-app/issues/143)) ([af92a82](https://github.com/cluster-software/agent-crm-app/commit/af92a82ff394fe48458e5936db12edd0c970ce7a))
+
 ## [0.22.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.2-295b305...v0.22.3-295b305) (2026-05-29)
 
 
