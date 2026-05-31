@@ -14,13 +14,13 @@ const electronBin = path.join(
   process.platform === "win32" ? "electron.cmd" : "electron"
 );
 const serviceScript = path.join(repoRoot, "dist", "electron", "sdk-service.js");
+const databaseUrl = process.env.ACRM_TEST_DATABASE_URL;
 
 class SdkService {
   constructor() {
     this.nextId = 1;
     this.buffer = "";
     this.pending = new Map();
-    this.events = [];
     this.stderr = "";
     this.proc = spawn(electronBin, [serviceScript], {
       cwd: repoRoot,
@@ -52,19 +52,6 @@ class SdkService {
     });
   }
 
-  clearEvents() {
-    this.events = [];
-  }
-
-  async waitForEvent(name, timeoutMs = 60_000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (this.events.some((event) => event.event === name)) return;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error(`Timed out waiting for ${name}. stderr:\n${this.stderr}`);
-  }
-
   async close() {
     for (const { reject, timer } of this.pending.values()) {
       clearTimeout(timer);
@@ -89,10 +76,6 @@ class SdkService {
 
   onLine(line) {
     const message = JSON.parse(line);
-    if (message.event) {
-      this.events.push(message);
-      return;
-    }
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
@@ -105,126 +88,42 @@ class SdkService {
   }
 }
 
-async function addPeopleTextAttribute(client, slug, title) {
-  await client.request(
-    "runQuery",
-    `INSERT INTO acrm_attribute
-      (object_slug, attribute_slug, title, attribute_type, is_multivalued, is_unique)
-     VALUES ('people', $1, $2, 'text', false, false)`,
-    [slug, title]
-  );
-}
+test(
+  "SDK service opens a Postgres workspace and writes records",
+  { skip: databaseUrl ? false : "set ACRM_TEST_DATABASE_URL to run the Postgres SDK-service smoke test" },
+  async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-crm-postgres-test-"));
+    const client = new SdkService();
 
-function recordValue(record, attributeSlug) {
-  return record.values.find((value) => value.attribute_slug === attributeSlug);
-}
+    try {
+      const workspace = await client.request("createWorkspace", {
+        databaseUrl,
+        workspaceDir: tempDir,
+        name: "Postgres smoke"
+      });
+      assert.equal(workspace.databaseUrl, databaseUrl);
+      assert.equal(workspace.path, tempDir);
+      assert.ok(workspace.objects.some((object) => object.object_slug === "people"));
 
-async function removeCache(workspaceFile) {
-  const cacheDir = path.join(path.dirname(workspaceFile), ".cache", "agent-crm-app");
-  await fs.rm(cacheDir, { recursive: true, force: true });
-}
+      const created = await client.request("createRecord", {
+        object_slug: "people",
+        fields: [
+          `name=Postgres Smoke ${Date.now()}`,
+          `email_addresses=postgres-smoke-${Date.now()}@example.com`
+        ],
+        source: "postgres-sdk-service-test"
+      });
+      assert.equal(created.created, true);
 
-async function corruptCache(workspaceFile) {
-  const dbPath = path.join(
-    path.dirname(workspaceFile),
-    ".cache",
-    "agent-crm-app",
-    "record-previews.sqlite"
-  );
-  await fs.rm(`${dbPath}-wal`, { force: true });
-  await fs.rm(`${dbPath}-shm`, { force: true });
-  await fs.writeFile(dbPath, "not sqlite");
-}
-
-test("record preview cache preserves values, scopes search, rebuilds after writes, and falls back on corruption", async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-crm-cache-test-"));
-  const workspaceFile = path.join(tempDir, "cache-test.acrm");
-  let client = new SdkService();
-
-  try {
-    await client.request("createWorkspace", workspaceFile);
-    for (let index = 1; index <= 12; index++) {
-      const suffix = String(index).padStart(2, "0");
-      await addPeopleTextAttribute(client, `custom_${suffix}`, `Custom ${suffix}`);
+      const listed = await client.request("listRecords", "people", {
+        limit: 10,
+        valueAttributes: ["email_addresses"],
+        searchQuery: "postgres-smoke"
+      });
+      assert.ok(listed.records.length >= 1);
+    } finally {
+      await client.close().catch(() => undefined);
+      await fs.rm(tempDir, { recursive: true, force: true });
     }
-    const createResult = await client.request("createRecord", {
-      object_slug: "people",
-      fields: [
-        "name=Cache Target",
-        "email_addresses=cache.target@example.com",
-        "job_title=Invisible Needle",
-        ...Array.from({ length: 12 }, (_, index) => {
-          const suffix = String(index + 1).padStart(2, "0");
-          return `custom_${suffix}=custom value ${suffix}`;
-        })
-      ],
-      source: "record-preview-cache-test"
-    });
-    await client.request("closeWorkspace");
-    await client.close();
-    await removeCache(workspaceFile);
-
-    client = new SdkService();
-    const options = {
-      limit: 100,
-      valueAttributes: ["custom_12"],
-      includeSecondaryLabels: false
-    };
-    await client.request("openWorkspace", workspaceFile);
-    await client.request("listRecords", "people", options);
-    await client.waitForEvent("recordIndexChanged");
-
-    const cached = await client.request("listRecords", "people", options);
-    assert.equal(cached.records.length, 1);
-    assert.equal(recordValue(cached.records[0], "custom_12")?.display, "custom value 12");
-
-    const hiddenSearch = await client.request("listRecords", "people", {
-      limit: 100,
-      valueAttributes: ["email_addresses"],
-      includeSecondaryLabels: false,
-      searchQuery: "needle"
-    });
-    assert.equal(hiddenSearch.records.length, 0);
-    assert.equal(hiddenSearch.totalMatches, 0);
-
-    const visibleSearch = await client.request("listRecords", "people", {
-      limit: 100,
-      valueAttributes: ["email_addresses"],
-      includeSecondaryLabels: false,
-      searchQuery: "cache.target"
-    });
-    assert.equal(visibleSearch.records.length, 1);
-    assert.equal(visibleSearch.totalMatches, 1);
-
-    client.clearEvents();
-    await client.request("updateRecord", {
-      object_slug: "people",
-      record_id: createResult.record_id,
-      fields: ["job_title=Updated Visible"],
-      source: "record-preview-cache-test"
-    });
-    await client.waitForEvent("recordIndexChanged");
-    const updated = await client.request("listRecords", "people", {
-      limit: 100,
-      valueAttributes: ["job_title"],
-      includeSecondaryLabels: false
-    });
-    assert.equal(recordValue(updated.records[0], "job_title")?.display, "Updated Visible");
-
-    await client.request("closeWorkspace");
-    await client.close();
-    await corruptCache(workspaceFile);
-
-    client = new SdkService();
-    await client.request("openWorkspace", workspaceFile);
-    const fallback = await client.request("listRecords", "people", {
-      limit: 100,
-      valueAttributes: ["email_addresses"],
-      includeSecondaryLabels: false
-    });
-    assert.equal(fallback.records.length, 1);
-  } finally {
-    await client.close().catch(() => undefined);
-    await fs.rm(tempDir, { recursive: true, force: true });
   }
-});
+);

@@ -76,7 +76,7 @@
     }
   },
   "dependencies": {
-    "@agent-crm/sdk": "^0.9.1",
+    "@agent-crm/sdk": "^1.0.0",
     "@tanstack/react-table": "^8.21.3",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

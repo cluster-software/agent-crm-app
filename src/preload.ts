@@ -33,10 +33,8 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 const bridge: AppBridge = {
   platform: process.platform,
-  openWorkspaceDialog: () => invoke("workspace:open-dialog"),
-  chooseWorkspaceDirectory: () => invoke("workspace:choose-directory"),
-  createWorkspace: (name: string, parentDir?: string) => invoke("workspace:create", name, parentDir),
-  openWorkspacePath: (filePath: string) => invoke("workspace:open-path", filePath),
+  openWorkspace: (databaseUrl: string) => invoke("workspace:open", databaseUrl),
+  createWorkspace: (name: string, databaseUrl: string) => invoke("workspace:create", name, databaseUrl),
   closeWorkspace: () => invoke("workspace:close"),
   getWorkspace: () => invoke("workspace:get"),
   listRecentWorkspaces: () => invoke("workspace:list-recent"),
