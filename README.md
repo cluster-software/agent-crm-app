@@ -1,19 +1,19 @@
 # Agent CRM App
 
-Premium Electron front-end for [`@agent-crm/sdk`](https://www.npmjs.com/package/@agent-crm/sdk). The app opens or creates `.acrm` workspaces and exposes common SDK workflows through a desktop UI.
+Premium Electron front-end for [`@agent-crm/sdk`](https://www.npmjs.com/package/@agent-crm/sdk). The app connects to Postgres-compatible Agent CRM workspaces and exposes common SDK workflows through a desktop UI.
 
 ## What It Does
 
 Agent CRM App is a local desktop client for Agent CRM workspaces. It uses the SDK to:
 
-- create new `.acrm` workspace files
-- open existing `.acrm` workspace files
+- create new Postgres-backed workspaces
+- open existing Postgres-compatible workspace databases
 - load the workspace schema dynamically
 - browse records by schema object
 - create records with SDK field syntax
 - import CSV rows
 - import meeting transcripts
-- import connected Gmail data from the hosted sync engine into the local `.acrm`
+- import connected Gmail data from the hosted sync engine into the shared Postgres workspace
 - run SQL queries against the workspace
 
 The sidebar is schema-driven. It reads objects from the open workspace through `dumpSchema()` and renders them dynamically. The built-in SDK objects are:
@@ -36,7 +36,7 @@ The app has three runtime layers:
 2. **Node SDK sidecar**: runs `@agent-crm/sdk` operations in a separate Node process.
 3. **React renderer**: renders the app UI and talks to Electron through a secure preload bridge.
 
-The sidecar exists because the SDK depends on native SQLite bindings through `better-sqlite3`. Running SDK code in a normal Node process avoids Electron native-module ABI issues.
+The sidecar keeps SDK/database work out of the Electron main process and gives the packaged app a narrow JSON-RPC boundary for workspace operations.
 
 High-level flow:
 
@@ -47,7 +47,7 @@ React UI
   -> JSON-RPC over stdio
   -> Node SDK sidecar
   -> @agent-crm/sdk
-  -> .acrm workspace file
+  -> Postgres workspace
 ```
 
 Gmail sync flow:
@@ -58,7 +58,7 @@ Gmail sync flow:
   -> sync engine / Supabase cache
   -> Electron background pull
   -> @agent-crm/sdk
-  -> local .acrm workspace file
+  -> Postgres workspace
 ```
 
 The app never starts Google OAuth from the UI. It only checks whether Gmail is already connected for the open workspace, then imports exported Gmail data locally.
@@ -103,9 +103,9 @@ npm run dev
 
 This starts Vite on `127.0.0.1:5173`, compiles the Electron files, and opens the Electron shell.
 
-Use **Create** to create a fresh `.acrm` workspace, or **Open** to choose an existing workspace file.
+Use **Create** to initialize a fresh Postgres workspace, or **Open** to connect to an existing Postgres-compatible database.
 
-The app stores hosted-sync metadata next to the workspace in `.agent-crm-cloud.json`:
+The app stores hosted-sync metadata in the workspace support directory in `.agent-crm-cloud.json`:
 
 ```json
 {
@@ -154,5 +154,5 @@ npm run typecheck       # Type-check renderer and Electron TypeScript
 npm run build:electron  # Compile Electron main/preload/sidecar files
 npm run build           # Type-check and build the full app
 npm start               # Build, then launch Electron from dist
-npm run rebuild:native  # Rebuild better-sqlite3 for the current Node runtime
+npm run rebuild:native  # Rebuild native Electron modules for the current runtime
 ```
