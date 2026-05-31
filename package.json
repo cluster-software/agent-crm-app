@@ -7,14 +7,14 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "dev:web": "vite --host 127.0.0.1",
-    "test": "npm run test:record-cache",
-    "test:record-cache": "npm run build:electron && node --test scripts/record-preview-cache.test.mjs",
+    "test": "npm run test:sdk-service",
+    "test:sdk-service": "npm run build:electron && node --test scripts/sdk-service.test.mjs",
     "build": "npm run check:agent-instructions && npm run typecheck && npm run build:electron && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "check:agent-instructions": "node scripts/check-agent-instructions.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "start": "npm run build && electron .",
-    "rebuild:native": "electron-rebuild --only=better-sqlite3,node-pty",
+    "rebuild:native": "electron-rebuild --only=node-pty",
     "dist": "npm run build && electron-builder --mac --arm64 --x64",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -54,10 +54,7 @@
       "**/node_modules/postgres-date/**/*",
       "**/node_modules/postgres-interval/**/*",
       "**/node_modules/split2/**/*",
-      "**/node_modules/xtend/**/*",
-      "**/node_modules/better-sqlite3/**/*",
-      "**/node_modules/bindings/**/*",
-      "**/node_modules/file-uri-to-path/**/*"
+      "**/node_modules/xtend/**/*"
     ],
     "mac": {
       "icon": "build/icon.icns",
@@ -89,11 +86,10 @@
     }
   },
   "dependencies": {
-    "@agent-crm/sdk": "^1.0.0",
+    "@agent-crm/sdk": "^1.0.1",
     "@tanstack/react-table": "^8.21.3",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "better-sqlite3": "^12.10.0",
     "electron-updater": "^6.8.3",
     "lucide-react": "^1.16.0",
     "node-pty": "^1.1.0",
