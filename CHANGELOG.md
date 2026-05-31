@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.0.0-295b305...v1.0.1-295b305) (2026-05-31)
+
+
+### Bug Fixes
+
+* unpack Postgres runtime deps for SDK service ([#145](https://github.com/cluster-software/agent-crm-app/issues/145)) ([3b8a9f4](https://github.com/cluster-software/agent-crm-app/commit/3b8a9f4ec219d4b72213fe7d296526e377698a7a))
+
 ## [1.0.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v0.22.3-295b305...v1.0.0-295b305) (2026-05-31)
 
 
