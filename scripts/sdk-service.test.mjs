@@ -105,11 +105,13 @@ test(
       assert.equal(workspace.path, tempDir);
       assert.ok(workspace.objects.some((object) => object.object_slug === "people"));
 
+      const suffix = `${Date.now()}-${Math.trunc(Math.random() * 1_000_000)}`;
+      const smokeEmail = `postgres-smoke-${suffix}@example.com`;
       const created = await client.request("createRecord", {
         object_slug: "people",
         fields: [
-          `name=Postgres Smoke ${Date.now()}`,
-          `email_addresses=postgres-smoke-${Date.now()}@example.com`
+          `name=Postgres Smoke ${suffix}`,
+          `email_addresses=${smokeEmail}`
         ],
         source: "postgres-sdk-service-test"
       });
@@ -118,9 +120,67 @@ test(
       const listed = await client.request("listRecords", "people", {
         limit: 10,
         valueAttributes: ["email_addresses"],
-        searchQuery: "postgres-smoke"
+        searchQuery: smokeEmail
       });
-      assert.ok(listed.records.length >= 1);
+      assert.equal(listed.records[0]?.record_id, created.record_id);
+
+      const companyName = `Smoke Company ${suffix}`;
+      const communicationEmail = `alice-${suffix}@example.com`;
+      await client.request("importCommunicationBatch", {
+        people: [{
+          sourceKey: `gmail:smoke:${suffix}:email:${communicationEmail}`,
+          email: communicationEmail,
+          displayName: `Alice Smoke ${suffix}`,
+          companySourceKey: `gmail:smoke:${suffix}:company`
+        }],
+        companies: [{
+          sourceKey: `gmail:smoke:${suffix}:company`,
+          domain: `company-${suffix}.example.com`,
+          name: companyName
+        }],
+        communicationThreads: [{
+          sourceKey: `gmail:smoke:${suffix}:thread`,
+          provider: "gmail",
+          channel: "email",
+          providerAccountId: "me@example.com",
+          providerThreadId: `thread-${suffix}`,
+          subject: `Smoke thread ${suffix}`,
+          participantSourceKeys: [`gmail:smoke:${suffix}:email:${communicationEmail}`]
+        }],
+        communicationMessages: [{
+          sourceKey: `gmail:smoke:${suffix}:message`,
+          provider: "gmail",
+          channel: "email",
+          providerAccountId: "me@example.com",
+          providerMessageId: `message-${suffix}`,
+          providerThreadId: `thread-${suffix}`,
+          threadSourceKey: `gmail:smoke:${suffix}:thread`,
+          subject: `Smoke message ${suffix}`,
+          bodyPreview: `Hello from smoke ${suffix}`,
+          senderSourceKey: `gmail:smoke:${suffix}:email:${communicationEmail}`,
+          participantSourceKeys: [`gmail:smoke:${suffix}:email:${communicationEmail}`]
+        }]
+      });
+
+      const people = await client.request("listRecords", "people", {
+        limit: 10,
+        searchQuery: communicationEmail
+      });
+      assert.equal(people.records[0]?.label, `Alice Smoke ${suffix}`);
+      assert.match(people.records[0]?.subtitle ?? "", new RegExp(companyName));
+      assert.doesNotMatch(people.records[0]?.label ?? "", /^[0-9a-f]{8}$/i);
+
+      const threads = await client.request("listRecords", "communication_threads", {
+        limit: 10,
+        searchQuery: `Smoke thread ${suffix}`
+      });
+      assert.equal(threads.records[0]?.label, `Smoke thread ${suffix}`);
+
+      const messages = await client.request("listRecords", "communication_messages", {
+        limit: 10,
+        searchQuery: `Smoke message ${suffix}`
+      });
+      assert.equal(messages.records[0]?.label, `Smoke message ${suffix}`);
     } finally {
       await client.close().catch(() => undefined);
       await fs.rm(tempDir, { recursive: true, force: true });
