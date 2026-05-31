@@ -13,12 +13,18 @@ import type {
 
 function unwrapError(error: unknown): never {
   if (error instanceof Error) {
+    let message: string | null = null;
     try {
       const parsed = JSON.parse(error.message);
-      throw new Error(parsed.message ?? error.message);
+      if (typeof parsed?.message === "string") {
+        message = parsed.message;
+      }
     } catch {
-      throw error;
+      // Fall through to the original Electron error when it is not our JSON
+      // envelope.
     }
+    if (message) throw new Error(message);
+    throw error;
   }
   throw error;
 }
