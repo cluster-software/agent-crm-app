@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -33,7 +33,6 @@ import type {
   UpdateStatus,
   WorkspaceSummary
 } from "./shared/types.js";
-import { createWorkspaceWatcher } from "./workspace-watcher.js";
 
 const { autoUpdater } = electronUpdater;
 
@@ -45,6 +44,7 @@ let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
 const cloudWorkspaceIdsByCwd = new Map<string, string>();
 const cloudWorkspaceTokensByCwd = new Map<string, string>();
+const databaseUrlsByCwd = new Map<string, string>();
 const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-crm-sync-engine.onrender.com";
 let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -87,10 +87,6 @@ function sendToMainWindow(channel: string, ...args: unknown[]) {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
   window.webContents.send(channel, ...args);
 }
-
-const workspaceWatcher = createWorkspaceWatcher(() => {
-  sendToMainWindow("workspace:changed");
-});
 
 type RpcResponse<T> =
   | { id: number; result: T }
@@ -508,14 +504,11 @@ async function ensureAgentCliPreflight(): Promise<void> {
 const AGENT_CRM_ROOT = path.join(os.homedir(), "agent-crm");
 const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
 const RECENT_WORKSPACES_FILENAME = "recent-workspaces.json";
-const RECENT_WORKSPACE_DIRS = [
-  { dir: AGENT_CRM_ROOT, depth: 2 },
-  { dir: path.join(os.homedir(), "workspaces"), depth: 1 },
-  { dir: path.join(os.homedir(), "Downloads"), depth: 1 }
-] as const;
 
 type PersistedRecentWorkspace = {
   path: string;
+  databaseUrl: string;
+  name: string;
   openedAt: string;
 };
 
@@ -563,10 +556,36 @@ function slugifyWorkspaceName(name: string): string {
   return cleaned;
 }
 
+function normalizeDatabaseUrl(input: string): string {
+  const trimmed = input.trim();
+  const parsed = new URL(trimmed);
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error("Workspace database URL must start with postgres:// or postgresql://.");
+  }
+  return trimmed;
+}
+
+function defaultWorkspaceName(databaseUrl: string): string {
+  try {
+    const parsed = new URL(databaseUrl);
+    const dbName = parsed.pathname.replace(/^\/+/, "");
+    return dbName || parsed.hostname || "Agent CRM";
+  } catch {
+    return "Agent CRM";
+  }
+}
+
+function databaseUrlKey(databaseUrl: string): string {
+  const parsed = new URL(normalizeDatabaseUrl(databaseUrl));
+  parsed.username = "";
+  parsed.password = "";
+  return parsed.toString();
+}
+
 // Allocate a fresh workspace directory under the chosen parent keyed off the
-// user's workspace name. The `.acrm` file and the Claude Code PTY share this
-// directory so they don't diverge. If `<slug>` is taken, append `-2`, `-3`,
-// etc. until we find a free one.
+// user's workspace name. The directory holds app-side files such as signals,
+// caches, and agent instructions; CRM data lives in Postgres. If `<slug>` is
+// taken, append `-2`, `-3`, etc. until we find a free one.
 async function allocateWorkspaceDir(slug: string, parentDir = AGENT_CRM_ROOT): Promise<string> {
   await fs.mkdir(parentDir, { recursive: true });
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -640,10 +659,6 @@ async function ensureAgentInstructionFilesInDir(workspaceDir: string): Promise<v
   );
 }
 
-async function ensureAgentInstructionFiles(workspaceFile: string): Promise<void> {
-  await ensureAgentInstructionFilesInDir(path.dirname(workspaceFile));
-}
-
 async function upsertAgentInstructionBlock(
   filePath: string,
   instructions: AgentWorkspaceInstructions
@@ -673,29 +688,25 @@ async function upsertAgentInstructionBlock(
   await fs.writeFile(filePath, next, "utf8");
 }
 
-// The PTY runs in the folder that holds the `.acrm` so Claude Code sees the
-// same workspace as the Electron app. With no workspace open, fall back to
-// the managed root.
-function resolvePtyCwd(workspaceFile?: string): string {
-  if (workspaceFile && workspaceFile.length > 0) {
-    return path.dirname(workspaceFile);
+// The PTY runs in the workspace support directory so Claude Code sees the same
+// signals and agent instructions as the Electron app. With no workspace open,
+// fall back to the managed root.
+function resolvePtyCwd(workspaceDir?: string): string {
+  if (workspaceDir && workspaceDir.length > 0) {
+    return workspaceDir;
   }
   return AGENT_CRM_ROOT;
 }
 
 async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceSummary> {
   if (!summary.path) return summary;
-  const cwd = path.dirname(summary.path);
+  const cwd = summary.path;
   const metadataPath = path.join(cwd, CLOUD_METADATA_FILENAME);
   const localWorkspaceId = await getSdkClient().request<string>("ensureWorkspaceIdentity");
   let metadata = await readCloudMetadata(metadataPath);
 
   if (metadata.workspaceId && metadata.clientToken) {
     if (metadata.localWorkspaceId && metadata.localWorkspaceId !== localWorkspaceId) {
-      await archiveCloudMetadata(metadataPath);
-      metadata = {};
-    } else if (!metadata.localWorkspaceId && await shouldRotateLegacySidecar(metadata, metadataPath, summary.path)) {
-      await archiveCloudMetadata(metadataPath);
       metadata = {};
     }
   }
@@ -713,6 +724,7 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
     clientToken !== metadata.clientToken ||
     localWorkspaceId !== metadata.localWorkspaceId
   ) {
+    await fs.mkdir(cwd, { recursive: true });
     await fs.writeFile(
       metadataPath,
       `${JSON.stringify({
@@ -728,6 +740,7 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
 
   cloudWorkspaceIdsByCwd.set(cwd, workspaceId);
   cloudWorkspaceTokensByCwd.set(cwd, clientToken);
+  databaseUrlsByCwd.set(cwd, summary.databaseUrl);
   return {
     ...summary,
     cloudWorkspaceId: workspaceId
@@ -760,45 +773,6 @@ async function readCloudMetadata(metadataPath: string): Promise<CloudMetadata> {
       console.warn(`[cloud-workspace] failed to read ${metadataPath}: ${(error as Error).message}`);
     }
     return {};
-  }
-}
-
-async function shouldRotateLegacySidecar(
-  metadata: CloudMetadata,
-  metadataPath: string,
-  workspacePath: string
-): Promise<boolean> {
-  const sidecarCreatedAt = Date.parse(metadata.createdAt ?? "");
-  try {
-    const [sidecarStat, workspaceStat] = await Promise.all([
-      fs.stat(metadataPath),
-      fs.stat(workspacePath)
-    ]);
-    const sidecarTimestamp = Number.isNaN(sidecarCreatedAt)
-      ? Math.max(sidecarStat.birthtimeMs, sidecarStat.mtimeMs)
-      : sidecarCreatedAt;
-    const workspaceTimestamp = Math.max(workspaceStat.birthtimeMs, workspaceStat.mtimeMs);
-    return sidecarStat.isFile() && workspaceTimestamp > sidecarTimestamp;
-  } catch {
-    return false;
-  }
-}
-
-async function archiveCloudMetadata(metadataPath: string): Promise<void> {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  let target = `${metadataPath}.stale-${timestamp}`;
-  let suffix = 1;
-  while (true) {
-    try {
-      await fs.rename(metadataPath, target);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return;
-      if (code !== "EEXIST") throw error;
-      target = `${metadataPath}.stale-${timestamp}-${suffix}`;
-      suffix++;
-    }
   }
 }
 
@@ -911,7 +885,7 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
     cloudWorkspaceId: summary.cloudWorkspaceId
   };
 
-  const cwd = path.dirname(summary.path);
+  const cwd = summary.path;
   const clientToken = cloudWorkspaceTokensByCwd.get(cwd);
   if (!clientToken) {
     return setCloudSyncStatusForRun(run, { state: "error", message: "Cloud workspace token is missing." });
@@ -1546,7 +1520,7 @@ async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
   const summary = current.cloudWorkspaceId ? current : await withCloudWorkspace(current);
   if (!summary.cloudWorkspaceId) return { state: "no_workspace" };
 
-  const cwd = path.dirname(summary.path);
+  const cwd = summary.path;
   const clientToken = cloudWorkspaceTokensByCwd.get(cwd);
   if (!clientToken) {
     return { state: "error", message: "Cloud workspace token is missing." };
@@ -1671,6 +1645,10 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   const cloudWorkspaceClientToken = cloudWorkspaceTokensByCwd.get(cwd);
   if (cloudWorkspaceClientToken) {
     env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN = cloudWorkspaceClientToken;
+  }
+  const databaseUrl = databaseUrlsByCwd.get(cwd);
+  if (databaseUrl) {
+    env.ACRM_DATABASE_URL = databaseUrl;
   }
 
   const candidates = shellCandidates();
@@ -1818,19 +1796,6 @@ function handle<TArgs extends unknown[], TResult>(
   });
 }
 
-async function openAndWatch(filePath: string): Promise<WorkspaceSummary> {
-  const summary = await withCloudWorkspace(
-    await getSdkClient().request<WorkspaceSummary>("openWorkspace", filePath)
-  );
-  if (summary?.path) {
-    workspaceWatcher.start(summary.path);
-    app.addRecentDocument(summary.path);
-    await recordRecentWorkspace(summary.path);
-  }
-  startCloudSync(summary);
-  return summary;
-}
-
 function recentWorkspacesPath(): string {
   return path.join(app.getPath("userData"), RECENT_WORKSPACES_FILENAME);
 }
@@ -1838,12 +1803,21 @@ function recentWorkspacesPath(): string {
 function normalizeRecentWorkspace(input: unknown): PersistedRecentWorkspace | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const candidate = input as Partial<PersistedRecentWorkspace>;
-  if (typeof candidate.path !== "string" || !candidate.path.endsWith(".acrm")) return null;
+  if (typeof candidate.path !== "string" || candidate.path.length === 0) return null;
+  if (typeof candidate.databaseUrl !== "string" || candidate.databaseUrl.length === 0) return null;
+  try {
+    normalizeDatabaseUrl(candidate.databaseUrl);
+  } catch {
+    return null;
+  }
+  if (typeof candidate.name !== "string" || candidate.name.length === 0) return null;
   if (typeof candidate.openedAt !== "string" || Number.isNaN(new Date(candidate.openedAt).getTime())) {
     return null;
   }
   return {
     path: candidate.path,
+    databaseUrl: candidate.databaseUrl,
+    name: candidate.name,
     openedAt: candidate.openedAt
   };
 }
@@ -1864,16 +1838,17 @@ async function writeRecentWorkspaces(workspaces: PersistedRecentWorkspace[]): Pr
   await fs.writeFile(filePath, `${JSON.stringify(workspaces, null, 2)}\n`);
 }
 
-async function recordRecentWorkspace(filePath: string): Promise<void> {
-  const resolvedPath = path.resolve(filePath);
+async function recordRecentWorkspace(summary: WorkspaceSummary): Promise<void> {
   const next: PersistedRecentWorkspace = {
-    path: resolvedPath,
+    path: path.resolve(summary.path),
+    databaseUrl: summary.databaseUrl,
+    name: summary.filename,
     openedAt: new Date().toISOString()
   };
   const seen = new Set<string>();
   const workspaces = [next, ...await readRecentWorkspaces()]
     .filter((workspace) => {
-      const key = path.resolve(workspace.path);
+      const key = databaseUrlKey(workspace.databaseUrl);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -1882,95 +1857,28 @@ async function recordRecentWorkspace(filePath: string): Promise<void> {
   await writeRecentWorkspaces(workspaces);
 }
 
-async function findWorkspaceFiles(dir: string, depth: number): Promise<RecentWorkspaceSummary[]> {
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const files: RecentWorkspaceSummary[] = [];
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (depth > 0) {
-        files.push(...await findWorkspaceFiles(entryPath, depth - 1));
-      }
-      continue;
-    }
-    if (!entry.isFile() || !entry.name.endsWith(".acrm")) continue;
-    try {
-      const stat = await fs.stat(entryPath);
-      files.push({
-        path: entryPath,
-        filename: entry.name,
-        lastOpenedAt: stat.mtime.toISOString(),
-        timestampSource: "modified"
-      });
-    } catch {
-      // Ignore files that disappear while scanning.
-    }
-  }
-  return files;
-}
-
 async function listRecentWorkspaces(): Promise<RecentWorkspaceSummary[]> {
   const seen = new Set<string>();
-  const isRecentWorkspace = (item: RecentWorkspaceSummary | null): item is RecentWorkspaceSummary =>
-    item !== null;
   const enrichCounts = async (workspace: RecentWorkspaceSummary): Promise<RecentWorkspaceSummary> => {
     try {
       const summary = await getSdkClient().request<Pick<WorkspaceSummary, "counts">>(
         "summarizeWorkspace",
-        workspace.path
+        workspace.databaseUrl
       );
       return { ...workspace, counts: summary.counts };
     } catch {
       return workspace;
     }
   };
-  const persisted: Array<Promise<RecentWorkspaceSummary | null>> = (await readRecentWorkspaces()).map(async (workspace) => {
-    try {
-      await fs.stat(workspace.path);
-      return {
-        path: workspace.path,
-        filename: path.basename(workspace.path),
-        lastOpenedAt: workspace.openedAt,
-        timestampSource: "opened" as const
-      };
-    } catch {
-      return null;
-    }
-  });
-  const recentDocuments: Array<Promise<RecentWorkspaceSummary | null>> = app.getRecentDocuments()
-    .filter((filePath) => filePath.endsWith(".acrm"))
-    .map(async (filePath) => {
-      try {
-        const stat = await fs.stat(filePath);
-        return {
-          path: filePath,
-          filename: path.basename(filePath),
-          lastOpenedAt: stat.mtime.toISOString(),
-          timestampSource: "modified" as const
-        };
-      } catch {
-        return null;
-      }
-    });
-
-  const scanned = await Promise.all(RECENT_WORKSPACE_DIRS.map(({ dir, depth }) =>
-    findWorkspaceFiles(dir, depth)
-  ));
-
-  const workspaces = [
-    ...(await Promise.all(persisted)).filter(isRecentWorkspace),
-    ...(await Promise.all(recentDocuments)).filter(isRecentWorkspace),
-    ...scanned.flat()
-  ]
+  const workspaces = (await readRecentWorkspaces()).map((workspace) => ({
+    path: workspace.path,
+    databaseUrl: workspace.databaseUrl,
+    filename: workspace.name,
+    lastOpenedAt: workspace.openedAt,
+    timestampSource: "opened" as const
+  }))
     .filter((workspace) => {
-      const key = path.resolve(workspace.path);
+      const key = databaseUrlKey(workspace.databaseUrl);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -1980,58 +1888,61 @@ async function listRecentWorkspaces(): Promise<RecentWorkspaceSummary[]> {
   return Promise.all(workspaces.map(enrichCounts));
 }
 
-handle("workspace:open-dialog", async () => {
-  await fs.mkdir(AGENT_CRM_ROOT, { recursive: true });
-  const result = await dialog.showOpenDialog({
-    title: "Open Agent CRM workspace",
-    defaultPath: AGENT_CRM_ROOT,
-    properties: ["openFile"],
-    filters: [{ name: "Agent CRM workspace", extensions: ["acrm"] }]
-  });
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
+async function workspaceDirForDatabase(databaseUrl: string, preferredName?: string): Promise<{ dir: string; name: string }> {
+  const normalizedUrl = normalizeDatabaseUrl(databaseUrl);
+  const key = databaseUrlKey(normalizedUrl);
+  const existing = (await readRecentWorkspaces()).find((workspace) =>
+    databaseUrlKey(workspace.databaseUrl) === key
+  );
+  if (existing) {
+    return { dir: existing.path, name: existing.name };
   }
-  return openAndWatch(result.filePaths[0]);
+  const name = (preferredName?.trim() || defaultWorkspaceName(normalizedUrl)).slice(0, 60);
+  const slug = slugifyWorkspaceName(name) || "workspace";
+  return { dir: await allocateWorkspaceDir(slug), name };
+}
+
+async function openDatabaseWorkspace(databaseUrl: string, preferredName?: string): Promise<WorkspaceSummary> {
+  const normalizedUrl = normalizeDatabaseUrl(databaseUrl);
+  const { dir, name } = await workspaceDirForDatabase(normalizedUrl, preferredName);
+  await fs.mkdir(dir, { recursive: true });
+  const summary = await withCloudWorkspace(
+    await getSdkClient().request<WorkspaceSummary>("openWorkspace", {
+      databaseUrl: normalizedUrl,
+      workspaceDir: dir,
+      name
+    })
+  );
+  await ensureAgentInstructionFilesInDir(summary.path);
+  await recordRecentWorkspace(summary);
+  startCloudSync(summary);
+  return summary;
+}
+
+handle("workspace:open", async (databaseUrl: string) => {
+  return openDatabaseWorkspace(databaseUrl);
 });
 
-handle("workspace:choose-directory", async () => {
-  await fs.mkdir(AGENT_CRM_ROOT, { recursive: true });
-  const result = await dialog.showOpenDialog({
-    title: "Choose workspace directory",
-    defaultPath: AGENT_CRM_ROOT,
-    properties: ["openDirectory", "createDirectory"]
-  });
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
-  }
-  return result.filePaths[0];
-});
-
-handle("workspace:create", async (name: string, parentDir?: string) => {
+handle("workspace:create", async (name: string, databaseUrl: string) => {
   const slug = slugifyWorkspaceName(name ?? "");
   if (slug.length === 0) {
     throw new Error("Workspace name must include at least one letter or number.");
   }
-  const dir = await allocateWorkspaceDir(slug, parentDir || AGENT_CRM_ROOT);
-  const filePath = path.join(dir, `${slug}.acrm`);
+  const normalizedUrl = normalizeDatabaseUrl(databaseUrl);
+  const { dir, name: workspaceName } = await workspaceDirForDatabase(normalizedUrl, name);
   const summary = await withCloudWorkspace(
-    await getSdkClient().request<WorkspaceSummary>("createWorkspace", filePath)
+    await getSdkClient().request<WorkspaceSummary>("createWorkspace", {
+      databaseUrl: normalizedUrl,
+      workspaceDir: dir,
+      name: workspaceName
+    })
   );
-  await ensureAgentInstructionFiles(filePath);
-  if (summary?.path) {
-    workspaceWatcher.start(summary.path);
-    app.addRecentDocument(summary.path);
-    await recordRecentWorkspace(summary.path);
-  }
+  await ensureAgentInstructionFilesInDir(summary.path);
+  await recordRecentWorkspace(summary);
   startCloudSync(summary);
   return summary;
 });
-
-handle("workspace:open-path", (filePath: string) => {
-  return openAndWatch(filePath);
-});
 handle("workspace:close", async () => {
-  workspaceWatcher.stop();
   stopCloudSync();
   await getSdkClient().request<void>("closeWorkspace");
 });
@@ -2234,7 +2145,6 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
-  workspaceWatcher.stop();
   stopCloudSync();
   killAllPtys();
   void sdkClient?.dispose();

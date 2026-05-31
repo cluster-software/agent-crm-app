@@ -425,9 +425,9 @@ export function App() {
     }
   }
 
-  async function handleCreateWorkspace(name: string, parentDir?: string) {
+  async function handleCreateWorkspace(name: string, databaseUrl: string) {
     setError(null);
-    const summary = await api.createWorkspace(name, parentDir);
+    const summary = await api.createWorkspace(name, databaseUrl);
     if (summary) {
       setWorkspace(summary);
       setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
@@ -453,7 +453,7 @@ export function App() {
       } else if (key === "o") {
         if (createOpen || isEditableTarget(event.target)) return;
         event.preventDefault();
-        void runWorkspaceAction(api.openWorkspaceDialog);
+        setCreateOpen(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -464,7 +464,6 @@ export function App() {
   const createWorkspaceModal = createOpen && (
     <CreateWorkspaceModal
       onClose={() => setCreateOpen(false)}
-      onPickDirectory={api.chooseWorkspaceDirectory}
       onCreate={handleCreateWorkspace}
     />
   );
@@ -497,10 +496,10 @@ export function App() {
           <section className="welcome-hero">
             <img className="welcome-logo" src={agentCrmWhiteLogo} alt="Agent CRM" />
 
-            <h1 id="welcome-title">Open a workspace</h1>
+            <h1 id="welcome-title">Connect a database</h1>
             <p className="welcome-hero__sub">
-              Give your agents one shared workspace for every company, person,
-              deal, post and transcript they need to remember.
+              Give your agents one shared Postgres workspace for every company,
+              person, deal, post and transcript they need to remember.
             </p>
 
             <div className="welcome-context" aria-label="What a workspace holds">
@@ -519,14 +518,14 @@ export function App() {
               <button
                 className="welcome-action"
                 type="button"
-                onClick={() => runWorkspaceAction(api.openWorkspaceDialog)}
+                onClick={() => setCreateOpen(true)}
               >
                 <span className="welcome-action__icon">
                   <FolderOpen size={24} className="lucide" />
                 </span>
                 <span className="welcome-action__copy">
-                  <span className="welcome-action__title">Open workspace</span>
-                  <span className="welcome-action__sub">Browse for one on your machine.</span>
+                  <span className="welcome-action__title">Open database</span>
+                  <span className="welcome-action__sub">Paste a Postgres connection URL.</span>
                 </span>
                 <span className="welcome-action__kbd mono">⌘O</span>
               </button>
@@ -540,8 +539,8 @@ export function App() {
                   <FilePlus2 size={24} className="lucide" />
                 </span>
                 <span className="welcome-action__copy">
-                  <span className="welcome-action__title">Create workspace</span>
-                  <span className="welcome-action__sub">Start fresh in seconds.</span>
+                  <span className="welcome-action__title">Initialize database</span>
+                  <span className="welcome-action__sub">Create the Agent CRM schema.</span>
                 </span>
                 <span className="welcome-action__kbd mono">⌘N</span>
               </button>
@@ -554,9 +553,9 @@ export function App() {
                   {recentWorkspaces.map((recent) => (
                     <button
                       className="welcome-recent"
-                      key={recent.path}
+                      key={recent.databaseUrl}
                       type="button"
-                      onClick={() => runWorkspaceAction(() => api.openWorkspacePath(recent.path))}
+                      onClick={() => runWorkspaceAction(() => api.openWorkspace(recent.databaseUrl))}
                     >
                       <span className="welcome-recent__icon">
                         <FolderOpen size={18} className="lucide" />
@@ -577,7 +576,7 @@ export function App() {
                   </span>
                   <span className="welcome-empty__copy">
                     <span className="welcome-empty__title">No workspaces yet</span>
-                    <span className="welcome-empty__sub">Open one from your machine, or create one to get started.</span>
+                    <span className="welcome-empty__sub">Connect Neon, Supabase, or another Postgres database.</span>
                   </span>
                 </div>
               )}
@@ -720,25 +719,25 @@ export function App() {
             <button
               className="icon-btn toolbar-tooltip"
               type="button"
-              aria-label="Open workspace"
-              onClick={() => runWorkspaceAction(api.openWorkspaceDialog)}
+              aria-label="Open database"
+              onClick={() => setCreateOpen(true)}
             >
               <FolderOpen size={14} className="lucide" />
               <span className="toolbar-tooltip__bubble" role="tooltip">
                 <kbd><span>⌘</span><span>O</span></kbd>
-                <span>Open workspace</span>
+                <span>Open database</span>
               </span>
             </button>
             <button
               className="icon-btn toolbar-tooltip"
               type="button"
-              aria-label="Create workspace"
+              aria-label="Initialize database"
               onClick={() => setCreateOpen(true)}
             >
               <FilePlus2 size={14} className="lucide" />
               <span className="toolbar-tooltip__bubble" role="tooltip">
                 <kbd><span>⌘</span><span>N</span></kbd>
-                <span>Create workspace</span>
+                <span>Initialize database</span>
               </span>
             </button>
             <button
@@ -862,15 +861,13 @@ function iconForObject(objectSlug: string): ComponentType<{ size?: number; class
 
 function CreateWorkspaceModal({
   onClose,
-  onPickDirectory,
   onCreate
 }: {
   onClose: () => void;
-  onPickDirectory: () => Promise<string | null>;
-  onCreate: (name: string, parentDir?: string) => Promise<void>;
+  onCreate: (name: string, databaseUrl: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
-  const [parentDir, setParentDir] = useState<string | null>(null);
+  const [databaseUrl, setDatabaseUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -891,21 +888,8 @@ function CreateWorkspaceModal({
   }, [onClose, submitting]);
 
   const trimmed = name.trim();
-  const canSubmit = trimmed.length > 0 && !submitting;
-
-  async function handlePickDirectory() {
-    if (submitting) return;
-    setLocalError(null);
-    try {
-      const directory = await onPickDirectory();
-      if (directory) {
-        setParentDir(directory);
-        inputRef.current?.focus();
-      }
-    } catch (err) {
-      setLocalError(statusFromError(err));
-    }
-  }
+  const trimmedDatabaseUrl = databaseUrl.trim();
+  const canSubmit = trimmed.length > 0 && trimmedDatabaseUrl.length > 0 && !submitting;
 
   async function handleSubmit(event: ReactFormEvent) {
     event.preventDefault();
@@ -913,7 +897,7 @@ function CreateWorkspaceModal({
     setSubmitting(true);
     setLocalError(null);
     try {
-      await onCreate(trimmed, parentDir ?? undefined);
+      await onCreate(trimmed, trimmedDatabaseUrl);
       onClose();
     } catch (err) {
       setLocalError(statusFromError(err));
@@ -921,39 +905,22 @@ function CreateWorkspaceModal({
     }
   }
 
-  const parentDirLabel =
-    parentDir && parentDir.length > 52
-      ? `${parentDir.slice(0, 24)}...${parentDir.slice(-25)}`
-      : parentDir ?? "";
-
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <form className="modal modal--narrow" onSubmit={handleSubmit}>
         <div className="modal__head">
           <div>
-            <h2>New workspace</h2>
-            {parentDir ? (
-              <p>
-                Pick a name. The workspace will be created under{" "}
-                <span className="mono modal-path" title={parentDir}>
-                  {parentDirLabel}
-                </span>
-              </p>
-            ) : (
-              <p>
-                Pick a name. By default the workspace is created under{" "}
-                <span className="mono">~/agent-crm/</span>.
-              </p>
-            )}
+            <h2>Database workspace</h2>
+            <p>Connect Neon, Supabase, or any Postgres-compatible database.</p>
           </div>
         </div>
         <div className="modal__body">
-          <div className="workspace-name-row">
-            <label className="input workspace-name-row__input">
+          <div className="workspace-form-stack">
+            <label className="input">
               <input
                 ref={inputRef}
                 type="text"
-                placeholder="e.g. pipeline"
+                placeholder="Workspace name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 disabled={submitting}
@@ -962,16 +929,17 @@ function CreateWorkspaceModal({
                 maxLength={60}
               />
             </label>
-            <button
-              type="button"
-              className="icon-btn workspace-directory-btn"
-              title="Choose workspace directory"
-              aria-label="Choose workspace directory"
-              onClick={handlePickDirectory}
-              disabled={submitting}
-            >
-              <FolderOpen size={14} className="lucide" />
-            </button>
+            <label className="input">
+              <input
+                type="password"
+                placeholder="postgres://user:password@host:5432/database"
+                value={databaseUrl}
+                onChange={(event) => setDatabaseUrl(event.target.value)}
+                disabled={submitting}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
           </div>
           {localError && <div className="strip strip--error">{localError}</div>}
         </div>
@@ -983,10 +951,10 @@ function CreateWorkspaceModal({
             {submitting ? (
               <>
                 <Loader2 size={14} className="lucide spin" />
-                <span>Creating</span>
+                <span>Connecting</span>
               </>
             ) : (
-              <span>Create</span>
+              <span>Connect</span>
             )}
           </button>
         </div>
@@ -1034,7 +1002,7 @@ function displayVersion(version: string): string {
 }
 
 function formatWorkspaceName(filename: string): string {
-  return filename.replace(/\.acrm$/i, "");
+  return filename;
 }
 
 function formatCount(value: number, singular: string, plural: string): string {

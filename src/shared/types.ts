@@ -1,5 +1,6 @@
 export type WorkspaceSummary = {
   path: string;
+  databaseUrl: string;
   filename: string;
   cloudWorkspaceId?: string;
   objects: SchemaObject[];
@@ -8,6 +9,7 @@ export type WorkspaceSummary = {
 
 export type RecentWorkspaceSummary = {
   path: string;
+  databaseUrl: string;
   filename: string;
   lastOpenedAt: string;
   timestampSource: "opened" | "modified";
@@ -361,10 +363,8 @@ export type UpdateStatus =
 
 export type AppBridge = {
   platform: string;
-  openWorkspaceDialog: () => Promise<WorkspaceSummary | null>;
-  chooseWorkspaceDirectory: () => Promise<string | null>;
-  createWorkspace: (name: string, parentDir?: string) => Promise<WorkspaceSummary | null>;
-  openWorkspacePath: (filePath: string) => Promise<WorkspaceSummary>;
+  openWorkspace: (databaseUrl: string) => Promise<WorkspaceSummary>;
+  createWorkspace: (name: string, databaseUrl: string) => Promise<WorkspaceSummary | null>;
   closeWorkspace: () => Promise<void>;
   getWorkspace: () => Promise<WorkspaceSummary | null>;
   listRecentWorkspaces: () => Promise<RecentWorkspaceSummary[]>;

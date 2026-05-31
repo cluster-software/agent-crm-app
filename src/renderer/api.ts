@@ -218,8 +218,9 @@ const sampleRecordsByObject: Record<string, RecordPreview[]> = {
 };
 
 const previewWorkspace: WorkspaceSummary = {
-  path: "/Users/preview/workspace.acrm",
-  filename: "workspace.acrm",
+  path: "/Users/preview/agent-crm/workspace",
+  databaseUrl: "postgres://postgres:postgres@localhost:5432/agent_crm_preview",
+  filename: "Preview workspace",
   counts: {
     companies: 18,
     people: 42,
@@ -440,22 +441,25 @@ const previewWorkspace: WorkspaceSummary = {
 
 const previewRecentWorkspaces: RecentWorkspaceSummary[] = [
   {
-    path: "/Users/example/workspaces/cluster.acrm",
-    filename: "cluster.acrm",
+    path: "/Users/example/agent-crm/cluster",
+    databaseUrl: "postgres://postgres:postgres@localhost:5432/cluster",
+    filename: "Cluster",
     lastOpenedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
     timestampSource: "opened",
     counts: { companies: 128, people: 540, deals: 12 }
   },
   {
-    path: "/Users/example/workspaces/anthropic-design.acrm",
-    filename: "anthropic-design.acrm",
+    path: "/Users/example/agent-crm/anthropic-design",
+    databaseUrl: "postgres://postgres:postgres@localhost:5432/anthropic_design",
+    filename: "Anthropic Design",
     lastOpenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
     timestampSource: "opened",
     counts: { companies: 22, people: 88, deals: 5 }
   },
   {
-    path: "/Users/example/Downloads/yc-w26-leads.acrm",
-    filename: "yc-w26-leads.acrm",
+    path: "/Users/example/agent-crm/yc-w26-leads",
+    databaseUrl: "postgres://postgres:postgres@localhost:5432/yc_w26_leads",
+    filename: "YC W26 Leads",
     lastOpenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
     timestampSource: "opened",
     counts: { companies: 64, people: 210, deals: 8 }
@@ -608,11 +612,8 @@ function previewDisplayValue(objectSlug: string, attributeSlug: string, rawValue
 
 const browserPreview: AppBridge = {
   platform: "browser",
-  openWorkspaceDialog: async () => previewWorkspace,
-  chooseWorkspaceDirectory: async () =>
-    "/Users/example/Documents/Agent CRM workspaces/enterprise-growth-pipeline-directory",
-  createWorkspace: async (_name: string, _parentDir?: string) => previewWorkspace,
-  openWorkspacePath: async () => previewWorkspace,
+  openWorkspace: async () => previewWorkspace,
+  createWorkspace: async () => previewWorkspace,
   closeWorkspace: async () => undefined,
   getWorkspace: async () => (forceWelcomePreview ? null : previewWorkspace),
   listRecentWorkspaces: async () => previewRecentWorkspaces,

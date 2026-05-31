@@ -38,6 +38,8 @@ import type {
 
 let workspace: Workspace | null = null;
 let workspacePath: string | null = null;
+let workspaceDatabaseUrl: string | null = null;
+let workspaceName: string | null = null;
 let signalJobQueue = Promise.resolve();
 let schemaObjectsCache: SchemaObject[] | null = null;
 let recordPreviewStore: RecordPreviewStore | null = null;
@@ -57,6 +59,12 @@ type RpcRequest = {
   id: number;
   method: string;
   params?: unknown[];
+};
+
+type WorkspaceRequest = {
+  databaseUrl: string;
+  workspaceDir: string;
+  name: string;
 };
 
 type SqliteRunResult = { changes: number; lastInsertRowid: number | bigint };
@@ -357,6 +365,27 @@ function normalizePath(filePath: string) {
   return path.resolve(filePath);
 }
 
+function normalizeWorkspaceRequest(input: unknown): WorkspaceRequest {
+  if (!input || typeof input !== "object") {
+    throw new Error("Workspace request must include a database URL.");
+  }
+  const candidate = input as Partial<WorkspaceRequest>;
+  if (typeof candidate.databaseUrl !== "string" || candidate.databaseUrl.trim().length === 0) {
+    throw new Error("Workspace request must include a database URL.");
+  }
+  if (typeof candidate.workspaceDir !== "string" || candidate.workspaceDir.trim().length === 0) {
+    throw new Error("Workspace request must include a workspace directory.");
+  }
+  const name = typeof candidate.name === "string" && candidate.name.trim().length > 0
+    ? candidate.name.trim()
+    : "Agent CRM";
+  return {
+    databaseUrl: candidate.databaseUrl.trim(),
+    workspaceDir: normalizePath(candidate.workspaceDir),
+    name
+  };
+}
+
 async function closeWorkspaceHandle() {
   schemaObjectsCache = null;
   recordIndexBuildGeneration++;
@@ -366,15 +395,17 @@ async function closeWorkspaceHandle() {
     recordPreviewStore = null;
     recordPreviewStoreWorkspacePath = null;
   }
+  workspacePath = null;
+  workspaceDatabaseUrl = null;
+  workspaceName = null;
   if (!workspace) return;
   await workspace.close();
   workspace = null;
-  workspacePath = null;
 }
 
 function assertWorkspace(): Workspace {
   if (!workspace) {
-    throw new Error("No .acrm workspace is open.");
+    throw new Error("No workspace database is open.");
   }
   return workspace;
 }
@@ -383,21 +414,27 @@ async function ensureWorkspaceIdentity(): Promise<string> {
   return ensureSdkWorkspaceIdentity(assertWorkspace());
 }
 
-async function openWorkspaceAt(filePath: string) {
+async function openWorkspaceAt(input: unknown) {
   await closeWorkspaceHandle();
-  const absolutePath = normalizePath(filePath);
+  const request = normalizeWorkspaceRequest(input);
+  await fs.mkdir(request.workspaceDir, { recursive: true });
   schemaObjectsCache = null;
-  workspace = await Workspace.open(absolutePath);
-  workspacePath = absolutePath;
+  workspace = await Workspace.open(request.databaseUrl);
+  workspacePath = request.workspaceDir;
+  workspaceDatabaseUrl = request.databaseUrl;
+  workspaceName = request.name;
   return getWorkspaceSummary();
 }
 
-async function createWorkspaceAt(filePath: string) {
+async function createWorkspaceAt(input: unknown) {
   await closeWorkspaceHandle();
-  const absolutePath = normalizePath(filePath);
+  const request = normalizeWorkspaceRequest(input);
+  await fs.mkdir(request.workspaceDir, { recursive: true });
   schemaObjectsCache = null;
-  workspace = await Workspace.create(absolutePath);
-  workspacePath = absolutePath;
+  workspace = await Workspace.create(request.databaseUrl);
+  workspacePath = request.workspaceDir;
+  workspaceDatabaseUrl = request.databaseUrl;
+  workspaceName = request.name;
   return getWorkspaceSummary();
 }
 
@@ -416,14 +453,15 @@ async function getWorkspaceSummary(): Promise<WorkspaceSummary> {
 
   return {
     path: workspacePath ?? "",
-    filename: workspacePath ? path.basename(workspacePath) : "Untitled workspace",
+    databaseUrl: workspaceDatabaseUrl ?? "",
+    filename: workspaceName ?? "Untitled workspace",
     objects,
     counts
   };
 }
 
-async function summarizeWorkspaceAt(filePath: string): Promise<Pick<WorkspaceSummary, "counts">> {
-  const current = await Workspace.open(normalizePath(filePath));
+async function summarizeWorkspaceAt(databaseUrl: string): Promise<Pick<WorkspaceSummary, "counts">> {
+  const current = await Workspace.open(databaseUrl);
   try {
     return { counts: await countRecords(current) };
   } finally {
@@ -433,9 +471,9 @@ async function summarizeWorkspaceAt(filePath: string): Promise<Pick<WorkspaceSum
 
 function getSignalsDir(): string {
   if (!workspacePath) {
-    throw new Error("No .acrm workspace is open.");
+    throw new Error("No workspace database is open.");
   }
-  return path.join(path.dirname(workspacePath), "signals");
+  return path.join(workspacePath, "signals");
 }
 
 async function listSignalDefinitions() {
@@ -581,9 +619,9 @@ async function syncSignalDefinitions() {
 
 function getSignalsCacheDir(): string {
   if (!workspacePath) {
-    throw new Error("No .acrm workspace is open.");
+    throw new Error("No workspace database is open.");
   }
-  return path.join(path.dirname(workspacePath), ".cache", "signals");
+  return path.join(workspacePath, ".cache", "signals");
 }
 
 async function createSignalRunLogPath(): Promise<string> {
@@ -601,9 +639,9 @@ async function writeSignalRunResultLog(
 
 async function runWorkspaceSignals(request: SignalRunRequest = {}) {
   if (!workspacePath) {
-    throw new Error("No .acrm workspace is open.");
+    throw new Error("No workspace database is open.");
   }
-  const workspaceFile = workspacePath;
+  const workspaceFile = localWorkspaceFile();
   const jobId = `ui-signals-${Date.now()}`;
   const logPath = await createSignalRunLogPath();
   const job: SignalRunJob = {
@@ -629,7 +667,7 @@ async function runWorkspaceSignals(request: SignalRunRequest = {}) {
 
 async function listSignalRuns(): Promise<SignalRunJob[]> {
   if (!workspacePath) return [];
-  const jobs = await listRunningSignalJobs(workspacePath);
+  const jobs = await listRunningSignalJobs(localWorkspaceFile());
   return jobs.map((job) => ({
     id: job.id,
     ...(job.object_slug ? { object_slug: job.object_slug } : {}),
@@ -649,11 +687,11 @@ async function runWorkspaceSignalJob(
   const previousLogPath = process.env.ACRM_SIGNAL_LOG_PATH;
   process.env.ACRM_SIGNAL_LOG_PATH = logPath;
   try {
-    if (!workspace || workspacePath !== workspaceFile) {
+    if (!workspace || !workspacePath || localWorkspaceFile() !== workspaceFile) {
       throw new Error("Signal run workspace is no longer open.");
     }
     const result = await runSignals(workspace, {
-      signalsDir: path.join(path.dirname(workspaceFile), "signals"),
+      signalsDir: getSignalsDir(),
       mode: request.mode,
       signalSlugs: request.signalSlugs,
       object_slug: request.object_slug,
@@ -679,22 +717,29 @@ async function runWorkspaceSignalJob(
   } finally {
     if (previousLogPath === undefined) delete process.env.ACRM_SIGNAL_LOG_PATH;
     else process.env.ACRM_SIGNAL_LOG_PATH = previousLogPath;
-    if (workspacePath === workspaceFile) {
+    if (workspacePath && localWorkspaceFile() === workspaceFile) {
       markRecordPreviewCacheStale();
       scheduleRecordPreviewRebuild("signals");
     }
   }
 }
 
+function localWorkspaceFile(): string {
+  if (!workspacePath) {
+    throw new Error("No workspace database is open.");
+  }
+  return path.join(workspacePath, ".agent-crm-workspace");
+}
+
 async function getRecordPreviewStore(): Promise<RecordPreviewStore> {
   if (!workspacePath) {
-    throw new Error("No .acrm workspace is open.");
+    throw new Error("No workspace database is open.");
   }
   if (recordPreviewStore && recordPreviewStoreWorkspacePath === workspacePath) {
     return recordPreviewStore;
   }
   if (recordPreviewStore) recordPreviewStore.close();
-  const dir = path.join(path.dirname(workspacePath), RECORD_PREVIEW_CACHE_DIR);
+  const dir = path.join(workspacePath, RECORD_PREVIEW_CACHE_DIR);
   await fs.mkdir(dir, { recursive: true });
   recordPreviewStore = new RecordPreviewStore(
     workspacePath,
@@ -749,6 +794,7 @@ async function listRecordsForObjectFromCache(
   objects: SchemaObject[],
   requiredAttributes: string[]
 ): Promise<RecordListResult | null> {
+  return null;
   if (!isRecordPreviewCachedObject(objectSlug)) return null;
   try {
     const store = await getRecordPreviewStore();
@@ -777,27 +823,7 @@ function markRecordPreviewCacheStale() {
 }
 
 function scheduleRecordPreviewRebuild(reason: string) {
-  if (!workspace || !workspacePath) return;
-  if (recordIndexBuild) {
-    recordIndexRebuildPending = true;
-    return;
-  }
-  const generation = recordIndexBuildGeneration;
-  const expectedWorkspacePath = workspacePath;
-  const scheduled = rebuildRecordPreviewIndex(generation, expectedWorkspacePath, reason)
-    .catch((error) => {
-      console.warn(`[record-preview-cache] rebuild failed: ${serializeError(error).message}`);
-    })
-    .finally(() => {
-      if (recordIndexBuild === scheduled) {
-        recordIndexBuild = null;
-      }
-      if (recordIndexRebuildPending && workspacePath === expectedWorkspacePath) {
-        recordIndexRebuildPending = false;
-        scheduleRecordPreviewRebuild("pending");
-      }
-    });
-  recordIndexBuild = scheduled;
+  void reason;
 }
 
 async function discardRecordPreviewStore() {
@@ -813,7 +839,7 @@ async function discardRecordPreviewStore() {
   }
   if (!currentWorkspacePath) return;
   const dbPath = path.join(
-    path.dirname(currentWorkspacePath),
+    currentWorkspacePath,
     RECORD_PREVIEW_CACHE_DIR,
     RECORD_PREVIEW_CACHE_FILENAME
   );
@@ -1551,9 +1577,9 @@ function secondaryLabel(objectSlug: string, object: SchemaObject | undefined, va
 async function dispatch(method: string, params: unknown[] = []) {
   switch (method) {
     case "openWorkspace":
-      return openWorkspaceAt(String(params[0]));
+      return openWorkspaceAt(params[0]);
     case "createWorkspace":
-      return createWorkspaceAt(String(params[0]));
+      return createWorkspaceAt(params[0]);
     case "closeWorkspace":
       return closeWorkspaceHandle();
     case "getWorkspace":
