@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline";
@@ -42,18 +41,9 @@ let workspaceDatabaseUrl: string | null = null;
 let workspaceName: string | null = null;
 let signalJobQueue = Promise.resolve();
 let schemaObjectsCache: SchemaObject[] | null = null;
-let recordPreviewStore: RecordPreviewStore | null = null;
-let recordPreviewStoreWorkspacePath: string | null = null;
-let recordIndexBuild: Promise<void> | null = null;
-let recordIndexBuildGeneration = 0;
-let recordIndexRebuildPending = false;
 
 const DEFAULT_RECORD_LIMIT = 100;
 const MAX_RECORD_LIMIT = 250;
-const RECORD_PREVIEW_CACHE_VERSION = "2";
-const RECORD_PREVIEW_CACHE_OBJECTS = new Set(["companies", "people", "deals"]);
-const RECORD_PREVIEW_CACHE_DIR = path.join(".cache", "agent-crm-app");
-const RECORD_PREVIEW_CACHE_FILENAME = "record-previews.sqlite";
 
 type RpcRequest = {
   id: number;
@@ -66,300 +56,6 @@ type WorkspaceRequest = {
   workspaceDir: string;
   name: string;
 };
-
-type SqliteRunResult = { changes: number; lastInsertRowid: number | bigint };
-type SqliteStatement = {
-  get: (...params: unknown[]) => Record<string, unknown> | undefined;
-  all: (...params: unknown[]) => Array<Record<string, unknown>>;
-  run: (...params: unknown[]) => SqliteRunResult;
-};
-type SqliteDatabase = {
-  pragma: (source: string) => unknown;
-  exec: (source: string) => SqliteDatabase;
-  prepare: (source: string) => SqliteStatement;
-  transaction: <T extends (...args: any[]) => unknown>(fn: T) => T;
-  close: () => void;
-};
-type SqliteDatabaseConstructor = new (filename: string) => SqliteDatabase;
-
-const require = createRequire(import.meta.url);
-const Database = require("better-sqlite3") as SqliteDatabaseConstructor;
-
-type RecordPreviewCacheMeta = {
-  workspaceSignature: string;
-  schemaFingerprint: string;
-};
-
-type RecordPreviewCacheStatus = {
-  valid: boolean;
-  hasRows: boolean;
-  indexed: boolean;
-  indexedAttributes: Set<string>;
-};
-
-type RecordPreviewIndex = {
-  meta: RecordPreviewCacheMeta;
-  objects: Array<{
-    objectSlug: string;
-    attributes: string[];
-    records: RecordPreview[];
-  }>;
-};
-
-class RecordPreviewStore {
-  private readonly db: SqliteDatabase;
-
-  constructor(readonly workspaceFile: string, readonly dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("synchronous = NORMAL");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS record_preview_meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS record_previews (
-        object_slug TEXT NOT NULL,
-        record_id TEXT NOT NULL,
-        sort_key TEXT NOT NULL,
-        label TEXT NOT NULL,
-        subtitle TEXT NOT NULL,
-        values_json TEXT NOT NULL,
-        search_text TEXT NOT NULL,
-        indexed_at TEXT NOT NULL,
-        PRIMARY KEY (object_slug, record_id)
-      );
-      CREATE TABLE IF NOT EXISTS record_preview_search (
-        object_slug TEXT NOT NULL,
-        record_id TEXT NOT NULL,
-        attribute_slug TEXT NOT NULL,
-        search_text TEXT NOT NULL,
-        PRIMARY KEY (object_slug, record_id, attribute_slug)
-      );
-      CREATE INDEX IF NOT EXISTS idx_record_previews_page
-        ON record_previews (object_slug, sort_key DESC, record_id DESC);
-      CREATE INDEX IF NOT EXISTS idx_record_previews_record
-        ON record_previews (object_slug, record_id);
-      CREATE INDEX IF NOT EXISTS idx_record_preview_search_attr
-        ON record_preview_search (object_slug, attribute_slug);
-    `);
-  }
-
-  close() {
-    this.db.close();
-  }
-
-  status(
-    objectSlug: string,
-    requiredAttributes: string[],
-    meta: RecordPreviewCacheMeta
-  ): RecordPreviewCacheStatus {
-    const cacheVersion = this.getMeta("cache_version");
-    const workspacePath = this.getMeta("workspace_path");
-    const workspaceSignature = this.getMeta("workspace_signature");
-    const schemaFingerprint = this.getMeta("schema_fingerprint");
-    const hasRows = Boolean(
-      this.db
-        .prepare("SELECT 1 FROM record_previews WHERE object_slug = ? LIMIT 1")
-        .get(objectSlug)
-    );
-    const indexed = this.getMeta(`indexed:${objectSlug}`) === "1";
-    const indexedAttributes = new Set(this.getObjectAttributes(objectSlug));
-    const hasRequiredAttributes = requiredAttributes.every((attr) => indexedAttributes.has(attr));
-    return {
-      hasRows,
-      indexed,
-      indexedAttributes,
-      valid:
-        indexed &&
-        hasRequiredAttributes &&
-        cacheVersion === RECORD_PREVIEW_CACHE_VERSION &&
-        workspacePath === this.workspaceFile &&
-        workspaceSignature === meta.workspaceSignature &&
-        schemaFingerprint === meta.schemaFingerprint
-    };
-  }
-
-  readRecords(
-    objectSlug: string,
-    options: RecordListOptions,
-    requiredAttributes: string[]
-  ): RecordListResult {
-    const limit = normalizeRecordLimit(options.limit);
-    const cursor = normalizeCursor(options.cursor);
-    const searchTerms = normalizeRecordSearchTerms(options.searchQuery);
-    const pageQuery = this.queryParts(objectSlug, searchTerms, requiredAttributes, cursor);
-    const rows = this.db
-      .prepare(
-        `SELECT rp.object_slug, rp.record_id, rp.label, rp.subtitle, rp.values_json, rp.sort_key
-           FROM record_previews rp
-          WHERE ${pageQuery.whereSql}
-          ORDER BY sort_key DESC, record_id DESC
-          LIMIT ${limit + 1}`
-      )
-      .all(...pageQuery.params);
-    const pageRows = rows.slice(0, limit);
-    const records = pageRows.map((row) => ({
-      object_slug: String(row.object_slug),
-      record_id: String(row.record_id),
-      label: String(row.label ?? ""),
-      subtitle: String(row.subtitle ?? ""),
-      values: parseRecordValues(row.values_json).filter((value) =>
-        requiredAttributes.includes(value.attribute_slug)
-      ).slice(0, 10)
-    }));
-    const totalMatches =
-      searchTerms.length > 0
-        ? this.countSearchMatches(objectSlug, searchTerms, requiredAttributes)
-        : undefined;
-
-    return {
-      objectSlug,
-      records,
-      limit,
-      cursor,
-      nextCursor: rows.length > limit ? String(pageRows[pageRows.length - 1]?.record_id ?? "") || null : null,
-      hasMore: rows.length > limit,
-      ...(totalMatches !== undefined ? { totalMatches } : {})
-    };
-  }
-
-  replaceIndex(index: RecordPreviewIndex) {
-    const write = this.db.transaction((payload: RecordPreviewIndex) => {
-      const now = new Date().toISOString();
-      const upsertMeta = this.db.prepare(
-        `INSERT INTO record_preview_meta (key, value)
-         VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      );
-      const deleteObject = this.db.prepare("DELETE FROM record_previews WHERE object_slug = ?");
-      const deleteSearchObject = this.db.prepare("DELETE FROM record_preview_search WHERE object_slug = ?");
-      const insertPreview = this.db.prepare(
-        `INSERT INTO record_previews
-          (object_slug, record_id, sort_key, label, subtitle, values_json, search_text, indexed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      );
-      const insertSearch = this.db.prepare(
-        `INSERT INTO record_preview_search
-          (object_slug, record_id, attribute_slug, search_text)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(object_slug, record_id, attribute_slug)
-         DO UPDATE SET search_text = excluded.search_text`
-      );
-
-      upsertMeta.run("cache_version", RECORD_PREVIEW_CACHE_VERSION);
-      upsertMeta.run("workspace_path", this.workspaceFile);
-      upsertMeta.run("workspace_signature", payload.meta.workspaceSignature);
-      upsertMeta.run("schema_fingerprint", payload.meta.schemaFingerprint);
-      upsertMeta.run("indexed_at", now);
-
-      for (const object of payload.objects) {
-        deleteObject.run(object.objectSlug);
-        deleteSearchObject.run(object.objectSlug);
-        upsertMeta.run(`indexed:${object.objectSlug}`, "1");
-        upsertMeta.run(`attributes:${object.objectSlug}`, JSON.stringify(object.attributes));
-        for (const record of object.records) {
-          insertPreview.run(
-            object.objectSlug,
-            record.record_id,
-            record.record_id,
-            record.label,
-            record.subtitle,
-            JSON.stringify(record.values),
-            record.values.map(recordValueSearchText).filter(Boolean).join(" "),
-            now
-          );
-          for (const value of record.values) {
-            insertSearch.run(
-              object.objectSlug,
-              record.record_id,
-              value.attribute_slug,
-              recordValueSearchText(value)
-            );
-          }
-        }
-      }
-    });
-    write(index);
-  }
-
-  markStale() {
-    this.setMeta("workspace_signature", "stale");
-  }
-
-  private getMeta(key: string): string | null {
-    const row = this.db.prepare("SELECT value FROM record_preview_meta WHERE key = ?").get(key);
-    return typeof row?.value === "string" ? row.value : null;
-  }
-
-  private setMeta(key: string, value: string) {
-    this.db
-      .prepare(
-        `INSERT INTO record_preview_meta (key, value)
-         VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      )
-      .run(key, value);
-  }
-
-  private getObjectAttributes(objectSlug: string): string[] {
-    const raw = this.getMeta(`attributes:${objectSlug}`);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((value) => typeof value === "string") : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private countSearchMatches(
-    objectSlug: string,
-    searchTerms: string[],
-    requiredAttributes: string[]
-  ): number {
-    const query = this.queryParts(objectSlug, searchTerms, requiredAttributes, null);
-    return Number(
-      this.db
-        .prepare(`SELECT COUNT(*) AS count FROM record_previews rp WHERE ${query.whereSql}`)
-        .get(...query.params)?.count ?? 0
-    );
-  }
-
-  private queryParts(
-    objectSlug: string,
-    searchTerms: string[],
-    requiredAttributes: string[],
-    cursor: string | null
-  ): { whereSql: string; params: unknown[] } {
-    const where = ["rp.object_slug = ?"];
-    const params: unknown[] = [objectSlug];
-    if (cursor) {
-      where.push("rp.sort_key < ?");
-      params.push(cursor);
-    }
-    for (const term of searchTerms) {
-      if (requiredAttributes.length === 0) {
-        where.push("0 = 1");
-        continue;
-      }
-      const alias = `ps${params.length}`;
-      const placeholders = requiredAttributes.map(() => "?").join(", ");
-      where.push(
-        `EXISTS (
-          SELECT 1
-            FROM record_preview_search ${alias}
-           WHERE ${alias}.object_slug = rp.object_slug
-             AND ${alias}.record_id = rp.record_id
-             AND ${alias}.attribute_slug IN (${placeholders})
-             AND ${alias}.search_text LIKE ? ESCAPE '\\'
-        )`
-      );
-      params.push(...requiredAttributes, `%${escapeSqlLike(term)}%`);
-    }
-    return { whereSql: where.join(" AND "), params };
-  }
-}
 
 function normalizePath(filePath: string) {
   return path.resolve(filePath);
@@ -388,13 +84,6 @@ function normalizeWorkspaceRequest(input: unknown): WorkspaceRequest {
 
 async function closeWorkspaceHandle() {
   schemaObjectsCache = null;
-  recordIndexBuildGeneration++;
-  recordIndexRebuildPending = false;
-  if (recordPreviewStore) {
-    recordPreviewStore.close();
-    recordPreviewStore = null;
-    recordPreviewStoreWorkspacePath = null;
-  }
   workspacePath = null;
   workspaceDatabaseUrl = null;
   workspaceName = null;
@@ -718,8 +407,7 @@ async function runWorkspaceSignalJob(
     if (previousLogPath === undefined) delete process.env.ACRM_SIGNAL_LOG_PATH;
     else process.env.ACRM_SIGNAL_LOG_PATH = previousLogPath;
     if (workspacePath && localWorkspaceFile() === workspaceFile) {
-      markRecordPreviewCacheStale();
-      scheduleRecordPreviewRebuild("signals");
+      send({ event: "workspaceChanged", workspacePath });
     }
   }
 }
@@ -729,280 +417,6 @@ function localWorkspaceFile(): string {
     throw new Error("No workspace database is open.");
   }
   return path.join(workspacePath, ".agent-crm-workspace");
-}
-
-async function getRecordPreviewStore(): Promise<RecordPreviewStore> {
-  if (!workspacePath) {
-    throw new Error("No workspace database is open.");
-  }
-  if (recordPreviewStore && recordPreviewStoreWorkspacePath === workspacePath) {
-    return recordPreviewStore;
-  }
-  if (recordPreviewStore) recordPreviewStore.close();
-  const dir = path.join(workspacePath, RECORD_PREVIEW_CACHE_DIR);
-  await fs.mkdir(dir, { recursive: true });
-  recordPreviewStore = new RecordPreviewStore(
-    workspacePath,
-    path.join(dir, RECORD_PREVIEW_CACHE_FILENAME)
-  );
-  recordPreviewStoreWorkspacePath = workspacePath;
-  return recordPreviewStore;
-}
-
-async function recordPreviewCacheMeta(objects: SchemaObject[]): Promise<RecordPreviewCacheMeta> {
-  return {
-    workspaceSignature: await workspaceFileSignature(),
-    schemaFingerprint: schemaFingerprint(objects)
-  };
-}
-
-async function workspaceFileSignature(): Promise<string> {
-  if (!workspacePath) return "";
-  const parts: string[] = [];
-  for (const filePath of [workspacePath, `${workspacePath}-wal`, `${workspacePath}-shm`]) {
-    try {
-      const stat = await fs.stat(filePath);
-      parts.push(`${path.basename(filePath)}:${stat.size}:${Math.trunc(stat.mtimeMs)}`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      parts.push(`${path.basename(filePath)}:missing`);
-    }
-  }
-  return parts.join("|");
-}
-
-function schemaFingerprint(objects: SchemaObject[]): string {
-  return JSON.stringify(
-    objects.map((object) => ({
-      object_slug: object.object_slug,
-      attributes: object.attributes.map((attribute) => [
-        attribute.attribute_slug,
-        attribute.attribute_type,
-        attribute.title
-      ])
-    }))
-  );
-}
-
-function isRecordPreviewCachedObject(objectSlug: string): boolean {
-  return RECORD_PREVIEW_CACHE_OBJECTS.has(objectSlug);
-}
-
-async function listRecordsForObjectFromCache(
-  objectSlug: string,
-  options: RecordListOptions,
-  objects: SchemaObject[],
-  requiredAttributes: string[]
-): Promise<RecordListResult | null> {
-  return null;
-  if (!isRecordPreviewCachedObject(objectSlug)) return null;
-  try {
-    const store = await getRecordPreviewStore();
-    const meta = await recordPreviewCacheMeta(objects);
-    const status = store.status(objectSlug, requiredAttributes, meta);
-    if (status.valid) {
-      return store.readRecords(objectSlug, options, requiredAttributes);
-    }
-
-    scheduleRecordPreviewRebuild("stale");
-    const hasRequiredAttributes = requiredAttributes.every((attr) => status.indexedAttributes.has(attr));
-    if ((status.hasRows || status.indexed) && hasRequiredAttributes) {
-      return store.readRecords(objectSlug, options, requiredAttributes);
-    }
-  } catch (error) {
-    console.warn(`[record-preview-cache] disabled bad cache: ${serializeError(error).message}`);
-    await discardRecordPreviewStore();
-    scheduleRecordPreviewRebuild("cache-error");
-  }
-  return null;
-}
-
-function markRecordPreviewCacheStale() {
-  recordIndexBuildGeneration++;
-  recordPreviewStore?.markStale();
-}
-
-function scheduleRecordPreviewRebuild(reason: string) {
-  void reason;
-}
-
-async function discardRecordPreviewStore() {
-  const currentWorkspacePath = workspacePath;
-  if (recordPreviewStore) {
-    try {
-      recordPreviewStore.close();
-    } catch {
-      // derived cache only
-    }
-    recordPreviewStore = null;
-    recordPreviewStoreWorkspacePath = null;
-  }
-  if (!currentWorkspacePath) return;
-  const dbPath = path.join(
-    currentWorkspacePath,
-    RECORD_PREVIEW_CACHE_DIR,
-    RECORD_PREVIEW_CACHE_FILENAME
-  );
-  await Promise.all(
-    [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].map((filePath) =>
-      fs.rm(filePath, { force: true }).catch(() => undefined)
-    )
-  );
-}
-
-async function rebuildRecordPreviewIndex(
-  generation: number,
-  expectedWorkspacePath: string,
-  _reason: string
-) {
-  const current = assertWorkspace();
-  const objects = await getSchemaObjects();
-  const store = await getRecordPreviewStore();
-  if (workspacePath !== expectedWorkspacePath || generation !== recordIndexBuildGeneration) return;
-
-  const meta = await recordPreviewCacheMeta(objects);
-  const cachedObjects: RecordPreviewIndex["objects"] = [];
-  for (const objectSlug of RECORD_PREVIEW_CACHE_OBJECTS) {
-    if (!objects.some((object) => object.object_slug === objectSlug)) continue;
-    const attributes = await indexedRecordPreviewAttributes(objectSlug, objects);
-    const records = await loadRecordPreviewIndexRecords(current, objects, objectSlug, attributes);
-    cachedObjects.push({ objectSlug, attributes, records });
-    if (workspacePath !== expectedWorkspacePath || generation !== recordIndexBuildGeneration) return;
-  }
-
-  if (workspacePath !== expectedWorkspacePath || generation !== recordIndexBuildGeneration) return;
-  store.replaceIndex({ meta, objects: cachedObjects });
-  if (workspacePath === expectedWorkspacePath && generation === recordIndexBuildGeneration) {
-    send({ event: "recordIndexChanged", workspacePath: expectedWorkspacePath });
-  }
-}
-
-async function indexedRecordPreviewAttributes(
-  objectSlug: string,
-  objects: SchemaObject[]
-): Promise<string[]> {
-  const object = objects.find((item) => item.object_slug === objectSlug);
-  const attrs = new Set(relevantAttributeSlugs(objectSlug, [], true));
-  for (const [attr] of COLUMNS_BY_OBJECT_CACHE[objectSlug] ?? []) attrs.add(attr);
-  if (objectSlug === "people") attrs.add("job_title");
-  if (objectSlug === "deals") {
-    for (const attr of [
-      "stage",
-      "value",
-      "close_date",
-      "next_step",
-      "company",
-      "account",
-      "owner",
-      "assignee",
-      "source",
-      "tags",
-      "domain",
-      "domains",
-      "website",
-      "last_touch",
-      "last_message_at",
-      "updated_at"
-    ]) {
-      attrs.add(attr);
-    }
-  }
-  for (const signal of await listSignalDefinitions()) {
-    if (signal.object_slug !== objectSlug) continue;
-    for (const output of signal.outputs) attrs.add(output.attribute);
-  }
-  for (const attribute of object?.attributes ?? []) {
-    if (!recordPreviewSkipAttributes(objectSlug).has(attribute.attribute_slug)) {
-      attrs.add(attribute.attribute_slug);
-    }
-  }
-  return [...attrs].filter(Boolean).sort();
-}
-
-const COLUMNS_BY_OBJECT_CACHE: Record<string, Array<[string, string]>> = {
-  companies: [
-    ["linkedin_url", "LinkedIn"],
-    ["twitter_url", "X"],
-    ["domains", "Domain"]
-  ],
-  people: [
-    ["linkedin_url", "LinkedIn"],
-    ["twitter_url", "X"],
-    ["email_addresses", "Email"]
-  ],
-  deals: [
-    ["stage", "Stage"],
-    ["value", "Value"],
-    ["close_date", "Close date"]
-  ]
-};
-
-function recordPreviewSkipAttributes(objectSlug: string): Set<string> {
-  const byObject: Record<string, string[]> = {
-    people: [
-      "associated_deals",
-      "associated_posts",
-      "associated_transcripts",
-      "communication_messages",
-      "communication_threads",
-      "source_keys"
-    ],
-    companies: ["associated_deals", "source_keys", "team"],
-    deals: []
-  };
-  return new Set(byObject[objectSlug] ?? []);
-}
-
-async function loadRecordPreviewIndexRecords(
-  current: Workspace,
-  objects: SchemaObject[],
-  objectSlug: string,
-  attributes: string[]
-): Promise<RecordPreview[]> {
-  const recordsResult = await query(
-    current,
-    `SELECT object_slug, record_id
-       FROM acrm_record
-      WHERE object_slug = $1
-      ORDER BY record_id DESC`,
-    [objectSlug]
-  );
-  const records = recordsResult.rows.map((row) => ({
-    object_slug: String(row.object_slug),
-    record_id: String(row.record_id)
-  }));
-  if (records.length === 0) return [];
-
-  const attributeFilter =
-    attributes.length > 0
-      ? `AND v.attribute_slug IN (${attributes.map((_, index) => `$${index + 2}`).join(", ")})`
-      : "";
-  const valuesResult = await query(
-    current,
-    `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json,
-            v.source, v.provenance_json, v.active_from
-       FROM acrm_value v
-      WHERE v.object_slug = $1
-        AND v.active_until IS NULL
-        ${attributeFilter}
-      ORDER BY v.record_id DESC, v.active_from DESC`,
-    [objectSlug, ...attributes]
-  );
-
-  return inflateRecordValueRows(
-    current,
-    objects,
-    records,
-    valuesResult.rows as Array<{
-      object_slug: unknown;
-      record_id: unknown;
-      attribute_slug?: unknown;
-      value_json?: unknown;
-      source?: unknown;
-      provenance_json?: unknown;
-    }>,
-    { valueLimit: Number.POSITIVE_INFINITY }
-  );
 }
 
 async function countRecords(current: Workspace): Promise<Record<string, number>> {
@@ -1029,9 +443,6 @@ async function listRecordsForObject(
     options.valueAttributes,
     options.includeSecondaryLabels ?? true
   );
-  const cached = await listRecordsForObjectFromCache(objectSlug, options, objects, attributeSlugs);
-  if (cached) return cached;
-
   const searchTerms = normalizeRecordSearchTerms(options.searchQuery);
   const searchPatterns = searchTerms.map((term) => `%${escapeSqlLike(term)}%`);
   const params = [
@@ -1410,34 +821,6 @@ function parseObject(value: unknown): Record<string, unknown> | null {
   return null;
 }
 
-function parseRecordValues(value: unknown): RecordValue[] {
-  const parsed = parseValue(value);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter(isRecordValue);
-}
-
-function isRecordValue(value: unknown): value is RecordValue {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as Partial<RecordValue>;
-  return (
-    typeof item.attribute_slug === "string" &&
-    typeof item.title === "string" &&
-    typeof item.type === "string" &&
-    typeof item.display === "string" &&
-    Array.isArray(item.values)
-  );
-}
-
-function recordValueSearchText(value: RecordValue): string {
-  return [
-    JSON.stringify(value.raw),
-    ...value.values.map((item) => JSON.stringify(item))
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
 function displayValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -1593,28 +976,20 @@ async function dispatch(method: string, params: unknown[] = []) {
     case "createRecord": {
       schemaObjectsCache = null;
       const result = await createRecord(assertWorkspace(), params[0] as CreateRecordPayload);
-      markRecordPreviewCacheStale();
-      scheduleRecordPreviewRebuild("createRecord");
       return result;
     }
     case "updateRecord": {
       const result = await updateRecord(assertWorkspace(), params[0] as UpdateRecordPayload);
-      markRecordPreviewCacheStale();
-      scheduleRecordPreviewRebuild("updateRecord");
       return result;
     }
     case "importCsv": {
       schemaObjectsCache = null;
       const result = await importCsv(assertWorkspace(), params[0] as ImportCsvPayload);
-      markRecordPreviewCacheStale();
-      scheduleRecordPreviewRebuild("importCsv");
       return result;
     }
     case "importTranscript": {
       schemaObjectsCache = null;
       const result = await importTranscript(assertWorkspace(), params[0] as TranscriptPayload);
-      markRecordPreviewCacheStale();
-      scheduleRecordPreviewRebuild("importTranscript");
       return result;
     }
     case "importCommunicationBatch": {
@@ -1627,8 +1002,6 @@ async function dispatch(method: string, params: unknown[] = []) {
         importCommunicationBatch: (workspace: Workspace, batch: unknown) => Promise<unknown>;
       };
       const result = await sdk.importCommunicationBatch(assertWorkspace(), params[0]);
-      markRecordPreviewCacheStale();
-      scheduleRecordPreviewRebuild("importCommunicationBatch");
       return result;
     }
     case "runQuery": {
@@ -1637,10 +1010,6 @@ async function dispatch(method: string, params: unknown[] = []) {
         String(params[0]),
         (params[1] ?? []) as never[]
       ) satisfies QueryResult;
-      if (result.rowsAffected > 0) {
-        markRecordPreviewCacheStale();
-        scheduleRecordPreviewRebuild("runQuery");
-      }
       return result;
     }
     case "listSignals":
@@ -1652,8 +1021,6 @@ async function dispatch(method: string, params: unknown[] = []) {
     case "syncSignals": {
       schemaObjectsCache = null;
       const result = await syncSignalDefinitions();
-      markRecordPreviewCacheStale();
-      scheduleRecordPreviewRebuild("syncSignals");
       return result;
     }
     case "runSignals":

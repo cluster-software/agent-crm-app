@@ -103,7 +103,6 @@ const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"
 const COMPANY_TABS: CompanyTab[] = ["overview", "team", "signals"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
-const WORKSPACE_LOCK_RETRY_MS = 1000;
 const WELCOME_WORKSPACE_CONTENTS = [
   { label: "Companies", icon: Building2 },
   { label: "People", icon: Users },
@@ -144,11 +143,6 @@ function formatNumber(value: number) {
 function statusFromError(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-function isDatabaseLockedError(error: unknown) {
-  const message = statusFromError(error).toLowerCase();
-  return message.includes("database is locked") || message.includes("sqlite_busy");
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
@@ -271,18 +265,10 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const load = () => {
       refreshWorkspace()
         .catch((err) => {
           if (cancelled) return;
-          if (isDatabaseLockedError(err)) {
-            retryTimer = setTimeout(() => {
-              retryTimer = null;
-              load();
-            }, WORKSPACE_LOCK_RETRY_MS);
-            return;
-          }
           setError(statusFromError(err));
         })
         .finally(() => {
@@ -292,7 +278,6 @@ export function App() {
     load();
     return () => {
       cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [refreshWorkspace]);
 
@@ -324,13 +309,6 @@ export function App() {
           })
           .then(() => setDataVersion((v) => v + 1))
           .catch((err) => {
-            if (isDatabaseLockedError(err)) {
-              timer = setTimeout(() => {
-                timer = null;
-                trigger();
-              }, WORKSPACE_LOCK_RETRY_MS);
-              return;
-            }
             setError(statusFromError(err));
           });
       }, 150);
@@ -1519,7 +1497,6 @@ function RecordsView({
       setLoadedSearchQuery(searchQuery);
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
-      if (isDatabaseLockedError(err)) return;
       setError(statusFromError(err));
     } finally {
       if (requestId === requestIdRef.current && !quiet) {

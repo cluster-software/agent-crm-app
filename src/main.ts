@@ -210,7 +210,7 @@ class SdkServiceClient {
     }
 
     if ("event" in message) {
-      if (message.event === "recordIndexChanged") {
+      if (message.event === "workspaceChanged") {
         sendToMainWindow("workspace:changed");
       }
       return;
