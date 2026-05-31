@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.0.1-295b305...v1.0.2-295b305) (2026-05-31)
+
+
+### Bug Fixes
+
+* remove SQLite record preview cache ([#147](https://github.com/cluster-software/agent-crm-app/issues/147)) ([d198713](https://github.com/cluster-software/agent-crm-app/commit/d19871302115c6e6569c7499e9ee160d0e2561e7))
+
 ## [1.0.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.0.0-295b305...v1.0.1-295b305) (2026-05-31)
 
 
