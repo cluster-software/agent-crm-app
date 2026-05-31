@@ -1965,22 +1965,32 @@ handle("workspace:list-recent", listRecentWorkspaces);
 handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
   return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);
 });
-handle("records:create", (payload: CreateRecordPayload) => {
-  return getSdkClient().request("createRecord", payload);
+handle("records:create", async (payload: CreateRecordPayload) => {
+  const result = await getSdkClient().request("createRecord", payload);
+  sendToMainWindow("workspace:changed");
+  return result;
 });
 handle("records:update", async (payload: UpdateRecordPayload) => {
   const result = await getSdkClient().request<UpdateRecordResult>("updateRecord", payload);
   sendToMainWindow("workspace:changed");
   return result;
 });
-handle("import:csv", (payload: ImportCsvPayload) => {
-  return getSdkClient().request("importCsv", payload);
+handle("import:csv", async (payload: ImportCsvPayload) => {
+  const result = await getSdkClient().request("importCsv", payload);
+  sendToMainWindow("workspace:changed");
+  return result;
 });
-handle("import:transcript", (payload: TranscriptPayload) => {
-  return getSdkClient().request<TranscriptImportResult>("importTranscript", payload);
+handle("import:transcript", async (payload: TranscriptPayload) => {
+  const result = await getSdkClient().request<TranscriptImportResult>("importTranscript", payload);
+  sendToMainWindow("workspace:changed");
+  return result;
 });
-handle("query:run", (sql: string, params: unknown[] = []): Promise<QueryResult> => {
-  return getSdkClient().request("runQuery", sql, params);
+handle("query:run", async (sql: string, params: unknown[] = []): Promise<QueryResult> => {
+  const result = await getSdkClient().request<QueryResult>("runQuery", sql, params);
+  if (result.rowsAffected > 0) {
+    sendToMainWindow("workspace:changed");
+  }
+  return result;
 });
 handle("signals:list", () => {
   return getSdkClient().request("listSignals");
@@ -1991,8 +2001,10 @@ handle("signals:failures", () => {
 handle("signals:runs", () => {
   return getSdkClient().request("listSignalRuns");
 });
-handle("signals:sync", () => {
-  return getSdkClient().request("syncSignals");
+handle("signals:sync", async () => {
+  const result = await getSdkClient().request("syncSignals");
+  sendToMainWindow("workspace:changed");
+  return result;
 });
 handle("signals:run", (request: SignalRunRequest = {}) => {
   return getSdkClient().request("runSignals", request);
