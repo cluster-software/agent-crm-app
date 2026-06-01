@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.8-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.7-295b305...v1.1.8-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* open desktop Google auth in browser ([#167](https://github.com/cluster-software/agent-crm-app/issues/167)) ([c0c5e07](https://github.com/cluster-software/agent-crm-app/commit/c0c5e07908195a2c46958befe68a08bb70bec5bb))
+
 ## [1.1.7-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.6-295b305...v1.1.7-295b305) (2026-06-01)
 
 
