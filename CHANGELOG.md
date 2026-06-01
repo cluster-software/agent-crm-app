@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.2-295b305...v1.1.3-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* publish notarized dmg assets with stable names ([772b65e](https://github.com/cluster-software/agent-crm-app/commit/772b65e720fbdf81def76e786c45593f85303fb1))
+
 ## [1.1.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.1-295b305...v1.1.2-295b305) (2026-06-01)
 
 
