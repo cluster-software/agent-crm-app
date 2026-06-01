@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.7-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.6-295b305...v1.1.7-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* optimize mac release workflow ([a5d2aa4](https://github.com/cluster-software/agent-crm-app/commit/a5d2aa4789204049b4119aacbb3c4a9b41f06bbe))
+
 ## [1.1.6-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.5-295b305...v1.1.6-295b305) (2026-06-01)
 
 
