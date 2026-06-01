@@ -69,6 +69,28 @@ jobs:
           echo "$MAC_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/apple/cert.p12"
           echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/apple/AuthKey.p8"
 
+      - name: Import Apple signing certificate
+        env:
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/apple/signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/apple/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MAC_CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
       - name: Build, sign, notarize, and publish (arm64 + x64)
         env:
           CSC_LINK: ${{ runner.temp }}/apple/cert.p12
@@ -78,3 +100,71 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --mac --arm64 --x64 --publish always
+
+      - name: Notarize DMG containers and replace release assets
+        env:
+          APPLE_API_KEY: ${{ runner.temp }}/apple/AuthKey.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          identity="$(security find-identity -v -p codesigning \
+            | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "Could not find Developer ID Application signing identity." >&2
+            exit 1
+          fi
+
+          case "$(uname -m)" in
+            arm64) app_builder="node_modules/app-builder-bin/mac/app-builder_arm64" ;;
+            x86_64) app_builder="node_modules/app-builder-bin/mac/app-builder_amd64" ;;
+            *) echo "Unsupported macOS runner architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+
+          for dmg in release/*.dmg; do
+            codesign --force --sign "$identity" "$dmg"
+            xcrun notarytool submit "$dmg" \
+              --key "$APPLE_API_KEY" \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" \
+              --wait
+            xcrun stapler staple "$dmg"
+            spctl -a -vv -t open --context context:primary-signature "$dmg"
+            "$app_builder" blockmap --input "$dmg" --output "$dmg.blockmap"
+          done
+
+          node <<'NODE'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const yaml = require("js-yaml");
+
+          const latestPath = "release/latest-mac.yml";
+          const latest = yaml.load(fs.readFileSync(latestPath, "utf8"));
+
+          function updateMetadata(entry) {
+            const artifactPath = path.join("release", entry.url);
+            if (!fs.existsSync(artifactPath)) return;
+            const data = fs.readFileSync(artifactPath);
+            entry.sha512 = crypto.createHash("sha512").update(data).digest("base64");
+            entry.size = data.length;
+          }
+
+          for (const entry of latest.files || []) updateMetadata(entry);
+          if (latest.path) {
+            const selected = { url: latest.path };
+            updateMetadata(selected);
+            latest.sha512 = selected.sha512;
+          }
+          latest.releaseDate = new Date().toISOString();
+          fs.writeFileSync(latestPath, yaml.dump(latest, { lineWidth: -1 }));
+          NODE
+
+          gh release upload "$TAG_NAME" \
+            release/*.dmg \
+            release/*.dmg.blockmap \
+            release/latest-mac.yml \
+            --clobber
