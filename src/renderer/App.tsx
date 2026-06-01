@@ -60,6 +60,7 @@ import type {
   UpdateStatus,
   WorkspaceSummary
 } from "../shared/types";
+import { DesktopAuth } from "./DesktopAuth";
 import {
   Avatar,
   Badge,
@@ -71,7 +72,6 @@ import {
   XIcon
 } from "./primitives";
 import agentCrmLogo from "./assets/agent-crm-bg.png";
-import agentCrmWhiteLogo from "./assets/white-logo.png";
 import packageJson from "../../package.json";
 
 const sdkObjectOrder = [
@@ -360,11 +360,10 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [detailRecord, mainView, personTab, selectedObject, sidebarOpen, workspace]);
 
-  async function handleAuth(mode: "sign-in" | "sign-up") {
+  const handleAuthComplete = useCallback(async () => {
     setError(null);
-    setLoading(mode === "sign-up" ? "Opening sign up" : "Opening sign in");
+    setLoading("Loading workspace");
     try {
-      await api.startAuth(mode);
       const summary = await refreshWorkspace();
       if (summary) {
         setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
@@ -375,7 +374,7 @@ export function App() {
     } finally {
       setLoading("");
     }
-  }
+  }, [refreshWorkspace]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -398,70 +397,13 @@ export function App() {
 
   if (!workspace) {
     return (
-      <div className="welcome-page" data-screen-label="Welcome">
-        <div className="welcome-page__drag" aria-hidden="true" />
-
-        {(error || loading) && (
-          <div className="welcome-page__status">
-            {error && (
-              <div className="strip strip--error">
-                <span>{error}</span>
-                <button className="strip__close" type="button" onClick={() => setError(null)}>
-                  <X size={14} className="lucide" />
-                </button>
-              </div>
-            )}
-            {loading && (
-              <div className="strip strip--loading">
-                <Loader2 size={14} className="lucide spin" />
-                <span>{loading}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        <main className="welcome-auth-shell" aria-labelledby="welcome-title">
-          <section className="welcome-auth-column">
-            <div className="welcome-auth-brand">
-              <img src={agentCrmWhiteLogo} alt="Agent CRM" draggable="false" />
-            </div>
-
-            <header className="welcome-auth-hero">
-              <h1 id="welcome-title">Sign in</h1>
-              <p>Welcome back.</p>
-            </header>
-
-            <div className="welcome-auth-stack">
-              <button
-                className="welcome-auth-button welcome-auth-button--primary"
-                type="button"
-                disabled={Boolean(loading)}
-                onClick={() => void handleAuth("sign-in")}
-              >
-                {loading ? "Connecting..." : "Continue"}
-              </button>
-            </div>
-
-            <div className="welcome-auth-foot">
-              Don't have an account?{" "}
-              <button
-                className="welcome-auth-link"
-                type="button"
-                disabled={Boolean(loading)}
-                onClick={() => void handleAuth("sign-up")}
-              >
-                Create account
-              </button>
-            </div>
-          </section>
-        </main>
-
-        <footer className="welcome-footer mono">
-          <span>agent-crm v{appDisplayVersion}</span>
-          <span className="welcome-footer__ready">runtime ready</span>
-        </footer>
-
-      </div>
+      <DesktopAuth
+        appDisplayVersion={appDisplayVersion}
+        loading={loading}
+        error={error}
+        onDismissError={() => setError(null)}
+        onSignedIn={handleAuthComplete}
+      />
     );
   }
 

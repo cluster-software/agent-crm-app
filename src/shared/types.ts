@@ -30,6 +30,18 @@ export type AuthSessionSummary = {
   };
 };
 
+export type AuthRuntimeConfig = {
+  authUrl: string;
+  baseApiUrl: string;
+  forgotPasswordUrl: string;
+};
+
+export type CompleteDesktopAuthPayload = {
+  accessToken: string;
+  orgId: string;
+  orgName?: string | null;
+};
+
 export type RecentWorkspaceSummary = {
   path: string;
   databaseUrl: string;
@@ -386,7 +398,8 @@ export type UpdateStatus =
 
 export type AppBridge = {
   platform: string;
-  startAuth: (mode: "sign-in" | "sign-up") => Promise<AuthSessionSummary>;
+  getAuthConfig: () => Promise<AuthRuntimeConfig>;
+  completeDesktopAuth: (payload: CompleteDesktopAuthPayload) => Promise<AuthSessionSummary>;
   getAuthSession: () => Promise<AuthSessionSummary | null>;
   signOut: () => Promise<void>;
   closeWorkspace: () => Promise<void>;
