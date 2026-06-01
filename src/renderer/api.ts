@@ -6,7 +6,6 @@ import type {
   RecordListOptions,
   RecordListResult,
   RecordPreview,
-  RecentWorkspaceSummary,
   SignalDefinitionSummary,
   SignalRunRequest,
   TranscriptPayload,
@@ -439,32 +438,6 @@ const previewWorkspace: WorkspaceSummary = {
   ]
 };
 
-const previewRecentWorkspaces: RecentWorkspaceSummary[] = [
-  {
-    path: "/Users/example/agent-crm/cluster",
-    databaseUrl: "postgres://postgres:postgres@localhost:5432/cluster",
-    filename: "Cluster",
-    lastOpenedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
-    timestampSource: "opened",
-    counts: { companies: 128, people: 540, deals: 12 }
-  },
-  {
-    path: "/Users/example/agent-crm/anthropic-design",
-    databaseUrl: "postgres://postgres:postgres@localhost:5432/anthropic_design",
-    filename: "Anthropic Design",
-    lastOpenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    timestampSource: "opened",
-    counts: { companies: 22, people: 88, deals: 5 }
-  },
-  {
-    path: "/Users/example/agent-crm/yc-w26-leads",
-    databaseUrl: "postgres://postgres:postgres@localhost:5432/yc_w26_leads",
-    filename: "YC W26 Leads",
-    lastOpenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
-    timestampSource: "opened",
-    counts: { companies: 64, people: 210, deals: 8 }
-  }
-];
 const forceWelcomePreview =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).has("welcome");
 
@@ -612,11 +585,15 @@ function previewDisplayValue(objectSlug: string, attributeSlug: string, rawValue
 
 const browserPreview: AppBridge = {
   platform: "browser",
-  openWorkspace: async () => previewWorkspace,
-  createWorkspace: async () => previewWorkspace,
+  startAuth: async () => ({
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    user: { userId: "preview-user", email: "preview@example.com" },
+    workspace: { workspaceId: "preview", orgId: "preview-org", name: "Preview workspace" }
+  }),
+  getAuthSession: async () => null,
+  signOut: async () => undefined,
   closeWorkspace: async () => undefined,
   getWorkspace: async () => (forceWelcomePreview ? null : previewWorkspace),
-  listRecentWorkspaces: async () => previewRecentWorkspaces,
   listRecords: async (objectSlug: string, options?: RecordListOptions) =>
     listPreviewRecords(objectSlug, options),
   importCsv: async (_payload: ImportCsvPayload) => ({

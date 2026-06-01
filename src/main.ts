@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -11,6 +11,7 @@ import type { IPty } from "node-pty";
 import * as nodePty from "node-pty";
 import type {
   AgentCliPreflightStatus,
+  AuthSessionSummary,
   CloudIntegrationsStatus,
   GmailSyncProgress,
   CloudSyncStatus,
@@ -44,6 +45,8 @@ let mainWindow: BrowserWindow | null = null;
 let sdkClient: SdkServiceClient | null = null;
 const cloudWorkspaceIdsByCwd = new Map<string, string>();
 const cloudWorkspaceTokensByCwd = new Map<string, string>();
+const cloudWorkspaceOrgIdsByCwd = new Map<string, string>();
+const desktopSessionTokensByCwd = new Map<string, string>();
 const databaseUrlsByCwd = new Map<string, string>();
 const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-crm-sync-engine.onrender.com";
 let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
@@ -59,6 +62,9 @@ const AGENT_CLI_INSTALL_TIMEOUT_MS = 120 * 1000;
 const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
 const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
+const DESKTOP_SESSION_FILENAME = "desktop-session.bin";
+let currentDesktopSession: StoredDesktopSession | null = null;
+let authWindow: BrowserWindow | null = null;
 const gmailPartialImportsByWorkspace = new Map<string, CommunicationPartialImportState>();
 const gmailCompletedImportsByWorkspace = new Map<string, string>();
 const linkedInPartialImportsByWorkspace = new Map<string, CommunicationPartialImportState>();
@@ -81,6 +87,21 @@ type CloudSyncRunContext = {
   workspacePath: string;
   cloudWorkspaceId: string;
 };
+
+type StoredDesktopSession = AuthSessionSummary & {
+  sessionToken: string;
+};
+
+class CloudAppRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly payload: unknown
+  ) {
+    super(message);
+    this.name = "CloudAppRequestError";
+  }
+}
 
 function sendToMainWindow(channel: string, ...args: unknown[]) {
   const window = mainWindow;
@@ -241,6 +262,300 @@ class SdkServiceClient {
 function getSdkClient() {
   sdkClient ??= new SdkServiceClient();
   return sdkClient;
+}
+
+function desktopSessionPath(): string {
+  return path.join(app.getPath("userData"), DESKTOP_SESSION_FILENAME);
+}
+
+async function readStoredDesktopSession(): Promise<StoredDesktopSession | null> {
+  if (currentDesktopSession) {
+    if (isExpiredStoredDesktopSession(currentDesktopSession)) {
+      await discardStoredDesktopSession();
+      return null;
+    }
+    return currentDesktopSession;
+  }
+  try {
+    const encrypted = await fs.readFile(desktopSessionPath());
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Electron safeStorage encryption is not available.");
+    }
+    const parsed = JSON.parse(safeStorage.decryptString(encrypted)) as StoredDesktopSession;
+    if (!isStoredDesktopSession(parsed)) {
+      await discardStoredDesktopSession();
+      return null;
+    }
+    if (isExpiredStoredDesktopSession(parsed)) {
+      await discardStoredDesktopSession();
+      return null;
+    }
+    currentDesktopSession = parsed;
+    return parsed;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      console.warn(`[auth] failed to read desktop session: ${error instanceof Error ? error.message : String(error)}`);
+      await discardStoredDesktopSession();
+    }
+    return null;
+  }
+}
+
+async function writeStoredDesktopSession(session: StoredDesktopSession): Promise<void> {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("Electron safeStorage encryption is not available.");
+  }
+  const filePath = desktopSessionPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, safeStorage.encryptString(JSON.stringify(session)));
+  currentDesktopSession = session;
+}
+
+async function revokeStoredDesktopSession(session: StoredDesktopSession): Promise<void> {
+  try {
+    await fetch(new URL("/auth/desktop-sessions/revoke", syncEngineUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.sessionToken}`,
+        accept: "application/json"
+      }
+    });
+  } catch (error) {
+    console.warn(`[auth] failed to revoke desktop session: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function discardStoredDesktopSession(): Promise<void> {
+  currentDesktopSession = null;
+  desktopSessionTokensByCwd.clear();
+  cloudWorkspaceOrgIdsByCwd.clear();
+  stopCloudSync();
+  await fs.rm(desktopSessionPath(), { force: true });
+  sendToMainWindow("workspace:changed");
+}
+
+async function clearStoredDesktopSession(): Promise<void> {
+  const session = await readStoredDesktopSession();
+  if (session) await revokeStoredDesktopSession(session);
+  await discardStoredDesktopSession();
+}
+
+function authSessionSummary(session: StoredDesktopSession): AuthSessionSummary {
+  return {
+    expiresAt: session.expiresAt,
+    user: session.user,
+    workspace: session.workspace
+  };
+}
+
+function isExpiredStoredDesktopSession(session: StoredDesktopSession): boolean {
+  const expiresAtMs = Date.parse(session.expiresAt);
+  return !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now();
+}
+
+function isStoredDesktopSession(value: unknown): value is StoredDesktopSession {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<StoredDesktopSession>;
+  return (
+    typeof candidate.sessionToken === "string" &&
+    typeof candidate.expiresAt === "string" &&
+    Boolean(candidate.user && typeof candidate.user.userId === "string") &&
+    Boolean(candidate.workspace &&
+      typeof candidate.workspace.workspaceId === "string" &&
+      typeof candidate.workspace.orgId === "string" &&
+      typeof candidate.workspace.name === "string")
+  );
+}
+
+async function redeemDesktopAuthCode(code: string): Promise<StoredDesktopSession> {
+  const response = await fetch(new URL("/auth/desktop-sessions/redeem", syncEngineUrl), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json"
+    },
+    body: JSON.stringify({ code })
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | {
+        ok?: unknown;
+        session_token?: unknown;
+        expires_at?: unknown;
+        user?: { user_id?: unknown; email?: unknown };
+        workspace?: { workspace_id?: unknown; org_id?: unknown; name?: unknown };
+        error?: unknown;
+      }
+    | undefined;
+  if (
+    !response.ok ||
+    payload?.ok !== true ||
+    typeof payload.session_token !== "string" ||
+    typeof payload.expires_at !== "string" ||
+    typeof payload.user?.user_id !== "string" ||
+    typeof payload.workspace?.workspace_id !== "string" ||
+    typeof payload.workspace?.org_id !== "string" ||
+    typeof payload.workspace?.name !== "string"
+  ) {
+    throw new Error(cloudSyncErrorMessage(payload, `Auth failed (${response.status})`));
+  }
+  const session: StoredDesktopSession = {
+    sessionToken: payload.session_token,
+    expiresAt: payload.expires_at,
+    user: {
+      userId: payload.user.user_id,
+      ...(typeof payload.user.email === "string" ? { email: payload.user.email } : {})
+    },
+    workspace: {
+      workspaceId: payload.workspace.workspace_id,
+      orgId: payload.workspace.org_id,
+      name: payload.workspace.name
+    }
+  };
+  await writeStoredDesktopSession(session);
+  sendToMainWindow("workspace:changed");
+  return session;
+}
+
+function startDesktopAuth(mode: "sign-in" | "sign-up"): Promise<AuthSessionSummary> {
+  authWindow?.close();
+  return new Promise<AuthSessionSummary>((resolve, reject) => {
+    const window = new BrowserWindow({
+      width: 460,
+      height: 720,
+      title: mode === "sign-up" ? "Sign up for Agent CRM" : "Sign in to Agent CRM",
+      parent: mainWindow ?? undefined,
+      modal: Boolean(mainWindow),
+      show: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true
+      }
+    });
+    authWindow = window;
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (authWindow === window) authWindow = null;
+      fn();
+    };
+    const handleUrl = (target: string) => {
+      if (!target.startsWith("agent-crm://auth/complete")) return false;
+      const code = new URL(target).searchParams.get("code");
+      if (!code) {
+        finish(() => reject(new Error("Auth completed without a desktop code.")));
+        window.close();
+        return true;
+      }
+      void redeemDesktopAuthCode(code)
+        .then((session) => finish(() => resolve(authSessionSummary(session))))
+        .catch((error) => finish(() => reject(error)))
+        .finally(() => {
+          if (!window.isDestroyed()) window.close();
+        });
+      return true;
+    };
+    window.webContents.on("will-navigate", (event, url) => {
+      if (!handleUrl(url)) return;
+      event.preventDefault();
+    });
+    window.webContents.on("will-redirect", (event, url) => {
+      if (!handleUrl(url)) return;
+      event.preventDefault();
+    });
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      if (handleUrl(url)) return { action: "deny" };
+      void shell.openExternal(url);
+      return { action: "deny" };
+    });
+    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || settled || handleUrl(validatedURL)) return;
+      finish(() => reject(new Error(`Could not load auth page: ${errorDescription || errorCode}`)));
+      if (!window.isDestroyed()) window.close();
+    });
+    window.on("closed", () => {
+      if (authWindow === window) authWindow = null;
+      if (!settled) {
+        settled = true;
+        reject(new Error("Auth window was closed before sign-in completed."));
+      }
+    });
+    const url = new URL(`/auth/${mode}`, syncEngineUrl);
+    url.searchParams.set("mode", "desktop");
+    void window.loadURL(url.toString()).catch((error: unknown) => {
+      finish(() => reject(error instanceof Error ? error : new Error(String(error))));
+      if (!window.isDestroyed()) window.close();
+    });
+  });
+}
+
+async function ensureCloudWorkspaceDir(session: StoredDesktopSession): Promise<string> {
+  const dir = path.join(app.getPath("userData"), "cloud-workspaces", session.workspace.workspaceId);
+  await fs.mkdir(dir, { recursive: true });
+  cloudWorkspaceIdsByCwd.set(dir, session.workspace.workspaceId);
+  cloudWorkspaceOrgIdsByCwd.set(dir, session.workspace.orgId);
+  desktopSessionTokensByCwd.set(dir, session.sessionToken);
+  return dir;
+}
+
+async function fetchAppJson<T>(pathname: string, session: StoredDesktopSession, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${session.sessionToken}`);
+  headers.set("accept", "application/json");
+  const response = await fetch(new URL(pathname, syncEngineUrl), {
+    ...init,
+    headers
+  });
+  const payload = await response.json().catch(() => undefined) as T | undefined;
+  if (!response.ok) {
+    throw new CloudAppRequestError(
+      cloudSyncErrorMessage(payload, `Cloud app request failed (${response.status})`),
+      response.status,
+      payload
+    );
+  }
+  if (!payload) throw new Error("Cloud app response was empty.");
+  return payload;
+}
+
+async function getCloudWorkspaceFromSession(): Promise<WorkspaceSummary | null> {
+  const session = await readStoredDesktopSession();
+  if (!session) return null;
+  let payload: { ok: true; workspace: WorkspaceSummary };
+  try {
+    payload = await fetchAppJson<{ ok: true; workspace: WorkspaceSummary }>("/app/workspace", session);
+  } catch (error) {
+    if (error instanceof CloudAppRequestError && error.status === 401) {
+      await discardStoredDesktopSession();
+      return null;
+    }
+    throw error;
+  }
+  const dir = await ensureCloudWorkspaceDir(session);
+  const summary: WorkspaceSummary = {
+    ...payload.workspace,
+    path: dir,
+    filename: payload.workspace.filename ?? session.workspace.name,
+    workspaceId: session.workspace.workspaceId,
+    cloudWorkspaceId: session.workspace.workspaceId,
+    orgId: session.workspace.orgId,
+    user: session.user,
+    org: {
+      orgId: session.workspace.orgId
+    }
+  };
+  if (
+    !cloudSyncWorkspace ||
+    cloudSyncWorkspace.path !== summary.path ||
+    cloudSyncWorkspace.cloudWorkspaceId !== summary.cloudWorkspaceId
+  ) {
+    startCloudSync(summary);
+  } else {
+    updateCloudSyncWorkspace(summary);
+  }
+  return summary;
 }
 
 type PtySession = {
@@ -740,7 +1055,9 @@ async function withCloudWorkspace(summary: WorkspaceSummary): Promise<WorkspaceS
 
   cloudWorkspaceIdsByCwd.set(cwd, workspaceId);
   cloudWorkspaceTokensByCwd.set(cwd, clientToken);
-  databaseUrlsByCwd.set(cwd, summary.databaseUrl);
+  if (summary.databaseUrl) {
+    databaseUrlsByCwd.set(cwd, summary.databaseUrl);
+  }
   return {
     ...summary,
     cloudWorkspaceId: workspaceId
@@ -871,6 +1188,40 @@ async function runCloudSync(): Promise<CloudSyncStatus> {
 }
 
 async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
+  const desktopSession = await readStoredDesktopSession();
+  if (desktopSession) {
+    const integrations = await getCloudIntegrationsStatus();
+    if (integrations.state !== "ready") {
+      return setCloudSyncStatus(integrations.state === "error"
+        ? { state: "error", message: integrations.message }
+        : { state: "idle" });
+    }
+    const activeProviders: CloudSyncProvider[] = [];
+    if (integrations.integrations.gmail.sync?.state === "running" || integrations.integrations.gmail.sync?.state === "pending") {
+      activeProviders.push("gmail");
+    }
+    if (integrations.integrations.linkedin.sync?.state === "running" || integrations.integrations.linkedin.sync?.state === "pending") {
+      activeProviders.push("linkedin");
+    }
+    if (activeProviders.length > 0) {
+      scheduleCloudSync(CLOUD_SYNC_ACTIVE_INTERVAL_MS);
+      return setCloudSyncStatus({ state: "syncing", providers: activeProviders });
+    }
+    if (!integrations.integrations.gmail.connected && !integrations.integrations.linkedin.connected && !integrations.integrations.granola.connected) {
+      return setCloudSyncStatus({ state: "disconnected" });
+    }
+    scheduleCloudSync();
+    return setCloudSyncStatus({
+      state: "synced",
+      lastSyncedAt: new Date().toISOString(),
+      stats: {
+        people_created: 0,
+        communication_threads_created: 0,
+        communication_messages_created: 0
+      }
+    });
+  }
+
   const summary = cloudSyncWorkspace;
   if (!summary?.path || !summary.cloudWorkspaceId) {
     if (cloudSyncGeneration === generation) {
@@ -1513,6 +1864,37 @@ function normalizeIntegrationSync(value: unknown): Pick<IntegrationProviderStatu
 }
 
 async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
+  const desktopSession = await readStoredDesktopSession();
+  if (desktopSession) {
+    try {
+      const status = await fetchAppJson<{
+        ok: true;
+        integrations?: Record<string, unknown>;
+      }>(`/workspaces/${encodeURIComponent(desktopSession.workspace.workspaceId)}/integrations/status`, desktopSession);
+      const integrations = isRecord(status.integrations) ? status.integrations : {};
+      return {
+        state: "ready",
+        workspaceId: desktopSession.workspace.workspaceId,
+        integrations: {
+          gmail: normalizeIntegrationProvider(integrations.gmail),
+          linkedin: normalizeIntegrationProvider(
+            integrations.linkedin ?? integrations.linkedIn ?? integrations.linkedin_unipile
+          ),
+          granola: normalizeIntegrationProvider(integrations.granola)
+        }
+      };
+    } catch (error) {
+      if (error instanceof CloudAppRequestError && error.status === 401) {
+        await discardStoredDesktopSession();
+        return { state: "no_workspace" };
+      }
+      return {
+        state: "error",
+        message: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
   const current = cloudSyncWorkspace
     ?? await getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
   if (!current?.path) return { state: "no_workspace" };
@@ -1642,11 +2024,25 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
   if (cloudWorkspaceId) {
     env.ACRM_CLOUD_WORKSPACE_ID = cloudWorkspaceId;
   }
+  const cloudOrgId = cloudWorkspaceOrgIdsByCwd.get(cwd);
+  if (cloudOrgId) {
+    env.ACRM_CLOUD_ORG_ID = cloudOrgId;
+  }
+  const desktopSessionToken = desktopSessionTokensByCwd.get(cwd);
+  if (desktopSessionToken) {
+    env.ACRM_DESKTOP_SESSION_TOKEN = desktopSessionToken;
+  }
   const cloudWorkspaceClientToken = cloudWorkspaceTokensByCwd.get(cwd);
   if (cloudWorkspaceClientToken) {
     env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN = cloudWorkspaceClientToken;
   }
-  const databaseUrl = databaseUrlsByCwd.get(cwd);
+  const databaseUrl = desktopSessionToken ? undefined : databaseUrlsByCwd.get(cwd);
+  if (desktopSessionToken) {
+    delete env.ACRM_DATABASE_URL;
+    delete env.NEON_DATABASE_URL;
+    delete env.SUPABASE_DATABASE_URL;
+    delete env.DATABASE_URL;
+  }
   if (databaseUrl) {
     env.ACRM_DATABASE_URL = databaseUrl;
   }
@@ -1839,6 +2235,7 @@ async function writeRecentWorkspaces(workspaces: PersistedRecentWorkspace[]): Pr
 }
 
 async function recordRecentWorkspace(summary: WorkspaceSummary): Promise<void> {
+  if (!summary.databaseUrl) return;
   const next: PersistedRecentWorkspace = {
     path: path.resolve(summary.path),
     databaseUrl: summary.databaseUrl,
@@ -1947,6 +2344,8 @@ handle("workspace:close", async () => {
   await getSdkClient().request<void>("closeWorkspace");
 });
 handle("workspace:get", async () => {
+  const cloudSummary = await getCloudWorkspaceFromSession();
+  if (cloudSummary) return cloudSummary;
   const summary = await getSdkClient().request<WorkspaceSummary | null>("getWorkspace");
   if (!summary) return null;
   const withCloud = await withCloudWorkspace(summary);
@@ -1961,53 +2360,133 @@ handle("workspace:get", async () => {
   }
   return withCloud;
 });
-handle("workspace:list-recent", listRecentWorkspaces);
-handle("records:list", (objectSlug: string, options?: RecordListOptions) => {
+handle("workspace:list-recent", async () => {
+  const session = await readStoredDesktopSession();
+  return session ? [] : listRecentWorkspaces();
+});
+handle("records:list", async (objectSlug: string, options?: RecordListOptions) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    const url = new URL("/app/workspace/records", syncEngineUrl);
+    url.searchParams.set("object_slug", objectSlug);
+    if (options?.limit) url.searchParams.set("limit", String(options.limit));
+    if (options?.cursor) url.searchParams.set("cursor", options.cursor);
+    if (options?.valueAttributes?.length) url.searchParams.set("value_attributes", options.valueAttributes.join(","));
+    if (options?.includeSecondaryLabels != null) {
+      url.searchParams.set("include_secondary_labels", String(options.includeSecondaryLabels));
+    }
+    if (options?.searchQuery) url.searchParams.set("search_query", options.searchQuery);
+    const payload = await fetchAppJson<{ ok: true } & RecordListResult>(url.pathname + url.search, session);
+    return {
+      objectSlug: payload.objectSlug,
+      records: payload.records,
+      limit: payload.limit,
+      cursor: payload.cursor,
+      nextCursor: payload.nextCursor,
+      hasMore: payload.hasMore,
+      ...(payload.totalMatches != null ? { totalMatches: payload.totalMatches } : {})
+    };
+  }
   return getSdkClient().request<RecordListResult>("listRecords", objectSlug, options);
 });
 handle("records:create", async (payload: CreateRecordPayload) => {
+  if (await readStoredDesktopSession()) {
+    throw new Error("Creating records in the cloud desktop workspace is not implemented yet.");
+  }
   const result = await getSdkClient().request("createRecord", payload);
   sendToMainWindow("workspace:changed");
   return result;
 });
 handle("records:update", async (payload: UpdateRecordPayload) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    const result = await fetchAppJson<UpdateRecordResult & { ok?: true }>(
+      `/app/workspace/records/${encodeURIComponent(payload.object_slug)}/${encodeURIComponent(payload.record_id)}`,
+      session,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fields: payload.fields,
+          source: payload.source
+        })
+      }
+    );
+    sendToMainWindow("workspace:changed");
+    return result;
+  }
   const result = await getSdkClient().request<UpdateRecordResult>("updateRecord", payload);
   sendToMainWindow("workspace:changed");
   return result;
 });
 handle("import:csv", async (payload: ImportCsvPayload) => {
+  if (await readStoredDesktopSession()) {
+    throw new Error("CSV import in the cloud desktop workspace is not implemented yet.");
+  }
   const result = await getSdkClient().request("importCsv", payload);
   sendToMainWindow("workspace:changed");
   return result;
 });
 handle("import:transcript", async (payload: TranscriptPayload) => {
+  if (await readStoredDesktopSession()) {
+    throw new Error("Transcript import in the cloud desktop workspace is not implemented yet.");
+  }
   const result = await getSdkClient().request<TranscriptImportResult>("importTranscript", payload);
   sendToMainWindow("workspace:changed");
   return result;
 });
 handle("query:run", async (sql: string, params: unknown[] = []): Promise<QueryResult> => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    const result = await fetchAppJson<QueryResult & { ok?: true }>("/app/workspace/query", session, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sql, params })
+    });
+    return {
+      rows: result.rows,
+      rowsAffected: result.rowsAffected
+    };
+  }
   const result = await getSdkClient().request<QueryResult>("runQuery", sql, params);
   if (result.rowsAffected > 0) {
     sendToMainWindow("workspace:changed");
   }
   return result;
 });
-handle("signals:list", () => {
+handle("signals:list", async () => {
+  if (await readStoredDesktopSession()) return [];
   return getSdkClient().request("listSignals");
 });
-handle("signals:failures", () => {
+handle("signals:failures", async () => {
+  if (await readStoredDesktopSession()) return [];
   return getSdkClient().request("listSignalFailures");
 });
-handle("signals:runs", () => {
+handle("signals:runs", async () => {
+  if (await readStoredDesktopSession()) return [];
   return getSdkClient().request("listSignalRuns");
 });
 handle("signals:sync", async () => {
+  if (await readStoredDesktopSession()) {
+    return { definitions: 0, attributes_created: 0, attributes_updated: 0 };
+  }
   const result = await getSdkClient().request("syncSignals");
   sendToMainWindow("workspace:changed");
   return result;
 });
-handle("signals:run", (request: SignalRunRequest = {}) => {
+handle("signals:run", async (request: SignalRunRequest = {}) => {
+  if (await readStoredDesktopSession()) {
+    throw new Error("Cloud signals are not available in the desktop app yet.");
+  }
   return getSdkClient().request("runSignals", request);
+});
+handle("auth:start", async (mode: "sign-in" | "sign-up") => startDesktopAuth(mode));
+handle("auth:get-session", async () => {
+  const session = await readStoredDesktopSession();
+  return session ? authSessionSummary(session) : null;
+});
+handle("auth:sign-out", async () => {
+  await clearStoredDesktopSession();
 });
 handle("cloud-sync:get-status", async () => cloudSyncStatus);
 handle("cloud-sync:trigger", async () => runCloudSync());
