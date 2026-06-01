@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.6-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.5-295b305...v1.1.6-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* upload mac release assets per architecture ([925c520](https://github.com/cluster-software/agent-crm-app/commit/925c520eb871031c16d5767f2c64de55a8e62ee0))
+
 ## [1.1.5-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.4-295b305...v1.1.5-295b305) (2026-06-01)
 
 
