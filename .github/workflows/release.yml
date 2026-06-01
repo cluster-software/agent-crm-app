@@ -51,6 +51,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - run: npm ci
 
       - run: npm run build
@@ -96,11 +105,31 @@ jobs:
             "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
+      - name: Generate ${{ matrix.arch }} release builder config
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const build = JSON.parse(JSON.stringify(packageJson.build));
+          const arch = "${{ matrix.arch }}";
+
+          build.mac.target = [
+            { target: "dmg", arch: [arch] },
+            { target: "zip", arch: [arch] },
+          ];
+
+          fs.writeFileSync(
+            "electron-builder.release.json",
+            JSON.stringify(build, null, 2),
+          );
+          NODE
+
       - name: Build and sign app (${{ matrix.arch }})
         env:
           CSC_LINK: ${{ runner.temp }}/apple/cert.p12
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-        run: npx electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.notarize=false
+        run: npx electron-builder --config electron-builder.release.json --mac --${{ matrix.arch }} --publish never -c.mac.notarize=false
 
       - name: Notarize DMG container (${{ matrix.arch }})
         env:
@@ -266,6 +295,7 @@ jobs:
 
       - name: Upload latest mac metadata
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
         run: |
@@ -275,6 +305,7 @@ jobs:
 
       - name: Verify public DMG downloads
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
         run: |
