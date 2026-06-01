@@ -82,7 +82,7 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "Agent-CRM-${version}-${arch}.${ext}"
     }
   },
   "dependencies": {
