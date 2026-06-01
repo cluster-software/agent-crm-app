@@ -9,8 +9,6 @@ import {
   Copy,
   Database,
   FileText,
-  FilePlus2,
-  FolderOpen,
   Globe,
   Handshake,
   Info,
@@ -32,7 +30,6 @@ import type {
   ComponentType,
   Dispatch,
   DragEvent as ReactDragEvent,
-  FormEvent as ReactFormEvent,
   PointerEvent as ReactPointerEvent,
   RefObject,
   ReactNode,
@@ -56,7 +53,6 @@ import type {
   IntegrationProviderStatus,
   RecordPreview,
   RecordValue,
-  RecentWorkspaceSummary,
   SchemaObject,
   SignalDefinitionSummary,
   SignalRunFailureSummary,
@@ -174,10 +170,8 @@ export function App() {
   const [detailRecord, setDetailRecord] = useState<RecordPreview | null>(null);
   const [personTab, setPersonTab] = useState<PersonTab>("overview");
   const [companyTab, setCompanyTab] = useState<CompanyTab>("overview");
-  const [createOpen, setCreateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ state: "idle" });
-  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspaceSummary[]>([]);
   const previousWorkspacePathRef = useRef<string | null>(null);
   const sidebarItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const [recordsFocusRequest, setRecordsFocusRequest] = useState(0);
@@ -282,21 +276,6 @@ export function App() {
   }, [refreshWorkspace]);
 
   useEffect(() => {
-    if (workspace) return;
-    let cancelled = false;
-    api.listRecentWorkspaces()
-      .then((workspaces) => {
-        if (!cancelled) setRecentWorkspaces(workspaces);
-      })
-      .catch(() => {
-        if (!cancelled) setRecentWorkspaces([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace]);
-
-  useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const trigger = () => {
       if (timer) clearTimeout(timer);
@@ -389,27 +368,20 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [detailRecord, mainView, personTab, selectedObject, sidebarOpen, workspace]);
 
-  async function runWorkspaceAction(action: () => Promise<WorkspaceSummary | null>) {
+  async function handleAuth(mode: "sign-in" | "sign-up") {
     setError(null);
+    setLoading(mode === "sign-up" ? "Opening sign up" : "Opening sign in");
     try {
-      const summary = await action();
+      await api.startAuth(mode);
+      const summary = await refreshWorkspace();
       if (summary) {
-        setWorkspace(summary);
         setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
         setMainView("records");
       }
     } catch (err) {
       setError(statusFromError(err));
-    }
-  }
-
-  async function handleCreateWorkspace(name: string, databaseUrl: string) {
-    setError(null);
-    const summary = await api.createWorkspace(name, databaseUrl);
-    if (summary) {
-      setWorkspace(summary);
-      setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
-      setMainView("records");
+    } finally {
+      setLoading("");
     }
   }
 
@@ -424,27 +396,13 @@ export function App() {
       } else if (key === "b") {
         event.preventDefault();
         setSidebarOpen((open) => !open);
-      } else if (key === "n") {
-        if (createOpen || isEditableTarget(event.target)) return;
-        event.preventDefault();
-        setCreateOpen(true);
-      } else if (key === "o") {
-        if (createOpen || isEditableTarget(event.target)) return;
-        event.preventDefault();
-        setCreateOpen(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createOpen]);
+  }, []);
 
   const workspaceLabel = workspace?.filename ?? "No workspace";
-  const createWorkspaceModal = createOpen && (
-    <CreateWorkspaceModal
-      onClose={() => setCreateOpen(false)}
-      onCreate={handleCreateWorkspace}
-    />
-  );
 
   if (!workspace) {
     return (
@@ -474,10 +432,10 @@ export function App() {
           <section className="welcome-hero">
             <img className="welcome-logo" src={agentCrmWhiteLogo} alt="Agent CRM" />
 
-            <h1 id="welcome-title">Connect a database</h1>
+            <h1 id="welcome-title">Sign in to Agent CRM</h1>
             <p className="welcome-hero__sub">
-              Give your agents one shared Postgres workspace for every company,
-              person, deal, post and transcript they need to remember.
+              Use your Agent CRM account to open your hosted workspace for every company,
+              person, deal, post and transcript your agents need to remember.
             </p>
 
             <div className="welcome-context" aria-label="What a workspace holds">
@@ -496,68 +454,42 @@ export function App() {
               <button
                 className="welcome-action"
                 type="button"
-                onClick={() => setCreateOpen(true)}
+                onClick={() => void handleAuth("sign-in")}
               >
                 <span className="welcome-action__icon">
-                  <FolderOpen size={24} className="lucide" />
+                  <Users size={24} className="lucide" />
                 </span>
                 <span className="welcome-action__copy">
-                  <span className="welcome-action__title">Open database</span>
-                  <span className="welcome-action__sub">Paste a Postgres connection URL.</span>
+                  <span className="welcome-action__title">Sign in</span>
+                  <span className="welcome-action__sub">Continue with your existing account.</span>
                 </span>
-                <span className="welcome-action__kbd mono">⌘O</span>
               </button>
 
               <button
                 className="welcome-action welcome-action--primary"
                 type="button"
-                onClick={() => setCreateOpen(true)}
+                onClick={() => void handleAuth("sign-up")}
               >
                 <span className="welcome-action__icon">
-                  <FilePlus2 size={24} className="lucide" />
+                  <Globe size={24} className="lucide" />
                 </span>
                 <span className="welcome-action__copy">
-                  <span className="welcome-action__title">Initialize database</span>
-                  <span className="welcome-action__sub">Create the Agent CRM schema.</span>
+                  <span className="welcome-action__title">Sign up</span>
+                  <span className="welcome-action__sub">Create an account and hosted workspace.</span>
                 </span>
-                <span className="welcome-action__kbd mono">⌘N</span>
               </button>
             </div>
 
-            <div className="welcome-recents-wrap" aria-label="Recent workspaces">
-              <div className="welcome-recents__label mono">Recent</div>
-              {recentWorkspaces.length > 0 ? (
-                <div className="welcome-recents">
-                  {recentWorkspaces.map((recent) => (
-                    <button
-                      className="welcome-recent"
-                      key={recent.databaseUrl}
-                      type="button"
-                      onClick={() => runWorkspaceAction(() => api.openWorkspace(recent.databaseUrl))}
-                    >
-                      <span className="welcome-recent__icon">
-                        <FolderOpen size={18} className="lucide" />
-                      </span>
-                      <span className="welcome-recent__copy">
-                        <span className="welcome-recent__title">{formatWorkspaceName(recent.filename)}</span>
-                        <span className="welcome-recent__counts mono">{formatRecentWorkspaceCounts(recent.counts)}</span>
-                      </span>
-                      <span className="welcome-recent__time mono">{formatCompactRelativeTime(recent.lastOpenedAt)}</span>
-                      <ChevronRight size={20} className="welcome-recent__chevron lucide" />
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="welcome-empty">
-                  <span className="welcome-empty__icon">
-                    <Database size={14} className="lucide" />
-                  </span>
-                  <span className="welcome-empty__copy">
-                    <span className="welcome-empty__title">No workspaces yet</span>
-                    <span className="welcome-empty__sub">Connect Neon, Supabase, or another Postgres database.</span>
-                  </span>
-                </div>
-              )}
+            <div className="welcome-recents-wrap" aria-label="Hosted workspace">
+              <div className="welcome-empty">
+                <span className="welcome-empty__icon">
+                  <Database size={14} className="lucide" />
+                </span>
+                <span className="welcome-empty__copy">
+                  <span className="welcome-empty__title">Hosted cloud workspace</span>
+                  <span className="welcome-empty__sub">No Postgres connection URL is required.</span>
+                </span>
+              </div>
             </div>
           </section>
         </main>
@@ -567,7 +499,6 @@ export function App() {
           <span className="welcome-footer__ready">runtime ready</span>
         </footer>
 
-        {createWorkspaceModal}
       </div>
     );
   }
@@ -697,25 +628,17 @@ export function App() {
             <button
               className="icon-btn toolbar-tooltip"
               type="button"
-              aria-label="Open database"
-              onClick={() => setCreateOpen(true)}
+              aria-label="Sign out"
+              onClick={() => {
+                void api.signOut().then(() => {
+                  setWorkspace(null);
+                  setDetailRecord(null);
+                }).catch((err) => setError(statusFromError(err)));
+              }}
             >
-              <FolderOpen size={14} className="lucide" />
+              <X size={14} className="lucide" />
               <span className="toolbar-tooltip__bubble" role="tooltip">
-                <kbd><span>⌘</span><span>O</span></kbd>
-                <span>Open database</span>
-              </span>
-            </button>
-            <button
-              className="icon-btn toolbar-tooltip"
-              type="button"
-              aria-label="Initialize database"
-              onClick={() => setCreateOpen(true)}
-            >
-              <FilePlus2 size={14} className="lucide" />
-              <span className="toolbar-tooltip__bubble" role="tooltip">
-                <kbd><span>⌘</span><span>N</span></kbd>
-                <span>Initialize database</span>
+                <span>Sign out</span>
               </span>
             </button>
             <button
@@ -801,7 +724,6 @@ export function App() {
         </div>
 
       </main>
-      {createWorkspaceModal}
     </div>
   );
 }
@@ -835,110 +757,6 @@ function iconForObject(objectSlug: string): ComponentType<{ size?: number; class
     default:
       return Database;
   }
-}
-
-function CreateWorkspaceModal({
-  onClose,
-  onCreate
-}: {
-  onClose: () => void;
-  onCreate: (name: string, databaseUrl: string) => Promise<void>;
-}) {
-  const [name, setName] = useState("");
-  const [databaseUrl, setDatabaseUrl] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !submitting) {
-        event.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, submitting]);
-
-  const trimmed = name.trim();
-  const trimmedDatabaseUrl = databaseUrl.trim();
-  const canSubmit = trimmed.length > 0 && trimmedDatabaseUrl.length > 0 && !submitting;
-
-  async function handleSubmit(event: ReactFormEvent) {
-    event.preventDefault();
-    if (!canSubmit) return;
-    setSubmitting(true);
-    setLocalError(null);
-    try {
-      await onCreate(trimmed, trimmedDatabaseUrl);
-      onClose();
-    } catch (err) {
-      setLocalError(statusFromError(err));
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <form className="modal modal--narrow" onSubmit={handleSubmit}>
-        <div className="modal__head">
-          <div>
-            <h2>Database workspace</h2>
-            <p>Connect Neon, Supabase, or any Postgres-compatible database.</p>
-          </div>
-        </div>
-        <div className="modal__body">
-          <div className="workspace-form-stack">
-            <label className="input">
-              <input
-                ref={inputRef}
-                type="text"
-                placeholder="Workspace name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                disabled={submitting}
-                autoComplete="off"
-                spellCheck={false}
-                maxLength={60}
-              />
-            </label>
-            <label className="input">
-              <input
-                type="password"
-                placeholder="postgres://user:password@host:5432/database"
-                value={databaseUrl}
-                onChange={(event) => setDatabaseUrl(event.target.value)}
-                disabled={submitting}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-          </div>
-          {localError && <div className="strip strip--error">{localError}</div>}
-        </div>
-        <div className="modal__actions">
-          <button type="button" className="btn" onClick={onClose} disabled={submitting}>
-            Cancel
-          </button>
-          <button type="submit" className="btn btn--primary" disabled={!canSubmit}>
-            {submitting ? (
-              <>
-                <Loader2 size={14} className="lucide spin" />
-                <span>Connecting</span>
-              </>
-            ) : (
-              <span>Connect</span>
-            )}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
 }
 
 function UpdateBanner({ status, appVersion }: { status: UpdateStatus; appVersion: string }) {
@@ -1014,7 +832,7 @@ function SettingsView({
   dataVersion: number;
   setError: (error: string | null) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("signals");
+  const [activeTab, setActiveTab] = useState<SettingsTab>("integrations");
   const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
   const [integrations, setIntegrations] = useState<CloudIntegrationsStatus | null>(null);
 
@@ -1064,15 +882,6 @@ function SettingsView({
       </header>
 
       <nav className="detail__tabs tabs">
-        <button
-          type="button"
-          className="tab"
-          aria-current={activeTab === "signals" ? "true" : undefined}
-          onClick={() => setActiveTab("signals")}
-        >
-          Signals
-          {signals && <span className="tab__count">{signals.length}</span>}
-        </button>
         <button
           type="button"
           className="tab"

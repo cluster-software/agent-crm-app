@@ -1,10 +1,33 @@
 export type WorkspaceSummary = {
   path: string;
-  databaseUrl: string;
+  databaseUrl?: string;
   filename: string;
+  workspaceId?: string;
+  orgId?: string;
   cloudWorkspaceId?: string;
+  user?: {
+    userId: string;
+    email?: string | null;
+  };
+  org?: {
+    orgId: string;
+    name?: string | null;
+  };
   objects: SchemaObject[];
   counts: Record<string, number>;
+};
+
+export type AuthSessionSummary = {
+  expiresAt: string;
+  user: {
+    userId: string;
+    email?: string | null;
+  };
+  workspace: {
+    workspaceId: string;
+    orgId: string;
+    name: string;
+  };
 };
 
 export type RecentWorkspaceSummary = {
@@ -363,11 +386,11 @@ export type UpdateStatus =
 
 export type AppBridge = {
   platform: string;
-  openWorkspace: (databaseUrl: string) => Promise<WorkspaceSummary>;
-  createWorkspace: (name: string, databaseUrl: string) => Promise<WorkspaceSummary | null>;
+  startAuth: (mode: "sign-in" | "sign-up") => Promise<AuthSessionSummary>;
+  getAuthSession: () => Promise<AuthSessionSummary | null>;
+  signOut: () => Promise<void>;
   closeWorkspace: () => Promise<void>;
   getWorkspace: () => Promise<WorkspaceSummary | null>;
-  listRecentWorkspaces: () => Promise<RecentWorkspaceSummary[]>;
   listRecords: (objectSlug: string, options?: RecordListOptions) => Promise<RecordListResult>;
   importCsv: (payload: ImportCsvPayload) => Promise<ImportCsvResult>;
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;

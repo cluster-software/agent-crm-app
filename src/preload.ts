@@ -39,11 +39,11 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 const bridge: AppBridge = {
   platform: process.platform,
-  openWorkspace: (databaseUrl: string) => invoke("workspace:open", databaseUrl),
-  createWorkspace: (name: string, databaseUrl: string) => invoke("workspace:create", name, databaseUrl),
+  startAuth: (mode: "sign-in" | "sign-up") => invoke("auth:start", mode),
+  getAuthSession: () => invoke("auth:get-session"),
+  signOut: () => invoke("auth:sign-out"),
   closeWorkspace: () => invoke("workspace:close"),
   getWorkspace: () => invoke("workspace:get"),
-  listRecentWorkspaces: () => invoke("workspace:list-recent"),
   listRecords: (objectSlug: string, options) => invoke("records:list", objectSlug, options),
   importCsv: (payload: ImportCsvPayload) => invoke("import:csv", payload),
   importTranscript: (payload: TranscriptPayload) => invoke("import:transcript", payload),
