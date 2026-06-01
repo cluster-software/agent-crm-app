@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.9-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.8-295b305...v1.1.9-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* launch desktop google auth through sync engine ([#169](https://github.com/cluster-software/agent-crm-app/issues/169)) ([05faf11](https://github.com/cluster-software/agent-crm-app/commit/05faf118ca77ce0eb9d6498abfde0be0421ea124))
+
 ## [1.1.8-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.7-295b305...v1.1.8-295b305) (2026-06-01)
 
 
