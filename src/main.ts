@@ -28,6 +28,7 @@ import type {
   RecordListResult,
   RecentWorkspaceSummary,
   SignalRunRequest,
+  StartExternalAuthPayload,
   TerminalDroppedFilePayload,
   TranscriptImportResult,
   TranscriptPayload,
@@ -65,6 +66,9 @@ const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
 const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const DESKTOP_SESSION_FILENAME = "desktop-session.bin";
+const DESKTOP_AUTH_PROTOCOL = "agent-crm";
+const DESKTOP_AUTH_CALLBACK_HOST = "auth";
+const DESKTOP_AUTH_CALLBACK_PATH = "/callback";
 let currentDesktopSession: StoredDesktopSession | null = null;
 const gmailPartialImportsByWorkspace = new Map<string, CommunicationPartialImportState>();
 const gmailCompletedImportsByWorkspace = new Map<string, string>();
@@ -478,6 +482,66 @@ function normalizeAuthRuntimeConfig(input: unknown): AuthRuntimeConfig | null {
 
 function trimTrailingSlash(value: string): string {
   return value.trim().replace(/\/+$/, "");
+}
+
+function desktopAuthCallbackUrl(): string {
+  return `${DESKTOP_AUTH_PROTOCOL}://${DESKTOP_AUTH_CALLBACK_HOST}${DESKTOP_AUTH_CALLBACK_PATH}`;
+}
+
+function buildExternalGoogleAuthUrl(config: AuthRuntimeConfig): string {
+  const callbackUrl = new URL("/auth/email-confirmed", config.baseApiUrl);
+  callbackUrl.searchParams.set("mode", "desktop");
+  callbackUrl.searchParams.set("desktop_callback", desktopAuthCallbackUrl());
+
+  const googleLoginUrl = new URL("google/login", `${config.authUrl}/`);
+  googleLoginUrl.searchParams.set("rt", Buffer.from(callbackUrl.toString(), "utf8").toString("base64"));
+  return googleLoginUrl.toString();
+}
+
+async function startExternalAuth(payload: StartExternalAuthPayload): Promise<void> {
+  if (payload?.provider !== "google" || (payload.route !== "sign-in" && payload.route !== "sign-up")) {
+    throw new Error("External auth request is invalid.");
+  }
+  await shell.openExternal(buildExternalGoogleAuthUrl(await fetchAuthRuntimeConfig()));
+}
+
+function registerDesktopAuthProtocol(): void {
+  if (isDev && process.argv[1]) {
+    app.setAsDefaultProtocolClient(DESKTOP_AUTH_PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+    return;
+  }
+  app.setAsDefaultProtocolClient(DESKTOP_AUTH_PROTOCOL);
+}
+
+async function handleDesktopAuthCallbackUrl(value: string): Promise<void> {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return;
+  }
+  if (
+    url.protocol !== `${DESKTOP_AUTH_PROTOCOL}:` ||
+    url.hostname !== DESKTOP_AUTH_CALLBACK_HOST ||
+    url.pathname !== DESKTOP_AUTH_CALLBACK_PATH
+  ) {
+    return;
+  }
+
+  const code = url.searchParams.get("code");
+  if (!code) {
+    console.warn("[auth] desktop callback was missing a code.");
+    return;
+  }
+
+  try {
+    await redeemDesktopAuthCode(code);
+    mainWindow?.show();
+    mainWindow?.focus();
+  } catch (error) {
+    console.error("[auth] desktop callback redemption failed", error);
+    sendToMainWindow("workspace:changed");
+  }
 }
 
 async function completeDesktopAuth(payload: CompleteDesktopAuthPayload): Promise<AuthSessionSummary> {
@@ -2502,6 +2566,7 @@ handle("signals:run", async (request: SignalRunRequest = {}) => {
   return getSdkClient().request("runSignals", request);
 });
 handle("auth:get-config", async () => fetchAuthRuntimeConfig());
+handle("auth:start-external", async (payload: StartExternalAuthPayload) => startExternalAuth(payload));
 handle("auth:complete-desktop", async (payload: CompleteDesktopAuthPayload) => completeDesktopAuth(payload));
 handle("auth:get-session", async () => {
   const session = await readStoredDesktopSession();
@@ -2633,10 +2698,16 @@ ipcMain.handle("update:install", () => {
   autoUpdater.quitAndInstall();
 });
 
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  void handleDesktopAuthCallbackUrl(url);
+});
+
 app
   .whenReady()
   .then(async () => {
     if (isDev && process.platform === "darwin") app.dock?.setIcon(devIconPath);
+    registerDesktopAuthProtocol();
     createWindow();
     setupAutoUpdater();
   })

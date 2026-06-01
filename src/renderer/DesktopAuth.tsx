@@ -357,6 +357,19 @@ function SignInPage({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(false);
+  const [openingGoogle, setOpeningGoogle] = useState(false);
+
+  async function startGoogleAuth() {
+    setOpeningGoogle(true);
+    setError(undefined);
+    try {
+      await api.startExternalAuth({ route: "sign-in", provider: "google" });
+    } catch (err) {
+      setError(statusFromError(err));
+    } finally {
+      setOpeningGoogle(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -385,8 +398,8 @@ function SignInPage({
     <AuthShell>
       <AuthHero title="Sign in" subtitle="Welcome back." />
       <form className="auth-form-stack" onSubmit={submit}>
-        <BigButton type="button" variant="quiet" icon={<IconGoogle size={18} />} onClick={() => continueWithGoogle(config.authUrl)}>
-          Sign in with Google
+        <BigButton type="button" variant="quiet" icon={<IconGoogle size={18} />} onClick={() => void startGoogleAuth()} disabled={openingGoogle || submitting}>
+          {openingGoogle ? "Opening browser..." : "Sign in with Google"}
         </BigButton>
         <AuthDivider />
         <Field label="Email" type="email" placeholder="you@company.com" mono value={email} onChange={(event) => setEmail(event.currentTarget.value)} required />
@@ -428,6 +441,19 @@ function SignUpPage({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(false);
+  const [openingGoogle, setOpeningGoogle] = useState(false);
+
+  async function startGoogleAuth() {
+    setOpeningGoogle(true);
+    setError(undefined);
+    try {
+      await api.startExternalAuth({ route: "sign-up", provider: "google" });
+    } catch (err) {
+      setError(statusFromError(err));
+    } finally {
+      setOpeningGoogle(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -456,8 +482,8 @@ function SignUpPage({
     <AuthShell>
       <AuthHero title="Sign up" subtitle="Use your work email to create your Agent CRM account." />
       <form className="auth-form-stack" onSubmit={submit}>
-        <BigButton type="button" variant="quiet" icon={<IconGoogle size={18} />} onClick={() => continueWithGoogle(config.authUrl)}>
-          Sign up with Google
+        <BigButton type="button" variant="quiet" icon={<IconGoogle size={18} />} onClick={() => void startGoogleAuth()} disabled={openingGoogle || submitting}>
+          {openingGoogle ? "Opening browser..." : "Sign up with Google"}
         </BigButton>
         <AuthDivider />
         <Field label="Work email" type="email" placeholder="you@company.com" mono value={email} onChange={(event) => setEmail(event.currentTarget.value)} required />
@@ -774,14 +800,6 @@ function WelcomeStatus({
   );
 }
 
-function continueWithGoogle(authUrl: string): void {
-  const callbackUrl = new URL(window.location.href);
-  callbackUrl.searchParams.set("desktop_auth", "google");
-  const url = new URL("google/login", normalizedBaseUrl(authUrl));
-  url.searchParams.set("rt", window.btoa(callbackUrl.toString()));
-  window.location.assign(url.toString());
-}
-
 async function fetchJsonWithTimeout(
   url: string,
   init: RequestInit,
@@ -900,9 +918,6 @@ function statusFromError(err: unknown): string {
   return String(err);
 }
 
-function normalizedBaseUrl(value: string): string {
-  return value.endsWith("/") ? value : `${value}/`;
-}
 
 function IconGoogle({ size = 16 }: { size?: number }) {
   return (

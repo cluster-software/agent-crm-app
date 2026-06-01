@@ -40,6 +40,7 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 const bridge: AppBridge = {
   platform: process.platform,
   getAuthConfig: () => invoke("auth:get-config"),
+  startExternalAuth: (payload) => invoke("auth:start-external", payload),
   completeDesktopAuth: (payload) => invoke("auth:complete-desktop", payload),
   getAuthSession: () => invoke("auth:get-session"),
   signOut: () => invoke("auth:sign-out"),
