@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.0-295b305...v1.1.1-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* simplify welcome auth entrypoint ([#153](https://github.com/cluster-software/agent-crm-app/issues/153)) ([b87d4dc](https://github.com/cluster-software/agent-crm-app/commit/b87d4dcfce9b9bb0d5bba65762c7d3f0dc876963))
+
 ## [1.1.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.0.3-295b305...v1.1.0-295b305) (2026-06-01)
 
 
