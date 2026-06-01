@@ -590,6 +590,7 @@ const browserPreview: AppBridge = {
     baseApiUrl: "https://agent-crm-sync-engine.onrender.com",
     forgotPasswordUrl: "https://auth.getcluster.ai/forgot-password"
   }),
+  startExternalAuth: async () => undefined,
   completeDesktopAuth: async () => ({
     expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     user: { userId: "preview-user", email: "preview@example.com" },

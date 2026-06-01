@@ -42,6 +42,11 @@ export type CompleteDesktopAuthPayload = {
   orgName?: string | null;
 };
 
+export type StartExternalAuthPayload = {
+  route: "sign-in" | "sign-up";
+  provider: "google";
+};
+
 export type RecentWorkspaceSummary = {
   path: string;
   databaseUrl: string;
@@ -399,6 +404,7 @@ export type UpdateStatus =
 export type AppBridge = {
   platform: string;
   getAuthConfig: () => Promise<AuthRuntimeConfig>;
+  startExternalAuth: (payload: StartExternalAuthPayload) => Promise<void>;
   completeDesktopAuth: (payload: CompleteDesktopAuthPayload) => Promise<AuthSessionSummary>;
   getAuthSession: () => Promise<AuthSessionSummary | null>;
   signOut: () => Promise<void>;
