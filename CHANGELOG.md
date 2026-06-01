@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.3-295b305...v1.1.4-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* parallelize mac release packaging ([5384e92](https://github.com/cluster-software/agent-crm-app/commit/5384e9205e187619118d457e0493f05cc35530b8))
+
 ## [1.1.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.2-295b305...v1.1.3-295b305) (2026-06-01)
 
 
