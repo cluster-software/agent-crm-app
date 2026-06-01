@@ -585,7 +585,12 @@ function previewDisplayValue(objectSlug: string, attributeSlug: string, rawValue
 
 const browserPreview: AppBridge = {
   platform: "browser",
-  startAuth: async () => ({
+  getAuthConfig: async () => ({
+    authUrl: "https://auth.getcluster.ai",
+    baseApiUrl: "https://agent-crm-sync-engine.onrender.com",
+    forgotPasswordUrl: "https://auth.getcluster.ai/forgot-password"
+  }),
+  completeDesktopAuth: async () => ({
     expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     user: { userId: "preview-user", email: "preview@example.com" },
     workspace: { workspaceId: "preview", orgId: "preview-org", name: "Preview workspace" }

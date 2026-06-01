@@ -12,10 +12,12 @@ import * as nodePty from "node-pty";
 import type {
   AgentCliPreflightStatus,
   AuthSessionSummary,
+  AuthRuntimeConfig,
   CloudIntegrationsStatus,
   GmailSyncProgress,
   CloudSyncStatus,
   CloudSyncProvider,
+  CompleteDesktopAuthPayload,
   CreateRecordPayload,
   ImportCsvPayload,
   IntegrationAccountSummary,
@@ -64,7 +66,6 @@ const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const DESKTOP_SESSION_FILENAME = "desktop-session.bin";
 let currentDesktopSession: StoredDesktopSession | null = null;
-let authWindow: BrowserWindow | null = null;
 const gmailPartialImportsByWorkspace = new Map<string, CommunicationPartialImportState>();
 const gmailCompletedImportsByWorkspace = new Map<string, string>();
 const linkedInPartialImportsByWorkspace = new Map<string, CommunicationPartialImportState>();
@@ -417,78 +418,98 @@ async function redeemDesktopAuthCode(code: string): Promise<StoredDesktopSession
   return session;
 }
 
-function startDesktopAuth(mode: "sign-in" | "sign-up"): Promise<AuthSessionSummary> {
-  authWindow?.close();
-  return new Promise<AuthSessionSummary>((resolve, reject) => {
-    const window = new BrowserWindow({
-      width: 460,
-      height: 720,
-      title: mode === "sign-up" ? "Sign up for Agent CRM" : "Sign in to Agent CRM",
-      parent: mainWindow ?? undefined,
-      modal: Boolean(mainWindow),
-      show: true,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true
-      }
+async function fetchAuthRuntimeConfig(): Promise<AuthRuntimeConfig> {
+  const runtimeConfigUrl = new URL("/auth/runtime-config", syncEngineUrl);
+  try {
+    const response = await fetch(runtimeConfigUrl, {
+      headers: { accept: "application/json" }
     });
-    authWindow = window;
-    let settled = false;
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (authWindow === window) authWindow = null;
-      fn();
-    };
-    const handleUrl = (target: string) => {
-      if (!target.startsWith("agent-crm://auth/complete")) return false;
-      const code = new URL(target).searchParams.get("code");
-      if (!code) {
-        finish(() => reject(new Error("Auth completed without a desktop code.")));
-        window.close();
-        return true;
-      }
-      void redeemDesktopAuthCode(code)
-        .then((session) => finish(() => resolve(authSessionSummary(session))))
-        .catch((error) => finish(() => reject(error)))
-        .finally(() => {
-          if (!window.isDestroyed()) window.close();
-        });
-      return true;
-    };
-    window.webContents.on("will-navigate", (event, url) => {
-      if (!handleUrl(url)) return;
-      event.preventDefault();
-    });
-    window.webContents.on("will-redirect", (event, url) => {
-      if (!handleUrl(url)) return;
-      event.preventDefault();
-    });
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      if (handleUrl(url)) return { action: "deny" };
-      void shell.openExternal(url);
-      return { action: "deny" };
-    });
-    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame || settled || handleUrl(validatedURL)) return;
-      finish(() => reject(new Error(`Could not load auth page: ${errorDescription || errorCode}`)));
-      if (!window.isDestroyed()) window.close();
-    });
-    window.on("closed", () => {
-      if (authWindow === window) authWindow = null;
-      if (!settled) {
-        settled = true;
-        reject(new Error("Auth window was closed before sign-in completed."));
-      }
-    });
-    const url = new URL(`/auth/${mode}`, syncEngineUrl);
-    url.searchParams.set("mode", "desktop");
-    void window.loadURL(url.toString()).catch((error: unknown) => {
-      finish(() => reject(error instanceof Error ? error : new Error(String(error))));
-      if (!window.isDestroyed()) window.close();
-    });
+    if (response.ok) {
+      const payload = await response.json().catch(() => null);
+      const config = normalizeAuthRuntimeConfig(payload);
+      if (config) return config;
+    }
+  } catch {
+    // Older sync-engine deployments do not expose this JSON endpoint yet.
+  }
+
+  const response = await fetch(new URL("/auth/sign-in", syncEngineUrl), {
+    headers: { accept: "text/html" }
   });
+  const html = await response.text();
+  if (!response.ok) {
+    throw new Error(`Could not load auth config (${response.status}).`);
+  }
+  const config = normalizeAuthRuntimeConfig(authRuntimeConfigFromHtml(html));
+  if (!config) throw new Error("Could not read auth config from sync-engine.");
+  return config;
+}
+
+function authRuntimeConfigFromHtml(html: string): unknown {
+  const match = html.match(/window\.__AGENT_CRM_AUTH_CONFIG__=(\{.*?\});?<\/script>/s);
+  if (!match?.[1]) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAuthRuntimeConfig(input: unknown): AuthRuntimeConfig | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const candidate = input as Record<string, unknown>;
+  if (typeof candidate.authUrl !== "string" || candidate.authUrl.trim().length === 0) {
+    return null;
+  }
+  const authUrl = trimTrailingSlash(candidate.authUrl);
+  const baseApiUrl = trimTrailingSlash(
+    typeof candidate.baseApiUrl === "string" && candidate.baseApiUrl.trim().length > 0
+      ? candidate.baseApiUrl
+      : syncEngineUrl
+  );
+  return {
+    authUrl,
+    baseApiUrl,
+    forgotPasswordUrl: typeof candidate.forgotPasswordUrl === "string" && candidate.forgotPasswordUrl.trim().length > 0
+      ? candidate.forgotPasswordUrl
+      : new URL("/forgot-password", `${authUrl}/`).toString()
+  };
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+async function completeDesktopAuth(payload: CompleteDesktopAuthPayload): Promise<AuthSessionSummary> {
+  if (
+    !payload ||
+    typeof payload.accessToken !== "string" ||
+    typeof payload.orgId !== "string" ||
+    payload.accessToken.trim().length === 0 ||
+    payload.orgId.trim().length === 0
+  ) {
+    throw new Error("Desktop auth payload is invalid.");
+  }
+
+  const response = await fetch(new URL("/auth/desktop-sessions", syncEngineUrl), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      authorization: `Bearer ${payload.accessToken}`
+    },
+    body: JSON.stringify({
+      org_id: payload.orgId,
+      ...(payload.orgName ? { org_name: payload.orgName } : {})
+    })
+  });
+  const body = await response.json().catch(() => undefined) as
+    | { ok?: unknown; code?: unknown; error?: unknown }
+    | undefined;
+  if (!response.ok || body?.ok !== true || typeof body.code !== "string") {
+    throw new Error(cloudSyncErrorMessage(body, `Desktop session setup failed (${response.status})`));
+  }
+  return authSessionSummary(await redeemDesktopAuthCode(body.code));
 }
 
 async function ensureCloudWorkspaceDir(session: StoredDesktopSession): Promise<string> {
@@ -857,7 +878,7 @@ let agentWorkspaceInstructionsPromise: Promise<AgentWorkspaceInstructions> | nul
 type CloudMetadata = {
   workspaceId?: string;
   clientToken?: string;
-  clusterOrgId?: string;
+  orgId?: string;
   localWorkspaceId?: string;
   createdAt?: string;
 };
@@ -1074,8 +1095,8 @@ async function readCloudMetadata(metadataPath: string): Promise<CloudMetadata> {
       ...(typeof parsed.clientToken === "string" && parsed.clientToken.length > 0
         ? { clientToken: parsed.clientToken }
         : {}),
-      ...(typeof parsed.clusterOrgId === "string" && parsed.clusterOrgId.length > 0
-        ? { clusterOrgId: parsed.clusterOrgId }
+      ...(typeof parsed.orgId === "string" && parsed.orgId.length > 0
+        ? { orgId: parsed.orgId }
         : {}),
       ...(typeof parsed.localWorkspaceId === "string" && parsed.localWorkspaceId.length > 0
         ? { localWorkspaceId: parsed.localWorkspaceId }
@@ -2480,7 +2501,8 @@ handle("signals:run", async (request: SignalRunRequest = {}) => {
   }
   return getSdkClient().request("runSignals", request);
 });
-handle("auth:start", async (mode: "sign-in" | "sign-up") => startDesktopAuth(mode));
+handle("auth:get-config", async () => fetchAuthRuntimeConfig());
+handle("auth:complete-desktop", async (payload: CompleteDesktopAuthPayload) => completeDesktopAuth(payload));
 handle("auth:get-session", async () => {
   const session = await readStoredDesktopSession();
   return session ? authSessionSummary(session) : null;

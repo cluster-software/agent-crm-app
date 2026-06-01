@@ -39,7 +39,8 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 const bridge: AppBridge = {
   platform: process.platform,
-  startAuth: (mode: "sign-in" | "sign-up") => invoke("auth:start", mode),
+  getAuthConfig: () => invoke("auth:get-config"),
+  completeDesktopAuth: (payload) => invoke("auth:complete-desktop", payload),
   getAuthSession: () => invoke("auth:get-session"),
   signOut: () => invoke("auth:sign-out"),
   closeWorkspace: () => invoke("workspace:close"),

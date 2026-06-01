@@ -60,6 +60,7 @@ import type {
   UpdateStatus,
   WorkspaceSummary
 } from "../shared/types";
+import { DesktopAuth } from "./DesktopAuth";
 import {
   Avatar,
   Badge,
@@ -71,7 +72,6 @@ import {
   XIcon
 } from "./primitives";
 import agentCrmLogo from "./assets/agent-crm-bg.png";
-import agentCrmWhiteLogo from "./assets/white-logo.png";
 import packageJson from "../../package.json";
 
 const sdkObjectOrder = [
@@ -99,14 +99,6 @@ const PERSON_TABS: PersonTab[] = ["overview", "messages", "transcripts", "posts"
 const COMPANY_TABS: CompanyTab[] = ["overview", "team", "signals"];
 const RECORD_TABLE_PAGE_SIZE = 100;
 const DEAL_RECORD_PAGE_SIZE = 250;
-const WELCOME_WORKSPACE_CONTENTS = [
-  { label: "Companies", icon: Building2 },
-  { label: "People", icon: Users },
-  { label: "Deals", icon: Handshake },
-  { label: "Posts", icon: Newspaper },
-  { label: "Transcripts", icon: FileText }
-];
-
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
@@ -368,11 +360,10 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [detailRecord, mainView, personTab, selectedObject, sidebarOpen, workspace]);
 
-  async function handleAuth(mode: "sign-in" | "sign-up") {
+  const handleAuthComplete = useCallback(async () => {
     setError(null);
-    setLoading(mode === "sign-up" ? "Opening sign up" : "Opening sign in");
+    setLoading("Loading workspace");
     try {
-      await api.startAuth(mode);
       const summary = await refreshWorkspace();
       if (summary) {
         setSelectedObjectSlug(defaultObjectSlug(orderSchemaObjects(summary.objects)));
@@ -383,7 +374,7 @@ export function App() {
     } finally {
       setLoading("");
     }
-  }
+  }, [refreshWorkspace]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -406,100 +397,13 @@ export function App() {
 
   if (!workspace) {
     return (
-      <div className="welcome-page" data-screen-label="Welcome">
-        <div className="welcome-page__drag" aria-hidden="true" />
-
-        {(error || loading) && (
-          <div className="welcome-page__status">
-            {error && (
-              <div className="strip strip--error">
-                <span>{error}</span>
-                <button className="strip__close" type="button" onClick={() => setError(null)}>
-                  <X size={14} className="lucide" />
-                </button>
-              </div>
-            )}
-            {loading && (
-              <div className="strip strip--loading">
-                <Loader2 size={14} className="lucide spin" />
-                <span>{loading}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        <main className="welcome-page__main" aria-labelledby="welcome-title">
-          <section className="welcome-hero">
-            <img className="welcome-logo" src={agentCrmWhiteLogo} alt="Agent CRM" />
-
-            <h1 id="welcome-title">Sign in to Agent CRM</h1>
-            <p className="welcome-hero__sub">
-              Use your Agent CRM account to open your hosted workspace for every company,
-              person, deal, post and transcript your agents need to remember.
-            </p>
-
-            <div className="welcome-context" aria-label="What a workspace holds">
-              <div className="welcome-context__label mono">What a workspace holds</div>
-              <div className="welcome-context__chips">
-                {WELCOME_WORKSPACE_CONTENTS.map(({ label, icon: Icon }) => (
-                  <span className="welcome-context__chip" key={label}>
-                    <Icon size={12} className="lucide" />
-                    <span>{label}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="welcome-actions" aria-label="Workspace actions">
-              <button
-                className="welcome-action"
-                type="button"
-                onClick={() => void handleAuth("sign-in")}
-              >
-                <span className="welcome-action__icon">
-                  <Users size={24} className="lucide" />
-                </span>
-                <span className="welcome-action__copy">
-                  <span className="welcome-action__title">Sign in</span>
-                  <span className="welcome-action__sub">Continue with your existing account.</span>
-                </span>
-              </button>
-
-              <button
-                className="welcome-action welcome-action--primary"
-                type="button"
-                onClick={() => void handleAuth("sign-up")}
-              >
-                <span className="welcome-action__icon">
-                  <Globe size={24} className="lucide" />
-                </span>
-                <span className="welcome-action__copy">
-                  <span className="welcome-action__title">Sign up</span>
-                  <span className="welcome-action__sub">Create an account and hosted workspace.</span>
-                </span>
-              </button>
-            </div>
-
-            <div className="welcome-recents-wrap" aria-label="Hosted workspace">
-              <div className="welcome-empty">
-                <span className="welcome-empty__icon">
-                  <Database size={14} className="lucide" />
-                </span>
-                <span className="welcome-empty__copy">
-                  <span className="welcome-empty__title">Hosted cloud workspace</span>
-                  <span className="welcome-empty__sub">No Postgres connection URL is required.</span>
-                </span>
-              </div>
-            </div>
-          </section>
-        </main>
-
-        <footer className="welcome-footer mono">
-          <span>agent-crm v{appDisplayVersion}</span>
-          <span className="welcome-footer__ready">runtime ready</span>
-        </footer>
-
-      </div>
+      <DesktopAuth
+        appDisplayVersion={appDisplayVersion}
+        loading={loading}
+        error={error}
+        onDismissError={() => setError(null)}
+        onSignedIn={handleAuthComplete}
+      />
     );
   }
 
