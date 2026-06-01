@@ -26,13 +26,17 @@ jobs:
         with:
           release-type: node
 
-  build-dmgs:
+  build-dmg:
     needs: release-please
     if: |
       always() &&
       (needs.release-please.outputs.release_created == 'true' ||
        github.event_name == 'workflow_dispatch')
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +56,7 @@ jobs:
       - run: npm run build
 
       - name: Packaged SDK service smoke
+        if: matrix.arch == 'arm64'
         run: |
           npx electron-builder --mac --arm64 --dir -c.mac.identity=null -c.mac.notarize=false
           output=$(printf '{"id":1,"method":"getWorkspace","params":[]}\n' | \
@@ -91,23 +96,20 @@ jobs:
             "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Build, sign, notarize, and publish (arm64 + x64)
+      - name: Build, sign, and notarize app (${{ matrix.arch }})
         env:
           CSC_LINK: ${{ runner.temp }}/apple/cert.p12
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           APPLE_API_KEY: ${{ runner.temp }}/apple/AuthKey.p8
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --arm64 --x64 --publish always
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
 
-      - name: Notarize DMG containers and replace release assets
+      - name: Notarize DMG container (${{ matrix.arch }})
         env:
           APPLE_API_KEY: ${{ runner.temp }}/apple/AuthKey.p8
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
         run: |
           set -euo pipefail
 
@@ -124,47 +126,144 @@ jobs:
             *) echo "Unsupported macOS runner architecture: $(uname -m)" >&2; exit 1 ;;
           esac
 
-          for dmg in release/*.dmg; do
-            codesign --force --sign "$identity" "$dmg"
-            xcrun notarytool submit "$dmg" \
-              --key "$APPLE_API_KEY" \
-              --key-id "$APPLE_API_KEY_ID" \
-              --issuer "$APPLE_API_ISSUER" \
-              --wait
-            xcrun stapler staple "$dmg"
-            spctl -a -vv -t open --context context:primary-signature "$dmg"
-            "$app_builder" blockmap --input "$dmg" --output "$dmg.blockmap"
-          done
+          dmg="$(find release -maxdepth 1 -name '*-${{ matrix.arch }}.dmg' -print -quit)"
+          if [ -z "$dmg" ]; then
+            echo "Could not find ${{ matrix.arch }} DMG in release/." >&2
+            exit 1
+          fi
 
+          codesign --force --sign "$identity" "$dmg"
+          xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl -a -vv -t open --context context:primary-signature "$dmg"
+          "$app_builder" blockmap --input "$dmg" --output "$dmg.blockmap"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-release-assets
+          path: |
+            release/*-${{ matrix.arch }}.dmg
+            release/*-${{ matrix.arch }}.dmg.blockmap
+            release/*-${{ matrix.arch }}.zip
+            release/*-${{ matrix.arch }}.zip.blockmap
+          if-no-files-found: error
+
+  publish-dmgs:
+    needs: [release-please, build-dmg]
+    if: |
+      always() &&
+      needs.build-dmg.result == 'success' &&
+      (needs.release-please.outputs.release_created == 'true' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*-release-assets
+          path: release
+          merge-multiple: true
+
+      - name: Generate latest mac metadata
+        run: |
           node <<'NODE'
           const crypto = require("node:crypto");
           const fs = require("node:fs");
           const path = require("node:path");
-          const yaml = require("js-yaml");
 
-          const latestPath = "release/latest-mac.yml";
-          const latest = yaml.load(fs.readFileSync(latestPath, "utf8"));
+          const releaseDir = "release";
+          const order = [
+            "-x64.zip",
+            "-arm64.zip",
+            "-x64.dmg",
+            "-arm64.dmg",
+          ];
+          const artifacts = fs.readdirSync(releaseDir)
+            .filter((name) => /^Agent-CRM-.+-(arm64|x64)\.(dmg|zip)$/.test(name))
+            .sort((a, b) => {
+              const orderA = order.findIndex((suffix) => a.endsWith(suffix));
+              const orderB = order.findIndex((suffix) => b.endsWith(suffix));
+              return (orderA - orderB) || a.localeCompare(b);
+            });
 
-          function updateMetadata(entry) {
-            const artifactPath = path.join("release", entry.url);
-            if (!fs.existsSync(artifactPath)) return;
-            const data = fs.readFileSync(artifactPath);
-            entry.sha512 = crypto.createHash("sha512").update(data).digest("base64");
-            entry.size = data.length;
+          if (artifacts.length !== 4) {
+            throw new Error(`Expected 4 macOS artifacts, found ${artifacts.length}: ${artifacts.join(", ")}`);
           }
 
-          for (const entry of latest.files || []) updateMetadata(entry);
-          if (latest.path) {
-            const selected = { url: latest.path };
-            updateMetadata(selected);
-            latest.sha512 = selected.sha512;
+          function metadata(url) {
+            const data = fs.readFileSync(path.join(releaseDir, url));
+            return {
+              url,
+              sha512: crypto.createHash("sha512").update(data).digest("base64"),
+              size: data.length,
+            };
           }
-          latest.releaseDate = new Date().toISOString();
-          fs.writeFileSync(latestPath, yaml.dump(latest, { lineWidth: -1 }));
+
+          const files = artifacts.map(metadata);
+          const versionMatch = files[0].url.match(/^Agent-CRM-(.+)-(?:arm64|x64)\.(?:dmg|zip)$/);
+          if (!versionMatch) throw new Error(`Could not infer version from ${files[0].url}`);
+          const selected = files.find((entry) => entry.url.endsWith("-x64.zip")) ?? files[0];
+          const lines = [
+            `version: ${versionMatch[1]}`,
+            "files:",
+            ...files.flatMap((entry) => [
+              `  - url: ${entry.url}`,
+              `    sha512: ${entry.sha512}`,
+              `    size: ${entry.size}`,
+            ]),
+            `path: ${selected.url}`,
+            `sha512: ${selected.sha512}`,
+            `releaseDate: '${new Date().toISOString()}'`,
+            "",
+          ];
+          fs.writeFileSync(path.join(releaseDir, "latest-mac.yml"), lines.join("\n"));
           NODE
 
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
+        run: |
           gh release upload "$TAG_NAME" \
             release/*.dmg \
             release/*.dmg.blockmap \
+            release/*.zip \
+            release/*.zip.blockmap \
             release/latest-mac.yml \
             --clobber
+
+      - name: Verify public DMG downloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/public-dmgs"
+          gh release download "$TAG_NAME" \
+            --pattern 'Agent-CRM-*-arm64.dmg' \
+            --pattern 'Agent-CRM-*-x64.dmg' \
+            --dir "$RUNNER_TEMP/public-dmgs"
+
+          for dmg in "$RUNNER_TEMP"/public-dmgs/*.dmg; do
+            spctl -a -vv -t open --context context:primary-signature "$dmg"
+            xcrun stapler validate "$dmg"
+            hdiutil verify "$dmg"
+
+            mount_dir="$(mktemp -d "$RUNNER_TEMP/dmg.XXXXXX")"
+            hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+            trap 'hdiutil detach "$mount_dir" >/dev/null || true' EXIT
+            app="$mount_dir/Agent CRM.app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            spctl -a -vv -t exec "$app"
+            hdiutil detach "$mount_dir"
+            trap - EXIT
+          done
