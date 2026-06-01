@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.5-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.4-295b305...v1.1.5-295b305) (2026-06-01)
+
+
+### Bug Fixes
+
+* skip redundant app notarization in releases ([47200a2](https://github.com/cluster-software/agent-crm-app/commit/47200a23c2de3bf77ac320b67f3cc326e87a74f0))
+
 ## [1.1.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.3-295b305...v1.1.4-295b305) (2026-06-01)
 
 
