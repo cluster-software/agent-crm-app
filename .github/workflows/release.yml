@@ -149,14 +149,58 @@ jobs:
           hdiutil detach "$mount_dir"
           trap - EXIT
 
+      - name: Upload ${{ matrix.arch }} release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
+        run: |
+          gh release upload "$TAG_NAME" \
+            release/*-${{ matrix.arch }}.dmg \
+            release/*-${{ matrix.arch }}.dmg.blockmap \
+            release/*-${{ matrix.arch }}.zip \
+            release/*-${{ matrix.arch }}.zip.blockmap \
+            --clobber
+
+      - name: Generate ${{ matrix.arch }} release metadata
+        run: |
+          node <<'NODE'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const arch = "${{ matrix.arch }}";
+          const releaseDir = "release";
+          const artifacts = fs.readdirSync(releaseDir)
+            .filter((name) => name.endsWith(`-${arch}.dmg`) || name.endsWith(`-${arch}.zip`))
+            .sort((a, b) => {
+              const order = [".zip", ".dmg"];
+              return order.findIndex((suffix) => a.endsWith(suffix)) -
+                order.findIndex((suffix) => b.endsWith(suffix));
+            });
+
+          if (artifacts.length !== 2) {
+            throw new Error(`Expected 2 ${arch} artifacts, found ${artifacts.length}: ${artifacts.join(", ")}`);
+          }
+
+          const files = artifacts.map((url) => {
+            const data = fs.readFileSync(path.join(releaseDir, url));
+            return {
+              url,
+              sha512: crypto.createHash("sha512").update(data).digest("base64"),
+              size: data.length,
+            };
+          });
+
+          fs.writeFileSync(
+            path.join(releaseDir, `latest-mac-${arch}.json`),
+            JSON.stringify(files, null, 2),
+          );
+          NODE
+
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}-release-assets
-          path: |
-            release/*-${{ matrix.arch }}.dmg
-            release/*-${{ matrix.arch }}.dmg.blockmap
-            release/*-${{ matrix.arch }}.zip
-            release/*-${{ matrix.arch }}.zip.blockmap
+          name: macos-${{ matrix.arch }}-release-metadata
+          path: release/latest-mac-${{ matrix.arch }}.json
           if-no-files-found: error
 
   publish-dmgs:
@@ -168,52 +212,38 @@ jobs:
        github.event_name == 'workflow_dispatch')
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
-
       - uses: actions/download-artifact@v4
         with:
-          pattern: macos-*-release-assets
-          path: release
+          pattern: macos-*-release-metadata
+          path: release-metadata
           merge-multiple: true
 
       - name: Generate latest mac metadata
         run: |
           node <<'NODE'
-          const crypto = require("node:crypto");
           const fs = require("node:fs");
           const path = require("node:path");
 
-          const releaseDir = "release";
+          const metadataDir = "release-metadata";
           const order = [
             "-x64.zip",
             "-arm64.zip",
             "-x64.dmg",
             "-arm64.dmg",
           ];
-          const artifacts = fs.readdirSync(releaseDir)
-            .filter((name) => /^Agent-CRM-.+-(arm64|x64)\.(dmg|zip)$/.test(name))
+          const files = fs.readdirSync(metadataDir)
+            .filter((name) => name.endsWith(".json"))
+            .flatMap((name) => JSON.parse(fs.readFileSync(path.join(metadataDir, name), "utf8")))
             .sort((a, b) => {
-              const orderA = order.findIndex((suffix) => a.endsWith(suffix));
-              const orderB = order.findIndex((suffix) => b.endsWith(suffix));
-              return (orderA - orderB) || a.localeCompare(b);
+              const orderA = order.findIndex((suffix) => a.url.endsWith(suffix));
+              const orderB = order.findIndex((suffix) => b.url.endsWith(suffix));
+              return (orderA - orderB) || a.url.localeCompare(b.url);
             });
 
-          if (artifacts.length !== 4) {
-            throw new Error(`Expected 4 macOS artifacts, found ${artifacts.length}: ${artifacts.join(", ")}`);
+          if (files.length !== 4) {
+            throw new Error(`Expected 4 macOS metadata entries, found ${files.length}`);
           }
 
-          function metadata(url) {
-            const data = fs.readFileSync(path.join(releaseDir, url));
-            return {
-              url,
-              sha512: crypto.createHash("sha512").update(data).digest("base64"),
-              size: data.length,
-            };
-          }
-
-          const files = artifacts.map(metadata);
           const versionMatch = files[0].url.match(/^Agent-CRM-(.+)-(?:arm64|x64)\.(?:dmg|zip)$/);
           if (!versionMatch) throw new Error(`Could not infer version from ${files[0].url}`);
           const selected = files.find((entry) => entry.url.endsWith("-x64.zip")) ?? files[0];
@@ -230,19 +260,16 @@ jobs:
             `releaseDate: '${new Date().toISOString()}'`,
             "",
           ];
-          fs.writeFileSync(path.join(releaseDir, "latest-mac.yml"), lines.join("\n"));
+          fs.mkdirSync("release", { recursive: true });
+          fs.writeFileSync(path.join("release", "latest-mac.yml"), lines.join("\n"));
           NODE
 
-      - name: Upload release assets
+      - name: Upload latest mac metadata
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ needs.release-please.outputs.tag_name || github.event.inputs.tag }}
         run: |
           gh release upload "$TAG_NAME" \
-            release/*.dmg \
-            release/*.dmg.blockmap \
-            release/*.zip \
-            release/*.zip.blockmap \
             release/latest-mac.yml \
             --clobber
 
