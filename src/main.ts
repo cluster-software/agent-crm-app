@@ -417,6 +417,28 @@ async function redeemDesktopAuthCode(code: string): Promise<StoredDesktopSession
   return session;
 }
 
+function desktopAuthCodeFromUrl(target: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return null;
+  }
+
+  const isAppCallback =
+    parsed.protocol === "agent-crm:" &&
+    parsed.hostname === "auth" &&
+    (parsed.pathname === "/complete" || parsed.pathname === "/auth/complete");
+  const syncEngineOrigin = new URL(syncEngineUrl).origin;
+  const isHostedCallback =
+    parsed.origin === syncEngineOrigin &&
+    parsed.pathname === "/auth/complete" &&
+    parsed.searchParams.get("mode") === "desktop";
+
+  if (!isAppCallback && !isHostedCallback) return null;
+  return parsed.searchParams.get("code") ?? "";
+}
+
 function startDesktopAuth(mode: "sign-in" | "sign-up"): Promise<AuthSessionSummary> {
   authWindow?.close();
   return new Promise<AuthSessionSummary>((resolve, reject) => {
@@ -435,6 +457,7 @@ function startDesktopAuth(mode: "sign-in" | "sign-up"): Promise<AuthSessionSumma
     });
     authWindow = window;
     let settled = false;
+    let completingAuth = false;
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
@@ -442,8 +465,10 @@ function startDesktopAuth(mode: "sign-in" | "sign-up"): Promise<AuthSessionSumma
       fn();
     };
     const handleUrl = (target: string) => {
-      if (!target.startsWith("agent-crm://auth/complete")) return false;
-      const code = new URL(target).searchParams.get("code");
+      const code = desktopAuthCodeFromUrl(target);
+      if (code === null) return false;
+      if (completingAuth) return true;
+      completingAuth = true;
       if (!code) {
         finish(() => reject(new Error("Auth completed without a desktop code.")));
         window.close();
@@ -454,15 +479,19 @@ function startDesktopAuth(mode: "sign-in" | "sign-up"): Promise<AuthSessionSumma
         .catch((error) => finish(() => reject(error)))
         .finally(() => {
           if (!window.isDestroyed()) window.close();
-        });
+      });
       return true;
     };
+    window.webContents.on("will-frame-navigate", (event) => {
+      if (!event.isMainFrame || !handleUrl(event.url)) return;
+      event.preventDefault();
+    });
     window.webContents.on("will-navigate", (event, url) => {
-      if (!handleUrl(url)) return;
+      if (!event.isMainFrame || !handleUrl(url)) return;
       event.preventDefault();
     });
     window.webContents.on("will-redirect", (event, url) => {
-      if (!handleUrl(url)) return;
+      if (!event.isMainFrame || !handleUrl(url)) return;
       event.preventDefault();
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
