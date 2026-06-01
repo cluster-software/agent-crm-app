@@ -488,21 +488,19 @@ function desktopAuthCallbackUrl(): string {
   return `${DESKTOP_AUTH_PROTOCOL}://${DESKTOP_AUTH_CALLBACK_HOST}${DESKTOP_AUTH_CALLBACK_PATH}`;
 }
 
-function buildExternalGoogleAuthUrl(config: AuthRuntimeConfig): string {
-  const callbackUrl = new URL("/auth/email-confirmed", config.baseApiUrl);
-  callbackUrl.searchParams.set("mode", "desktop");
-  callbackUrl.searchParams.set("desktop_callback", desktopAuthCallbackUrl());
-
-  const googleLoginUrl = new URL("google/login", `${config.authUrl}/`);
-  googleLoginUrl.searchParams.set("rt", Buffer.from(callbackUrl.toString(), "utf8").toString("base64"));
-  return googleLoginUrl.toString();
+function buildExternalGoogleAuthUrl(config: AuthRuntimeConfig, route: "sign-in" | "sign-up"): string {
+  const authUrl = new URL(`/auth/${route}`, config.baseApiUrl);
+  authUrl.searchParams.set("mode", "desktop");
+  authUrl.searchParams.set("desktop_callback", desktopAuthCallbackUrl());
+  authUrl.searchParams.set("auto_google", "1");
+  return authUrl.toString();
 }
 
 async function startExternalAuth(payload: StartExternalAuthPayload): Promise<void> {
   if (payload?.provider !== "google" || (payload.route !== "sign-in" && payload.route !== "sign-up")) {
     throw new Error("External auth request is invalid.");
   }
-  await shell.openExternal(buildExternalGoogleAuthUrl(await fetchAuthRuntimeConfig()));
+  await shell.openExternal(buildExternalGoogleAuthUrl(await fetchAuthRuntimeConfig(), payload.route));
 }
 
 function registerDesktopAuthProtocol(): void {
