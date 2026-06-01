@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.0.3-295b305...v1.1.0-295b305) (2026-06-01)
+
+
+### Features
+
+* add cloud auth desktop entrypoint ([#151](https://github.com/cluster-software/agent-crm-app/issues/151)) ([7bd6340](https://github.com/cluster-software/agent-crm-app/commit/7bd6340578674ab1ce7a16290257c3e4ee3c87b1))
+
 ## [1.0.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.0.2-295b305...v1.0.3-295b305) (2026-06-01)
 
 
