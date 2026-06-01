@@ -11,7 +11,6 @@ type AuthRoute = "sign-in" | "sign-up" | "confirm-email" | "create-workspace";
 type ResolveOrgResponse = {
   ok?: boolean;
   org_id?: string;
-  cluster_org_id?: string;
   org_name?: string;
   code?: string;
   error?: string;
@@ -141,7 +140,7 @@ function DesktopAuthFlow({
     fallbackOrgId: string | undefined,
     token: string
   ) => {
-    const orgId = payload.org_id ?? payload.cluster_org_id ?? fallbackOrgId;
+    const orgId = payload.org_id ?? fallbackOrgId;
     if (!orgId) throw new Error("Workspace setup finished without an org id.");
 
     saveOrgSelectionToLocalStorage(orgId);
@@ -166,7 +165,7 @@ function DesktopAuthFlow({
       }
     }, AUTH_RESOLVE_ORG_TIMEOUT_MS);
     const payload = response.payload as ResolveOrgResponse | null;
-    if (!response.ok || !payload?.ok || !(payload.org_id || payload.cluster_org_id || fallbackOrgId)) {
+    if (!response.ok || !payload?.ok || !(payload.org_id || fallbackOrgId)) {
       if (payload?.code === "personal_email_domain") {
         setPersonalDomainNeedsWorkspace(true);
         setRoute("create-workspace");

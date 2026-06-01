@@ -878,7 +878,7 @@ let agentWorkspaceInstructionsPromise: Promise<AgentWorkspaceInstructions> | nul
 type CloudMetadata = {
   workspaceId?: string;
   clientToken?: string;
-  clusterOrgId?: string;
+  orgId?: string;
   localWorkspaceId?: string;
   createdAt?: string;
 };
@@ -1095,8 +1095,8 @@ async function readCloudMetadata(metadataPath: string): Promise<CloudMetadata> {
       ...(typeof parsed.clientToken === "string" && parsed.clientToken.length > 0
         ? { clientToken: parsed.clientToken }
         : {}),
-      ...(typeof parsed.clusterOrgId === "string" && parsed.clusterOrgId.length > 0
-        ? { clusterOrgId: parsed.clusterOrgId }
+      ...(typeof parsed.orgId === "string" && parsed.orgId.length > 0
+        ? { orgId: parsed.orgId }
         : {}),
       ...(typeof parsed.localWorkspaceId === "string" && parsed.localWorkspaceId.length > 0
         ? { localWorkspaceId: parsed.localWorkspaceId }
