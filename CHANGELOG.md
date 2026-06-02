@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.1-295b305...v1.2.2-295b305) (2026-06-02)
+
+
+### Bug Fixes
+
+* clean up person and company detail labels ([#179](https://github.com/cluster-software/agent-crm-app/issues/179)) ([0efe38b](https://github.com/cluster-software/agent-crm-app/commit/0efe38b7562443a427aa9d240b07b46dbc3282cb))
+* guard auth retry resolver ([4a708c7](https://github.com/cluster-software/agent-crm-app/commit/4a708c7d78a533574d6961246eb6f092f70e1117))
+* retry workspace auth resolution ([44e17ca](https://github.com/cluster-software/agent-crm-app/commit/44e17ca6c1cf2f3b9d161a798ae0b2333b72647e))
+* retry workspace auth resolution ([a8ad3a5](https://github.com/cluster-software/agent-crm-app/commit/a8ad3a5d02bfce5cc91dfc11bcc5d4dad867af98))
+
 ## [1.2.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.0-295b305...v1.2.1-295b305) (2026-06-02)
 
 
