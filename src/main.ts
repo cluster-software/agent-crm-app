@@ -17,15 +17,20 @@ import type {
   GmailSyncProgress,
   CloudSyncStatus,
   CloudSyncProvider,
+  CommunicationThreadMessagesResult,
   CompleteDesktopAuthPayload,
+  CompanyTeamResult,
   CreateRecordPayload,
   ImportCsvPayload,
   IntegrationAccountSummary,
   IntegrationProviderStatus,
   IntegrationSyncStatus,
-  QueryResult,
+  PersonCompanyResult,
+  PersonRelatedObject,
+  PersonRelatedResult,
   RecordListOptions,
   RecordListResult,
+  RecordLabelsResult,
   RecentWorkspaceSummary,
   SignalRunRequest,
   StartExternalAuthPayload,
@@ -67,6 +72,7 @@ const AGENT_CLI_INSTALL_TIMEOUT_MS = 120 * 1000;
 const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
 const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
+const RECORD_LABEL_BATCH_SIZE = 100;
 const DESKTOP_SESSION_FILENAME = "desktop-session.bin";
 const DESKTOP_AUTH_PROTOCOL = "agent-crm";
 const DESKTOP_AUTH_CALLBACK_HOST = "auth";
@@ -960,7 +966,7 @@ const EMERGENCY_AGENT_WORKSPACE_INSTRUCTIONS = {
     "",
     "The Agent CRM desktop app checks and updates the installed `acrm` CLI before launching the embedded terminal.",
     "",
-    "- Run `acrm --help` and `acrm execute --help` for current workspace guidance.",
+    "- Run `acrm --help` for current workspace guidance.",
     "<!-- agent-crm-app:end -->",
     "",
   ].join("\n")
@@ -2579,24 +2585,61 @@ handle("import:transcript", async (payload: TranscriptPayload) => {
   sendToMainWindow("workspace:changed");
   return result;
 });
-handle("query:run", async (sql: string, params: unknown[] = []): Promise<QueryResult> => {
+handle("people:related", async (personRecordId: string, object: PersonRelatedObject) => {
   const session = await readStoredDesktopSession();
   if (session) {
-    const result = await fetchAppJson<QueryResult & { ok?: true }>("/app/workspace/query", session, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sql, params })
-    });
-    return {
-      rows: result.rows,
-      rowsAffected: result.rowsAffected
-    };
+    const path = `/v1/people/${encodeURIComponent(personRecordId)}/related?object=${encodeURIComponent(object)}`;
+    return fetchAppJson<PersonRelatedResult & { ok?: true }>(path, session);
   }
-  const result = await getSdkClient().request<QueryResult>("runQuery", sql, params);
-  if (result.rowsAffected > 0) {
-    sendToMainWindow("workspace:changed");
+  return getSdkClient().request<PersonRelatedResult>("getPersonRelated", personRecordId, object);
+});
+handle("companies:team", async (companyRecordId: string) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    return fetchAppJson<CompanyTeamResult & { ok?: true }>(
+      `/v1/companies/${encodeURIComponent(companyRecordId)}/team`,
+      session
+    );
   }
-  return result;
+  return getSdkClient().request<CompanyTeamResult>("getCompanyTeam", companyRecordId);
+});
+handle("communication-threads:messages", async (threadRecordId: string) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    return fetchAppJson<CommunicationThreadMessagesResult & { ok?: true }>(
+      `/v1/communication-threads/${encodeURIComponent(threadRecordId)}/messages`,
+      session
+    );
+  }
+  return getSdkClient().request<CommunicationThreadMessagesResult>("getCommunicationThreadMessages", threadRecordId);
+});
+handle("records:labels", async (objectSlug: string, recordIds: string[]) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    const labels: RecordLabelsResult["labels"] = [];
+    for (let index = 0; index < recordIds.length; index += RECORD_LABEL_BATCH_SIZE) {
+      const batch = recordIds.slice(index, index + RECORD_LABEL_BATCH_SIZE);
+      if (batch.length === 0) continue;
+      const result = await fetchAppJson<RecordLabelsResult & { ok?: true }>("/v1/records/labels", session, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ object_slug: objectSlug, record_ids: batch })
+      });
+      labels.push(...result.labels);
+    }
+    return { labels };
+  }
+  return getSdkClient().request<RecordLabelsResult>("getRecordLabels", objectSlug, recordIds);
+});
+handle("people:company", async (personRecordId: string) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    return fetchAppJson<PersonCompanyResult & { ok?: true }>(
+      `/v1/people/${encodeURIComponent(personRecordId)}/company`,
+      session
+    );
+  }
+  return getSdkClient().request<PersonCompanyResult>("getPersonCompany", personRecordId);
 });
 handle("signals:list", async () => {
   if (await readStoredDesktopSession()) return [];

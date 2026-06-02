@@ -5,27 +5,32 @@ import readline from "node:readline";
 import {
   Workspace,
   createRecord,
-  dumpSchema,
   ensureSignalAttributes,
   finishSignalJob,
   importCsv,
   importTranscript,
   listRunningSignalJobs,
   loadSignalDefinitions,
-  query,
   runSignals,
   updateRecord,
   writeSignalJobState
 } from "@agent-crm/sdk";
 import { ensureWorkspaceIdentity as ensureSdkWorkspaceIdentity } from "@agent-crm/sdk/workspace/identity.js";
 import type {
+  CommunicationThreadMessagesResult,
+  CompanyTeamResult,
   CreateRecordPayload,
   ImportCsvPayload,
-  QueryResult,
+  PersonCompanyResult,
+  PersonRelatedObject,
+  PersonRelatedResult,
+  RecordLabel,
+  RecordLabelsResult,
   RecordListOptions,
   RecordListResult,
   RecordPreview,
   RecordValue,
+  RelatedRecord,
   SchemaObject,
   SignalRunFailureSummary,
   SignalRunJob,
@@ -130,9 +135,87 @@ async function createWorkspaceAt(input: unknown) {
 async function getSchemaObjects(): Promise<SchemaObject[]> {
   if (schemaObjectsCache) return schemaObjectsCache;
   const current = assertWorkspace();
-  const schema = await dumpSchema(current);
-  schemaObjectsCache = schema.objects;
-  return schema.objects;
+  const objects = await loadSchemaObjects(current);
+  schemaObjectsCache = objects;
+  return objects;
+}
+
+async function executeWorkspaceRead(
+  current: Workspace,
+  sql: string,
+  params: unknown[] = []
+): Promise<{ rows: Record<string, unknown>[]; rowsAffected: number }> {
+  const db = (current as unknown as {
+    db?: {
+      execute: (
+        sql: string,
+        params?: ReadonlyArray<unknown>
+      ) => Promise<{
+        rows: Array<Record<string, unknown> | { toObject: () => Record<string, unknown> }>;
+        rowsAffected: number;
+      }>;
+    };
+  }).db;
+  if (!db) {
+    throw new Error("The active Agent CRM workspace does not expose a queryable local store.");
+  }
+  const result = await db.execute(sql, params);
+  return {
+    rows: result.rows.map((row) => typeof (row as { toObject?: unknown }).toObject === "function"
+      ? (row as { toObject: () => Record<string, unknown> }).toObject()
+      : row as Record<string, unknown>),
+    rowsAffected: result.rowsAffected
+  };
+}
+
+async function loadSchemaObjects(current: Workspace): Promise<SchemaObject[]> {
+  const [objects, attrs] = await Promise.all([
+    executeWorkspaceRead(
+      current,
+      `SELECT object_slug, singular_name, plural_name
+       FROM acrm_object
+       ORDER BY object_slug`
+    ),
+    executeWorkspaceRead(
+      current,
+      `SELECT object_slug, attribute_slug, title, attribute_type,
+              is_multivalued, is_unique, config_json
+       FROM acrm_attribute
+       ORDER BY object_slug, attribute_slug`
+    )
+  ]);
+  const byObject = new Map<string, SchemaObject["attributes"]>();
+  for (const row of attrs.rows) {
+    const objectSlug = String(row.object_slug);
+    const list = byObject.get(objectSlug) ?? [];
+    const config = parseSchemaConfig(row.config_json);
+    list.push({
+      attribute_slug: String(row.attribute_slug),
+      title: String(row.title),
+      attribute_type: String(row.attribute_type),
+      is_multivalued: Boolean(row.is_multivalued),
+      is_unique: Boolean(row.is_unique),
+      ...(config !== undefined ? { config } : {})
+    });
+    byObject.set(objectSlug, list);
+  }
+  return objects.rows.map((row) => ({
+    object_slug: String(row.object_slug),
+    singular_name: String(row.singular_name),
+    plural_name: String(row.plural_name),
+    attributes: byObject.get(String(row.object_slug)) ?? []
+  }));
+}
+
+function parseSchemaConfig(raw: unknown): unknown | undefined {
+  if (raw == null || raw === "") return undefined;
+  if (typeof raw === "object") return raw;
+  if (typeof raw !== "string") return undefined;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 async function getWorkspaceSummary(): Promise<WorkspaceSummary> {
@@ -420,7 +503,7 @@ function localWorkspaceFile(): string {
 }
 
 async function countRecords(current: Workspace): Promise<Record<string, number>> {
-  const result = await query(
+  const result = await executeWorkspaceRead(
     current,
     "SELECT object_slug, COUNT(*) AS count FROM acrm_record GROUP BY object_slug ORDER BY object_slug"
   );
@@ -468,7 +551,7 @@ async function listRecordsForObject(
     searchStart,
     searchTermCount: searchTerms.length
   });
-  const result = await query(
+  const result = await executeWorkspaceRead(
     current,
     `WITH selected AS (
        SELECT r.object_slug, r.record_id
@@ -605,7 +688,7 @@ async function countSearchMatches(
 ): Promise<number> {
   const attrStart = 2;
   const searchStart = attrStart + attributeSlugs.length;
-  const result = await query(
+  const result = await executeWorkspaceRead(
     current,
     `SELECT COUNT(*) AS count
        FROM acrm_record r
@@ -682,7 +765,7 @@ async function inflateRecords(
           .map((_, index) => `$${records.length * 2 + index + 1}`)
           .join(", ")})`
       : "";
-  const values = await query(
+  const values = await executeWorkspaceRead(
     current,
     `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json,
             v.source, v.provenance_json
@@ -901,7 +984,7 @@ async function resolveReferenceLabels(
       : "";
   const params = [...pairs.flatMap((p) => [p.object_slug, p.record_id]), ...attributeSlugs];
 
-  const valueRows = await query(
+  const valueRows = await executeWorkspaceRead(
     current,
     `SELECT v.object_slug, v.record_id, v.attribute_slug, v.value_json
        FROM acrm_value v
@@ -957,6 +1040,241 @@ function secondaryLabel(objectSlug: string, object: SchemaObject | undefined, va
   return parts.join(" · ") || object?.singular_name || objectSlug;
 }
 
+async function getPersonRelated(
+  personRecordId: string,
+  childObject: PersonRelatedObject
+): Promise<PersonRelatedResult> {
+  const current = assertWorkspace();
+  const relation = personRelation(childObject);
+  const direct = await executeWorkspaceRead(
+    current,
+    `SELECT v.ref_record_id AS rec_id,
+            tv.attribute_slug AS attr,
+            tv.value_json AS val,
+            tv.ref_object AS ref_object,
+            tv.ref_record_id AS ref_record_id
+       FROM acrm_value v
+       LEFT JOIN acrm_value tv
+         ON tv.object_slug = $2
+        AND tv.record_id = v.ref_record_id
+        AND tv.active_until IS NULL
+      WHERE v.object_slug = 'people'
+        AND v.record_id = $1
+        AND v.attribute_slug = $3
+        AND v.ref_object = $2
+        AND v.active_until IS NULL`,
+    [personRecordId, relation.childObject, relation.personAttribute]
+  );
+  const inverse = await executeWorkspaceRead(
+    current,
+    `SELECT v.record_id AS rec_id,
+            tv.attribute_slug AS attr,
+            tv.value_json AS val,
+            tv.ref_object AS ref_object,
+            tv.ref_record_id AS ref_record_id
+       FROM acrm_value v
+       LEFT JOIN acrm_value tv
+         ON tv.object_slug = $2
+        AND tv.record_id = v.record_id
+        AND tv.active_until IS NULL
+      WHERE v.object_slug = $2
+        AND v.attribute_slug = $3
+        AND v.ref_object = 'people'
+        AND v.ref_record_id = $1
+        AND v.active_until IS NULL`,
+    [personRecordId, relation.childObject, relation.childAttribute]
+  );
+  return {
+    object: childObject,
+    records: relatedRowsToRecords([...direct.rows, ...inverse.rows])
+  };
+}
+
+async function getCompanyTeam(companyRecordId: string): Promise<CompanyTeamResult> {
+  const current = assertWorkspace();
+  const [companyTeamResult, peopleCompanyResult] = await Promise.all([
+    executeWorkspaceRead(
+      current,
+      `SELECT v.ref_record_id AS record_id
+         FROM acrm_value v
+        WHERE v.object_slug = 'companies'
+          AND v.record_id = $1
+          AND v.attribute_slug = 'team'
+          AND v.ref_object = 'people'
+          AND v.active_until IS NULL`,
+      [companyRecordId]
+    ),
+    executeWorkspaceRead(
+      current,
+      `SELECT v.record_id AS record_id
+         FROM acrm_value v
+        WHERE v.object_slug = 'people'
+          AND v.attribute_slug = 'company'
+          AND v.ref_object = 'companies'
+          AND v.ref_record_id = $1
+          AND v.active_until IS NULL`,
+      [companyRecordId]
+    )
+  ]);
+  const recordIds = uniqueStrings(
+    [...companyTeamResult.rows, ...peopleCompanyResult.rows].map((row) =>
+      row.record_id == null ? "" : String(row.record_id)
+    )
+  );
+  if (recordIds.length === 0) return { records: [] };
+  const where = recordIds.map((_, index) => `$${index + 1}`).join(", ");
+  const result = await executeWorkspaceRead(
+    current,
+    `SELECT record_id AS rec_id, attribute_slug AS attr, value_json AS val
+       FROM acrm_value
+      WHERE object_slug = 'people'
+        AND record_id IN (${where})
+        AND active_until IS NULL
+        AND attribute_slug IN (
+          'name',
+          'email_addresses',
+          'email',
+          'job_title',
+          'title',
+          'linkedin_url',
+          'profile_picture_url'
+        )`,
+    recordIds
+  );
+  const byId = new Map(relatedRowsToRecords(result.rows).map((record) => [record.id, record]));
+  return {
+    records: recordIds.map((id) => byId.get(id) ?? { id, attrs: {} })
+  };
+}
+
+async function getCommunicationThreadMessages(
+  threadRecordId: string
+): Promise<CommunicationThreadMessagesResult> {
+  const result = await executeWorkspaceRead(
+    assertWorkspace(),
+    `SELECT v.record_id AS rec_id,
+            mv.attribute_slug AS attr,
+            mv.value_json AS val,
+            mv.ref_object AS ref_object,
+            mv.ref_record_id AS ref_record_id
+       FROM acrm_value v
+       LEFT JOIN acrm_value mv
+         ON mv.object_slug = 'communication_messages'
+        AND mv.record_id = v.record_id
+        AND mv.active_until IS NULL
+      WHERE v.object_slug = 'communication_messages'
+        AND v.attribute_slug = 'thread'
+        AND v.ref_object = 'communication_threads'
+        AND v.ref_record_id = $1
+        AND v.active_until IS NULL`,
+    [threadRecordId]
+  );
+  return { records: relatedRowsToRecords(result.rows) };
+}
+
+async function getRecordLabels(
+  objectSlug: string,
+  recordIds: string[]
+): Promise<RecordLabelsResult> {
+  const unique = uniqueStrings(recordIds);
+  const labels = await resolveReferenceLabels(
+    assertWorkspace(),
+    new Set(unique.map((recordId) => `${objectSlug}:${recordId}`))
+  );
+  return {
+    labels: unique.map((recordId): RecordLabel => ({
+      object_slug: objectSlug,
+      record_id: recordId,
+      label: labels.get(`${objectSlug}:${recordId}`) ?? recordId.slice(0, 8)
+    }))
+  };
+}
+
+async function getPersonCompany(personRecordId: string): Promise<PersonCompanyResult> {
+  const result = await executeWorkspaceRead(
+    assertWorkspace(),
+    `SELECT pv.ref_record_id AS company_record_id,
+            cv.value_json AS company_name
+       FROM acrm_value pv
+       LEFT JOIN acrm_value cv
+         ON cv.object_slug = 'companies'
+        AND cv.record_id = pv.ref_record_id
+        AND cv.attribute_slug = 'name'
+        AND cv.active_until IS NULL
+      WHERE pv.object_slug = 'people'
+        AND pv.record_id = $1
+        AND pv.attribute_slug = 'company'
+        AND pv.active_until IS NULL
+      LIMIT 1`,
+    [personRecordId]
+  );
+  const row = result.rows[0];
+  return {
+    company_record_id: typeof row?.company_record_id === "string" ? row.company_record_id : null,
+    name: scalarText(parseValue(row?.company_name)) || null
+  };
+}
+
+function relatedRowsToRecords(rows: Record<string, unknown>[]): RelatedRecord[] {
+  const map = new Map<string, RelatedRecord>();
+  for (const row of rows) {
+    const id = row.rec_id == null ? "" : String(row.rec_id);
+    if (!id) continue;
+    let entry = map.get(id);
+    if (!entry) {
+      entry = { id, attrs: {} };
+      map.set(id, entry);
+    }
+    if (row.attr == null) continue;
+    const ref = row.ref_record_id && row.ref_object
+      ? { target_object: String(row.ref_object), target_record_id: String(row.ref_record_id) }
+      : null;
+    pushAttrValue(entry.attrs, String(row.attr), ref ?? parseValue(row.val));
+  }
+  return [...map.values()];
+}
+
+function pushAttrValue(attrs: Record<string, unknown>, key: string, value: unknown): void {
+  const existing = attrs[key];
+  if (existing === undefined) {
+    attrs[key] = value;
+  } else if (Array.isArray(existing)) {
+    existing.push(value);
+  } else {
+    attrs[key] = [existing, value];
+  }
+}
+
+function personRelation(childObject: PersonRelatedObject): {
+  childObject: PersonRelatedObject;
+  personAttribute: string;
+  childAttribute: string;
+} {
+  if (childObject === "transcripts") {
+    return { childObject, personAttribute: "associated_transcripts", childAttribute: "participants" };
+  }
+  if (childObject === "posts") {
+    return { childObject, personAttribute: "associated_posts", childAttribute: "author" };
+  }
+  return { childObject, personAttribute: "communication_threads", childAttribute: "participants" };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function scalarText(value: unknown): string {
+  return displayValue(value).trim();
+}
+
 async function dispatch(method: string, params: unknown[] = []) {
   switch (method) {
     case "openWorkspace":
@@ -1004,14 +1322,16 @@ async function dispatch(method: string, params: unknown[] = []) {
       const result = await sdk.importCommunicationBatch(assertWorkspace(), params[0]);
       return result;
     }
-    case "runQuery": {
-      const result = await query(
-        assertWorkspace(),
-        String(params[0]),
-        (params[1] ?? []) as never[]
-      ) satisfies QueryResult;
-      return result;
-    }
+    case "getPersonRelated":
+      return getPersonRelated(String(params[0]), params[1] as PersonRelatedObject);
+    case "getCompanyTeam":
+      return getCompanyTeam(String(params[0]));
+    case "getCommunicationThreadMessages":
+      return getCommunicationThreadMessages(String(params[0]));
+    case "getRecordLabels":
+      return getRecordLabels(String(params[0]), (params[1] ?? []) as string[]);
+    case "getPersonCompany":
+      return getPersonCompany(String(params[0]));
     case "listSignals":
       return listSignalDefinitions();
     case "listSignalFailures":

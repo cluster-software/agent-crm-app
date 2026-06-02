@@ -14,9 +14,8 @@ Agent CRM App is a local desktop client for Agent CRM workspaces. It uses the SD
 - import CSV rows
 - import meeting transcripts
 - import connected Gmail data from the hosted sync engine into the shared Postgres workspace
-- run SQL queries against the workspace
 
-The sidebar is schema-driven. It reads objects from the open workspace through `dumpSchema()` and renders them dynamically. The built-in SDK objects are:
+The sidebar is schema-driven. It reads objects from the open workspace through typed workspace APIs and renders them dynamically. The built-in SDK objects are:
 
 - `companies`
 - `people`
