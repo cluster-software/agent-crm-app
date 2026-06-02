@@ -94,7 +94,7 @@
     }
   },
   "dependencies": {
-    "@agent-crm/sdk": "^2.0.0",
+    "@agent-crm/sdk": "2.0.0",
     "@propelauth/frontend-apis": "^0.0.18",
     "@propelauth/react": "^2.1.1",
     "@tanstack/react-table": "^8.21.3",
