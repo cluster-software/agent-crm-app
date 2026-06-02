@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.0-295b305...v1.2.1-295b305) (2026-06-02)
+
+
+### Bug Fixes
+
+* pin Agent CRM SDK for app release ([#175](https://github.com/cluster-software/agent-crm-app/issues/175)) ([a85cd2b](https://github.com/cluster-software/agent-crm-app/commit/a85cd2b9ee5e900494dc3e6a46761196e1c88761))
+
 ## [1.2.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.9-295b305...v1.2.0-295b305) (2026-06-02)
 
 
