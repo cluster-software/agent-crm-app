@@ -264,7 +264,7 @@ function DesktopAuthFlow({
       void resolveOrglessWorkspace();
       return;
     }
-    void resolveWorkspace();
+    if (authInfo.isLoggedIn) void resolveWorkspace();
   }, [authInfo.isLoggedIn, loginState, resolveOrglessWorkspace, resolveWorkspace]);
 
   if (!loginState && !loginStateError) {
