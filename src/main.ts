@@ -44,6 +44,10 @@ import type {
   UpdateStatus,
   WorkspaceSummary
 } from "./shared/types.js";
+import {
+  TERMINAL_WORKSPACE_REFRESH_DELAY_MS,
+  terminalOutputMayChangeWorkspace
+} from "./workspace-refresh-heuristic.js";
 
 const { autoUpdater } = electronUpdater;
 
@@ -61,6 +65,7 @@ const databaseUrlsByCwd = new Map<string, string>();
 const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-crm-sync-engine.onrender.com";
 let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let terminalWorkspaceRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudSyncWorkspace: WorkspaceSummary | null = null;
 let cloudSyncInFlight: { generation: number; promise: Promise<CloudSyncStatus> } | null = null;
 let cloudSyncGeneration = 0;
@@ -683,9 +688,9 @@ async function fetchAppJson<T>(pathname: string, session: StoredDesktopSession, 
 async function getCloudWorkspaceFromSession(): Promise<WorkspaceSummary | null> {
   const session = await readStoredDesktopSession();
   if (!session) return null;
-  let payload: { ok: true; workspace: WorkspaceSummary };
+  let summary: WorkspaceSummary;
   try {
-    payload = await fetchAppJson<{ ok: true; workspace: WorkspaceSummary }>("/app/workspace", session);
+    summary = await fetchCloudWorkspaceSummaryFromSession(session);
   } catch (error) {
     if (error instanceof CloudAppRequestError && error.status === 401) {
       await discardStoredDesktopSession();
@@ -693,6 +698,12 @@ async function getCloudWorkspaceFromSession(): Promise<WorkspaceSummary | null> 
     }
     throw error;
   }
+  updateCurrentCloudWorkspace(summary);
+  return summary;
+}
+
+async function fetchCloudWorkspaceSummaryFromSession(session: StoredDesktopSession): Promise<WorkspaceSummary> {
+  const payload = await fetchAppJson<{ ok: true; workspace: WorkspaceSummary }>("/app/workspace", session);
   const dir = await ensureCloudWorkspaceDir(session);
   const summary: WorkspaceSummary = {
     ...payload.workspace,
@@ -706,6 +717,10 @@ async function getCloudWorkspaceFromSession(): Promise<WorkspaceSummary | null> 
       orgId: session.workspace.orgId
     }
   };
+  return summary;
+}
+
+function updateCurrentCloudWorkspace(summary: WorkspaceSummary): void {
   if (
     !cloudSyncWorkspace ||
     cloudSyncWorkspace.path !== summary.path ||
@@ -715,7 +730,26 @@ async function getCloudWorkspaceFromSession(): Promise<WorkspaceSummary | null> 
   } else {
     updateCloudSyncWorkspace(summary);
   }
-  return summary;
+}
+
+function workspaceRefreshFingerprint(summary: WorkspaceSummary | null): string {
+  if (!summary) return "";
+  return JSON.stringify({
+    counts: Object.fromEntries(Object.entries(summary.counts ?? {}).sort(([left], [right]) => left.localeCompare(right))),
+    objects: (summary.objects ?? []).map((object) => ({
+      object_slug: object.object_slug,
+      singular_name: object.singular_name,
+      plural_name: object.plural_name,
+      attributes: object.attributes.map((attribute) => ({
+        attribute_slug: attribute.attribute_slug,
+        title: attribute.title,
+        attribute_type: attribute.attribute_type,
+        is_multivalued: attribute.is_multivalued,
+        is_unique: attribute.is_unique,
+        config: attribute.config
+      }))
+    }))
+  });
 }
 
 type PtySession = {
@@ -1308,6 +1342,10 @@ function stopCloudSync() {
     clearTimeout(cloudSyncTimer);
     cloudSyncTimer = null;
   }
+  if (terminalWorkspaceRefreshTimer) {
+    clearTimeout(terminalWorkspaceRefreshTimer);
+    terminalWorkspaceRefreshTimer = null;
+  }
   cloudSyncWorkspace = null;
   cloudSyncShowInEmptyState = false;
   gmailPartialImportsByWorkspace.clear();
@@ -1355,6 +1393,21 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
       return setCloudSyncStatus(integrations.state === "error"
         ? { state: "error", message: integrations.message }
         : { state: "idle" });
+    }
+    try {
+      const previousFingerprint = workspaceRefreshFingerprint(cloudSyncWorkspace);
+      const summary = await fetchCloudWorkspaceSummaryFromSession(desktopSession);
+      const nextFingerprint = workspaceRefreshFingerprint(summary);
+      updateCurrentCloudWorkspace(summary);
+      if (previousFingerprint && previousFingerprint !== nextFingerprint) {
+        sendToMainWindow("workspace:changed");
+      }
+    } catch (error) {
+      if (error instanceof CloudAppRequestError && error.status === 401) {
+        await discardStoredDesktopSession();
+        return setCloudSyncStatus({ state: "idle" });
+      }
+      console.warn(`[cloud-sync] failed to refresh cloud workspace summary: ${error instanceof Error ? error.message : String(error)}`);
     }
     const activeProviders: CloudSyncProvider[] = [];
     if (integrations.integrations.gmail.sync?.state === "running" || integrations.integrations.gmail.sync?.state === "pending") {
@@ -2171,6 +2224,27 @@ function schedulePtyFlush(id: string, session: PtySession) {
   }, FLUSH_INTERVAL_MS);
 }
 
+function scheduleWorkspaceRefreshFromPty(session: PtySession): void {
+  if (
+    !desktopSessionTokensByCwd.has(session.cwd) &&
+    !cloudWorkspaceIdsByCwd.has(session.cwd) &&
+    !databaseUrlsByCwd.has(session.cwd)
+  ) {
+    return;
+  }
+
+  const recentOutput = session.buffer.slice(-4096);
+  if (!terminalOutputMayChangeWorkspace(recentOutput)) return;
+
+  if (terminalWorkspaceRefreshTimer) clearTimeout(terminalWorkspaceRefreshTimer);
+  terminalWorkspaceRefreshTimer = setTimeout(() => {
+    terminalWorkspaceRefreshTimer = null;
+    void runCloudSync().catch((error) => {
+      console.warn(`[cloud-sync] terminal-triggered refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, TERMINAL_WORKSPACE_REFRESH_DELAY_MS);
+}
+
 function spawnPtySession(id: string, cols: number, rows: number, cwd: string): PtySession {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -2244,6 +2318,7 @@ function spawnPtySession(id: string, cols: number, rows: number, cwd: string): P
     appendToBuffer(session, data);
     session.pending += data;
     schedulePtyFlush(id, session);
+    scheduleWorkspaceRefreshFromPty(session);
   });
 
   proc.onExit(({ exitCode, signal }) => {
