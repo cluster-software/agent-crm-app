@@ -1384,7 +1384,11 @@ function RecordsView({
     void loadRecordPage({ cursor, searchQuery: debouncedFilterQuery });
   }
 
-  if (totalRecords === 0 && RECORDS_EMPTY_STATES[object.object_slug]) {
+  if (
+    totalRecords === 0 &&
+    RECORDS_EMPTY_STATES[object.object_slug] &&
+    !hasCustomDealPipeline(object)
+  ) {
     return (
       <RecordsEmptyState slug={object.object_slug} />
     );
@@ -1599,6 +1603,7 @@ type RecordsEmptyConfig = {
 
 const ACRM_ONBOARDING_PROMPT = "Onboard me into Agent CRM for this workspace";
 const ACRM_DEALS_PIPELINE_PROMPT = "Create a pipeline for me.";
+const DEFAULT_DEAL_PIPELINE_STAGE_KEYS = ["lead", "in progress", "won", "lost"];
 
 const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
   companies: {
@@ -2383,6 +2388,7 @@ function DealsPipelineView({
   const visibleCount = deals.length;
   const filterActive = viewMode === "table" && normalizeTableFilterQuery(filterQuery).length > 0;
   const emptyMessage = filterActive ? "no matching deals" : "no deals yet - run an import or create one";
+  const showPipelineEmptyHint = viewMode === "kanban" && visibleCount === 0 && columns.length > 0;
   const statusText = filterActive
     ? filterMetaText(totalMatches, visibleCount, totalRecords, object.plural_name)
     : `${formatNumber(visibleCount)} of ${formatNumber(totalRecords)} deals`;
@@ -2492,6 +2498,9 @@ function DealsPipelineView({
       <div className="deals-status-bar">
         {loading && records.length > 0 && <Loader2 size={12} className="lucide spin" />}
         <span>{statusText}</span>
+        {showPipelineEmptyHint && (
+          <span className="deals-status-bar__hint">Deals will show up here</span>
+        )}
       </div>
     </div>
   );
@@ -2936,6 +2945,18 @@ function compareDealStages(
 function stageOptionLabels(object: SchemaObject): string[] {
   const stageAttribute = object.attributes.find((attribute) => attribute.attribute_slug === "stage");
   return optionLabelsFromConfig(stageAttribute?.config);
+}
+
+function hasCustomDealPipeline(object: SchemaObject): boolean {
+  if (object.object_slug !== "deals") return false;
+  const stageKeys = stageOptionLabels(object).map(dealPipelineStageKey);
+  if (stageKeys.length === 0) return false;
+  if (stageKeys.length !== DEFAULT_DEAL_PIPELINE_STAGE_KEYS.length) return true;
+  return stageKeys.some((stage, index) => stage !== DEFAULT_DEAL_PIPELINE_STAGE_KEYS[index]);
+}
+
+function dealPipelineStageKey(stage: string): string {
+  return stage.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 }
 
 function optionLabelsFromConfig(config: unknown): string[] {

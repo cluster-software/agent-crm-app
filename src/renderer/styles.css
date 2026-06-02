@@ -1805,6 +1805,20 @@ body.resizing-terminal * { cursor: col-resize !important; }
   flex: 0 0 auto;
 }
 
+.deals-status-bar__hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deals-status-bar__hint::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--text-faint);
+}
+
 .deals-kanban {
   flex: 1;
   min-width: 0;
