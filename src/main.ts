@@ -292,13 +292,27 @@ async function readStoredDesktopSession(): Promise<StoredDesktopSession | null> 
     return currentDesktopSession;
   }
   try {
-    const parsed = canUseDevPlaintextDesktopSession()
-        ? JSON.parse(await fs.readFile(devDesktopSessionPath(), "utf8")) as StoredDesktopSession
-        : safeStorage.isEncryptionAvailable()
-          ? JSON.parse(safeStorage.decryptString(await fs.readFile(desktopSessionPath()))) as StoredDesktopSession
-          : null;
+    let parsed: StoredDesktopSession;
+    if (canUseDevPlaintextDesktopSession()) {
+      const rawSession = await fs.readFile(devDesktopSessionPath(), "utf8");
+      try {
+        parsed = JSON.parse(rawSession) as StoredDesktopSession;
+      } catch {
+        throw new Error("Failed to parse dev plaintext desktop session.");
+      }
+    } else {
+      const encryptedSession = await fs.readFile(desktopSessionPath());
+      if (!safeStorage.isEncryptionAvailable()) {
+        throw new Error("Electron safeStorage encryption is not available.");
+      }
+      try {
+        parsed = JSON.parse(safeStorage.decryptString(encryptedSession)) as StoredDesktopSession;
+      } catch {
+        throw new Error("Electron safeStorage desktop session decryption or parsing failed.");
+      }
+    }
     if (!parsed) {
-      throw new Error("Electron safeStorage encryption is not available.");
+      throw new Error("Stored desktop session payload was empty.");
     }
     if (!isStoredDesktopSession(parsed)) {
       await discardStoredDesktopSession();

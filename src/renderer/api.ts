@@ -566,7 +566,7 @@ function updatePreviewDeal(payload: UpdateDealPayload) {
     deal: {
       object_slug: "deals" as const,
       record_id: result.record_id,
-      ...(payload.stage ? { stage: { id: payload.stage, title: previewDisplayValue("deals", "stage", payload.stage) } } : {})
+      ...(payload.stage !== undefined ? { stage: { id: payload.stage, title: previewDisplayValue("deals", "stage", payload.stage) } } : {})
     }
   };
 }
