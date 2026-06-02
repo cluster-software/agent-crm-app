@@ -32,6 +32,8 @@ import type {
   TerminalDroppedFilePayload,
   TranscriptImportResult,
   TranscriptPayload,
+  UpdateDealPayload,
+  UpdateDealResult,
   UpdateRecordPayload,
   UpdateRecordResult,
   UpdateStatus,
@@ -273,6 +275,14 @@ function desktopSessionPath(): string {
   return path.join(app.getPath("userData"), DESKTOP_SESSION_FILENAME);
 }
 
+function devDesktopSessionPath(): string {
+  return path.join(app.getPath("userData"), "desktop-session.dev.json");
+}
+
+function canUseDevPlaintextDesktopSession(): boolean {
+  return isDev && process.env.AGENT_CRM_DEV_PLAINTEXT_SESSION !== "0";
+}
+
 async function readStoredDesktopSession(): Promise<StoredDesktopSession | null> {
   if (currentDesktopSession) {
     if (isExpiredStoredDesktopSession(currentDesktopSession)) {
@@ -282,11 +292,28 @@ async function readStoredDesktopSession(): Promise<StoredDesktopSession | null> 
     return currentDesktopSession;
   }
   try {
-    const encrypted = await fs.readFile(desktopSessionPath());
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Electron safeStorage encryption is not available.");
+    let parsed: StoredDesktopSession;
+    if (canUseDevPlaintextDesktopSession()) {
+      const rawSession = await fs.readFile(devDesktopSessionPath(), "utf8");
+      try {
+        parsed = JSON.parse(rawSession) as StoredDesktopSession;
+      } catch {
+        throw new Error("Failed to parse dev plaintext desktop session.");
+      }
+    } else {
+      const encryptedSession = await fs.readFile(desktopSessionPath());
+      if (!safeStorage.isEncryptionAvailable()) {
+        throw new Error("Electron safeStorage encryption is not available.");
+      }
+      try {
+        parsed = JSON.parse(safeStorage.decryptString(encryptedSession)) as StoredDesktopSession;
+      } catch {
+        throw new Error("Electron safeStorage desktop session decryption or parsing failed.");
+      }
     }
-    const parsed = JSON.parse(safeStorage.decryptString(encrypted)) as StoredDesktopSession;
+    if (!parsed) {
+      throw new Error("Stored desktop session payload was empty.");
+    }
     if (!isStoredDesktopSession(parsed)) {
       await discardStoredDesktopSession();
       return null;
@@ -308,12 +335,15 @@ async function readStoredDesktopSession(): Promise<StoredDesktopSession | null> 
 }
 
 async function writeStoredDesktopSession(session: StoredDesktopSession): Promise<void> {
-  if (!safeStorage.isEncryptionAvailable()) {
+  const useDevPlaintextSession = canUseDevPlaintextDesktopSession();
+  if (!useDevPlaintextSession && !safeStorage.isEncryptionAvailable()) {
     throw new Error("Electron safeStorage encryption is not available.");
   }
-  const filePath = desktopSessionPath();
+  const filePath = useDevPlaintextSession ? devDesktopSessionPath() : desktopSessionPath();
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, safeStorage.encryptString(JSON.stringify(session)));
+  await fs.writeFile(filePath, useDevPlaintextSession
+    ? JSON.stringify(session)
+    : safeStorage.encryptString(JSON.stringify(session)));
   currentDesktopSession = session;
 }
 
@@ -337,6 +367,7 @@ async function discardStoredDesktopSession(): Promise<void> {
   cloudWorkspaceOrgIdsByCwd.clear();
   stopCloudSync();
   await fs.rm(desktopSessionPath(), { force: true });
+  await fs.rm(devDesktopSessionPath(), { force: true });
   sendToMainWindow("workspace:changed");
 }
 
@@ -2501,6 +2532,36 @@ handle("records:update", async (payload: UpdateRecordPayload) => {
   const result = await getSdkClient().request<UpdateRecordResult>("updateRecord", payload);
   sendToMainWindow("workspace:changed");
   return result;
+});
+handle("deals:update", async (payload: UpdateDealPayload) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    const result = await fetchAppJson<UpdateDealResult & { ok?: true }>(
+      `/app/workspace/deals/${encodeURIComponent(payload.record_id)}`,
+      session,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...(payload.stage !== undefined ? { stage: payload.stage } : {}),
+          source: payload.source
+        })
+      }
+    );
+    sendToMainWindow("workspace:changed");
+    return result;
+  }
+  const fields = [
+    ...(payload.stage !== undefined ? [`stage=${payload.stage}`] : [])
+  ];
+  const result = await getSdkClient().request<UpdateRecordResult>("updateRecord", {
+    object_slug: "deals",
+    record_id: payload.record_id,
+    fields,
+    source: payload.source
+  });
+  sendToMainWindow("workspace:changed");
+  return { updated: result.updated, deal: { object_slug: "deals", record_id: result.record_id } };
 });
 handle("import:csv", async (payload: ImportCsvPayload) => {
   if (await readStoredDesktopSession()) {

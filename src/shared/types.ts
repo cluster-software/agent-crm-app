@@ -286,6 +286,21 @@ export type UpdateRecordResult = {
   values_changed: number;
 };
 
+export type UpdateDealPayload = {
+  record_id: string;
+  stage?: string;
+  source?: string;
+};
+
+export type UpdateDealResult = {
+  deal?: {
+    object_slug: "deals";
+    record_id: string;
+    stage?: { id: string; title: string } | null;
+  };
+  updated?: true;
+};
+
 export type SignalOutputDefinition = {
   key: string;
   attribute: string;
@@ -415,6 +430,7 @@ export type AppBridge = {
   importTranscript: (payload: TranscriptPayload) => Promise<TranscriptImportResult>;
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;
   updateRecord: (payload: UpdateRecordPayload) => Promise<UpdateRecordResult>;
+  updateDeal: (payload: UpdateDealPayload) => Promise<UpdateDealResult>;
   runQuery: (sql: string, params?: unknown[]) => Promise<QueryResult>;
   listSignals: () => Promise<SignalDefinitionSummary[]>;
   listSignalFailures: () => Promise<SignalRunFailureSummary[]>;

@@ -1591,9 +1591,12 @@ type RecordsEmptyConfig = {
   markShape: "square" | "circle";
   title: string;
   body: string;
+  prompt?: string;
+  promptTitle?: string;
 };
 
 const ACRM_ONBOARDING_PROMPT = "Onboard me into Agent CRM for this workspace";
+const ACRM_DEALS_PIPELINE_PROMPT = "Create a pipeline for me.";
 
 const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
   companies: {
@@ -1615,7 +1618,9 @@ const RECORDS_EMPTY_STATES: Record<string, RecordsEmptyConfig> = {
     cols: ["deal", "stage", "value"],
     markShape: "square",
     title: "Deals",
-    body: "The pipeline you're working — eval, trial, expansion, anything you call a stage."
+    body: "The pipeline you're working — eval, trial, expansion, anything you call a stage.",
+    prompt: ACRM_DEALS_PIPELINE_PROMPT,
+    promptTitle: "Copy the pipeline prompt"
   }
 };
 
@@ -1636,7 +1641,7 @@ function RecordsEmptyState({
         />
         <h2 className="records-empty__title">{config.title}</h2>
         <p className="records-empty__body">{config.body}</p>
-        <OnboardingPromptSteps command={ACRM_ONBOARDING_PROMPT} />
+        <OnboardingPromptSteps command={config.prompt ?? ACRM_ONBOARDING_PROMPT} title={config.promptTitle} />
       </div>
     </div>
   );
@@ -1674,7 +1679,7 @@ function SchemaTablePreview({
   );
 }
 
-function OnboardingPromptSteps({ command }: { command: string }) {
+function OnboardingPromptSteps({ command, title = "Copy the onboarding prompt" }: { command: string; title?: string }) {
   const [copied, setCopied] = useState(false);
   async function onCopy() {
     try {
@@ -1690,7 +1695,7 @@ function OnboardingPromptSteps({ command }: { command: string }) {
       <div className="onboarding-step onboarding-step--primary">
         <span className="onboarding-step__number">1</span>
         <div className="onboarding-step__content">
-          <span className="onboarding-step__title">Copy the onboarding prompt</span>
+          <span className="onboarding-step__title">{title}</span>
           <div className="onboarding-step__command-row">
             <code className="onboarding-step__command">
               <span aria-hidden="true">&gt;</span>
@@ -2415,10 +2420,9 @@ function DealsPipelineView({
         return next;
       });
       try {
-        await api.updateRecord({
-          object_slug: deal.record.object_slug,
+        await api.updateDeal({
           record_id: deal.record.record_id,
-          fields: [`stage=${stageUpdateValue(object, nextStage)}`],
+          stage: stageUpdateValue(object, nextStage),
           source: "app:deals-kanban"
         });
         await onRecordsChanged?.();
