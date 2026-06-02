@@ -7,6 +7,7 @@ import type {
   SignalRunRequest,
   TerminalDroppedFilePayload,
   TranscriptPayload,
+  UpdateDealPayload,
   UpdateRecordPayload,
   UpdateStatus
 } from "./shared/types.js";
@@ -51,6 +52,7 @@ const bridge: AppBridge = {
   importTranscript: (payload: TranscriptPayload) => invoke("import:transcript", payload),
   createRecord: (payload: CreateRecordPayload) => invoke("records:create", payload),
   updateRecord: (payload: UpdateRecordPayload) => invoke("records:update", payload),
+  updateDeal: (payload: UpdateDealPayload) => invoke("deals:update", payload),
   runQuery: (sql: string, params?: unknown[]) => invoke("query:run", sql, params),
   listSignals: () => invoke("signals:list"),
   listSignalFailures: () => invoke("signals:failures"),

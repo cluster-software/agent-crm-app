@@ -9,6 +9,7 @@ import type {
   SignalDefinitionSummary,
   SignalRunRequest,
   TranscriptPayload,
+  UpdateDealPayload,
   UpdateRecordPayload,
   WorkspaceSummary
 } from "../shared/types";
@@ -551,6 +552,25 @@ function updatePreviewRecord(payload: UpdateRecordPayload) {
   };
 }
 
+function updatePreviewDeal(payload: UpdateDealPayload) {
+  const result = updatePreviewRecord({
+    object_slug: "deals",
+    record_id: payload.record_id,
+    fields: [
+      ...(payload.stage !== undefined ? [`stage=${payload.stage}`] : [])
+    ],
+    source: payload.source
+  });
+  return {
+    updated: result.updated,
+    deal: {
+      object_slug: "deals" as const,
+      record_id: result.record_id,
+      ...(payload.stage ? { stage: { id: payload.stage, title: previewDisplayValue("deals", "stage", payload.stage) } } : {})
+    }
+  };
+}
+
 function previewAttribute(objectSlug: string, attributeSlug: string) {
   return previewWorkspace.objects
     .find((object) => object.object_slug === objectSlug)
@@ -630,6 +650,7 @@ const browserPreview: AppBridge = {
     values_inserted: 3
   }),
   updateRecord: async (payload: UpdateRecordPayload) => updatePreviewRecord(payload),
+  updateDeal: async (payload: UpdateDealPayload) => updatePreviewDeal(payload),
   runQuery: async (sql: string, params?: unknown[]) => {
     if (sql.includes("v.object_slug = 'companies'") && sql.includes("v.attribute_slug = 'team'")) {
       return {
