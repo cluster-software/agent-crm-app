@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.2-295b305...v1.2.3-295b305) (2026-06-02)
+
+
+### Bug Fixes
+
+* prevent desktop auto login after logout ([98b43d0](https://github.com/cluster-software/agent-crm-app/commit/98b43d057bb67fd985b5e3733a9dc3c0c48ae501))
+* prevent desktop auto login after logout ([63951f6](https://github.com/cluster-software/agent-crm-app/commit/63951f6dcebc493b1d6b42c066eb0528b963c5fb))
+
 ## [1.2.2-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.1-295b305...v1.2.2-295b305) (2026-06-02)
 
 
