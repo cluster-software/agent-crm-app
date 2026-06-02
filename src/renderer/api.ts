@@ -651,96 +651,85 @@ const browserPreview: AppBridge = {
   }),
   updateRecord: async (payload: UpdateRecordPayload) => updatePreviewRecord(payload),
   updateDeal: async (payload: UpdateDealPayload) => updatePreviewDeal(payload),
-  runQuery: async (sql: string, params?: unknown[]) => {
-    if (sql.includes("v.object_slug = 'companies'") && sql.includes("v.attribute_slug = 'team'")) {
-      return {
-        rows: [
-          { record_id: "preview-person" }
-        ],
-        rowsAffected: 0
-      };
-    }
-    if (sql.includes("v.object_slug = 'people'") && sql.includes("v.attribute_slug = 'company'")) {
-      return {
-        rows: [
-          { record_id: "preview-person-2" }
-        ],
-        rowsAffected: 0
-      };
-    }
-    if (sql.includes("record_id AS rec_id") && sql.includes("object_slug = 'people'") && sql.includes("attribute_slug IN")) {
-      const rowsById: Record<string, Record<string, unknown>[]> = {
-        "preview-person": [
-          { rec_id: "preview-person", attr: "name", val: JSON.stringify({ full_name: "Maya Chen" }) },
-          { rec_id: "preview-person", attr: "job_title", val: JSON.stringify("VP Sales") },
-          { rec_id: "preview-person", attr: "email_addresses", val: JSON.stringify("maya@lumin.ai") },
-          { rec_id: "preview-person", attr: "linkedin_url", val: JSON.stringify("https://linkedin.com/in/mayachen") }
-        ],
-        "preview-person-2": [
-          { rec_id: "preview-person-2", attr: "name", val: JSON.stringify({ full_name: "Andres Soto" }) },
-          { rec_id: "preview-person-2", attr: "job_title", val: JSON.stringify("Founder") },
-          { rec_id: "preview-person-2", attr: "email_addresses", val: JSON.stringify("andres@orbitops.io") }
-        ]
-      };
-      return {
-        rows: rowsById[String(params?.[0] ?? "")] ?? [],
-        rowsAffected: 0
-      };
-    }
-    if (sql.includes("v.object_slug = 'people'") && params?.[1] === "communication_threads") {
-      return {
-        rows: [
-          { rec_id: "preview-thread", attr: "subject", val: JSON.stringify("Platform team rollout - pricing + SOC2") },
-          { rec_id: "preview-thread", attr: "channel", val: JSON.stringify("email") },
-          { rec_id: "preview-thread", attr: "snippet", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us.") },
-          { rec_id: "preview-thread", attr: "last_message_at", val: JSON.stringify("2026-05-25T17:18:00.000Z") },
-          { rec_id: "preview-thread", attr: "message_count", val: JSON.stringify(3) }
-        ],
-        rowsAffected: 0
-      };
-    }
-    if (sql.includes("v.object_slug = 'communication_messages'")) {
-      return {
-        rows: [
-          { rec_id: "preview-message-1", attr: "channel", val: JSON.stringify("email") },
-          { rec_id: "preview-message-1", attr: "direction", val: JSON.stringify("outbound") },
-          { rec_id: "preview-message-1", attr: "sender", ref_object: "people", ref_record_id: "preview-user" },
-          { rec_id: "preview-message-1", attr: "recipients", ref_object: "people", ref_record_id: "preview-person" },
-          { rec_id: "preview-message-1", attr: "sent_at", val: JSON.stringify("2026-05-15T21:10:00.000Z") },
-          { rec_id: "preview-message-1", attr: "body_preview", val: JSON.stringify("Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.") },
-          { rec_id: "preview-message-1", attr: "body_text", val: JSON.stringify("Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.") },
-          { rec_id: "preview-message-1", attr: "body_render_json", val: JSON.stringify({ version: 1, source: "gmail", blocks: [{ type: "paragraph", text: "Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.", segments: [{ text: "Great chatting yesterday. Per your ask, here's the " }, { text: "headless CLI quickstart", href: "https://docs.agent-crm.test/cli" }, { text: " and the " }, { text: "auth-token guide", href: "https://docs.agent-crm.test/auth" }, { text: "." }] }] }) },
-          { rec_id: "preview-message-1", attr: "attachments_json", val: JSON.stringify([]) },
-          { rec_id: "preview-message-2", attr: "channel", val: JSON.stringify("email") },
-          { rec_id: "preview-message-2", attr: "direction", val: JSON.stringify("inbound") },
-          { rec_id: "preview-message-2", attr: "sender", ref_object: "people", ref_record_id: "preview-person" },
-          { rec_id: "preview-message-2", attr: "recipients", ref_object: "people", ref_record_id: "preview-user" },
-          { rec_id: "preview-message-2", attr: "sent_at", val: JSON.stringify("2026-05-25T17:18:00.000Z") },
-          { rec_id: "preview-message-2", attr: "body_preview", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us.") },
-          { rec_id: "preview-message-2", attr: "body_text", val: JSON.stringify("Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?\n\nOn Fri, May 15, 2026 at 2:10 PM Margaret Hamilton wrote:\n> Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.") },
-          { rec_id: "preview-message-2", attr: "body_render_json", val: JSON.stringify({ version: 1, source: "gmail", blocks: [{ type: "paragraph", text: "Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?" }, { type: "quote", depth: 1, text: "On Fri, May 15, 2026 at 2:10 PM Margaret Hamilton wrote:\nGreat chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide." }] }) },
-          { rec_id: "preview-message-2", attr: "attachments_json", val: JSON.stringify([{ filename: "security-overview.pdf", mimeType: "application/pdf", size: 248320 }]) }
-        ],
-        rowsAffected: 0
-      };
-    }
-    if (sql.includes("object_slug = 'people'") && sql.includes("attribute_slug IN")) {
-      return {
-        rows: [
-          { record_id: "preview-person", attribute_slug: "name", value_json: JSON.stringify({ full_name: "Maya Chen" }) },
-          { record_id: "preview-user", attribute_slug: "name", value_json: JSON.stringify({ full_name: "Margaret Hamilton" }) }
-        ],
-        rowsAffected: 0
-      };
-    }
-    return {
-      rows: [
-        { object_slug: "people", count: 42 },
-        { object_slug: "companies", count: 18 }
-      ],
-      rowsAffected: 0
-    };
-  },
+  getPersonRelated: async (_personRecordId, object) => ({
+    object,
+    records: object === "communication_threads"
+      ? [{
+          id: "preview-thread",
+          attrs: {
+            subject: "Platform team rollout - pricing + SOC2",
+            channel: "email",
+            snippet: "Thanks for sending these over. The team-tier pricing makes sense for us.",
+            last_message_at: "2026-05-25T17:18:00.000Z",
+            message_count: 3
+          }
+        }]
+      : []
+  }),
+  getCompanyTeam: async (_companyRecordId) => ({
+    records: [
+      {
+        id: "preview-person",
+        attrs: {
+          name: { full_name: "Maya Chen" },
+          job_title: "VP Sales",
+          email_addresses: "maya@lumin.ai",
+          linkedin_url: "https://linkedin.com/in/mayachen"
+        }
+      },
+      {
+        id: "preview-person-2",
+        attrs: {
+          name: { full_name: "Andres Soto" },
+          job_title: "Founder",
+          email_addresses: "andres@orbitops.io"
+        }
+      }
+    ]
+  }),
+  getCommunicationThreadMessages: async (_threadRecordId) => ({
+    records: [
+      {
+        id: "preview-message-1",
+        attrs: {
+          channel: "email",
+          direction: "outbound",
+          sender: { target_object: "people", target_record_id: "preview-user" },
+          recipients: { target_object: "people", target_record_id: "preview-person" },
+          sent_at: "2026-05-15T21:10:00.000Z",
+          body_preview: "Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.",
+          body_text: "Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.",
+          body_render_json: { version: 1, source: "gmail", blocks: [{ type: "paragraph", text: "Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.", segments: [{ text: "Great chatting yesterday. Per your ask, here's the " }, { text: "headless CLI quickstart", href: "https://docs.agent-crm.test/cli" }, { text: " and the " }, { text: "auth-token guide", href: "https://docs.agent-crm.test/auth" }, { text: "." }] }] },
+          attachments_json: []
+        }
+      },
+      {
+        id: "preview-message-2",
+        attrs: {
+          channel: "email",
+          direction: "inbound",
+          sender: { target_object: "people", target_record_id: "preview-person" },
+          recipients: { target_object: "people", target_record_id: "preview-user" },
+          sent_at: "2026-05-25T17:18:00.000Z",
+          body_preview: "Thanks for sending these over. The team-tier pricing makes sense for us.",
+          body_text: "Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?\n\nOn Fri, May 15, 2026 at 2:10 PM Margaret Hamilton wrote:\n> Great chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide.",
+          body_render_json: { version: 1, source: "gmail", blocks: [{ type: "paragraph", text: "Thanks for sending these over. The team-tier pricing makes sense for us. One question on the SOC2 doc - can you confirm whether the model API counts as a sub-processor?" }, { type: "quote", depth: 1, text: "On Fri, May 15, 2026 at 2:10 PM Margaret Hamilton wrote:\nGreat chatting yesterday. Per your ask, here's the headless CLI quickstart and the auth-token guide." }] },
+          attachments_json: [{ filename: "security-overview.pdf", mimeType: "application/pdf", size: 248320 }]
+        }
+      }
+    ]
+  }),
+  getRecordLabels: async (objectSlug, recordIds) => ({
+    labels: recordIds.map((recordId) => ({
+      object_slug: objectSlug,
+      record_id: recordId,
+      label: recordId === "preview-user" ? "Margaret Hamilton" : "Maya Chen"
+    }))
+  }),
+  getPersonCompany: async (_personRecordId) => ({
+    company_record_id: "preview-company",
+    name: "Orbital Systems"
+  }),
   listSignals: async (): Promise<SignalDefinitionSummary[]> => [],
   listSignalFailures: async () => [],
   listSignalRuns: async () => [],

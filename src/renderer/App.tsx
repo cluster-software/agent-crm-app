@@ -4384,103 +4384,17 @@ type CommunicationThread = RelatedRecord & {
 
 async function fetchAssociated(
   personRecordId: string,
-  childObject: "transcripts" | "posts" | "communication_threads",
-  inverseAttribute: string
+  childObject: "transcripts" | "posts" | "communication_threads"
 ): Promise<RelatedRecord[]> {
-  const result = await api.runQuery(
-    `SELECT v.ref_record_id AS rec_id, tv.attribute_slug AS attr, tv.value_json AS val
-       FROM acrm_value v
-       LEFT JOIN acrm_value tv
-         ON tv.object_slug = $2
-        AND tv.record_id = v.ref_record_id
-        AND tv.active_until IS NULL
-      WHERE v.object_slug = 'people'
-        AND v.record_id = $1
-        AND v.attribute_slug = $3
-        AND v.ref_object = $2
-        AND v.active_until IS NULL`,
-    [personRecordId, childObject, inverseAttribute]
-  );
-
-  const map = new Map<string, RelatedRecord>();
-  for (const row of result.rows) {
-    const id = row.rec_id == null ? "" : String(row.rec_id);
-    if (!id) continue;
-    let entry = map.get(id);
-    if (!entry) {
-      entry = { id, attrs: {} };
-      map.set(id, entry);
-    }
-    if (row.attr != null) {
-      pushAttrValue(entry.attrs, String(row.attr), parseValueJson(row.val));
-    }
-  }
-  return [...map.values()];
+  const result = await api.getPersonRelated(personRecordId, childObject);
+  return result.records;
 }
 
 async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[]> {
-  const [companyTeamResult, peopleCompanyResult] = await Promise.all([
-    api.runQuery(
-      `SELECT v.ref_record_id AS record_id
-         FROM acrm_value v
-        WHERE v.object_slug = 'companies'
-          AND v.record_id = $1
-          AND v.attribute_slug = 'team'
-          AND v.ref_object = 'people'
-          AND v.active_until IS NULL`,
-      [companyRecordId]
-    ),
-    api.runQuery(
-      `SELECT v.record_id AS record_id
-         FROM acrm_value v
-        WHERE v.object_slug = 'people'
-          AND v.attribute_slug = 'company'
-          AND v.ref_object = 'companies'
-          AND v.ref_record_id = $1
-          AND v.active_until IS NULL`,
-      [companyRecordId]
-    )
-  ]);
-
-  const teamRecordIds = uniqueNonEmpty(
-    [...companyTeamResult.rows, ...peopleCompanyResult.rows].map((row) =>
-      row.record_id == null ? "" : String(row.record_id)
-    )
-  );
-  if (teamRecordIds.length === 0) return [];
-
-  const teamRecords = await Promise.all(teamRecordIds.map(fetchCompanyTeamPerson));
-  return teamRecords
+  const result = await api.getCompanyTeam(companyRecordId);
+  return result.records
     .map(teamRelatedRecordToPreview)
     .sort((a, b) => a.label.localeCompare(b.label));
-}
-
-async function fetchCompanyTeamPerson(personRecordId: string): Promise<RelatedRecord> {
-  const result = await api.runQuery(
-    `SELECT record_id AS rec_id, attribute_slug AS attr, value_json AS val
-       FROM acrm_value
-      WHERE object_slug = 'people'
-        AND record_id = $1
-        AND active_until IS NULL
-        AND attribute_slug IN (
-          'name',
-          'email_addresses',
-          'email',
-          'job_title',
-          'title',
-          'linkedin_url',
-          'profile_picture_url'
-        )`,
-    [personRecordId]
-  );
-
-  const entry: RelatedRecord = { id: personRecordId, attrs: {} };
-  for (const row of result.rows) {
-    if (row.attr != null) {
-      pushAttrValue(entry.attrs, String(row.attr), parseValueJson(row.val));
-    }
-  }
-  return entry;
 }
 
 function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
@@ -4544,7 +4458,6 @@ function relatedAttributeType(attributeSlug: string): string {
 async function fetchCommunicationThreads(personRecordId: string): Promise<CommunicationThread[]> {
   const threads = await fetchAssociated(
     personRecordId,
-    "communication_threads",
     "communication_threads"
   );
   return initializeCommunicationThreads(threads);
@@ -4583,49 +4496,20 @@ function sortCommunicationThreads(threads: CommunicationThread[]): Communication
 }
 
 async function fetchThreadMessages(threadRecordId: string): Promise<CommunicationMessage[]> {
-  const result = await api.runQuery(
-    `SELECT v.record_id AS rec_id,
-            mv.attribute_slug AS attr,
-            mv.value_json AS val,
-            mv.ref_object AS ref_object,
-            mv.ref_record_id AS ref_record_id
-       FROM acrm_value v
-       LEFT JOIN acrm_value mv
-         ON mv.object_slug = 'communication_messages'
-        AND mv.record_id = v.record_id
-        AND mv.active_until IS NULL
-      WHERE v.object_slug = 'communication_messages'
-        AND v.attribute_slug = 'thread'
-        AND v.ref_object = 'communication_threads'
-        AND v.ref_record_id = $1
-        AND v.active_until IS NULL`,
-    [threadRecordId]
-  );
-
-  const map = new Map<string, RelatedRecord>();
+  const result = await api.getCommunicationThreadMessages(threadRecordId);
   const peopleRefs = new Set<string>();
-  for (const row of result.rows) {
-    const id = row.rec_id == null ? "" : String(row.rec_id);
-    if (!id) continue;
-    let entry = map.get(id);
-    if (!entry) {
-      entry = { id, attrs: {} };
-      map.set(id, entry);
-    }
-    if (row.attr == null) continue;
-    const attr = String(row.attr);
-    const ref = row.ref_record_id && row.ref_object
-      ? { target_object: String(row.ref_object), target_record_id: String(row.ref_record_id) }
-      : null;
-    const parsed = ref ?? parseValueJson(row.val);
-    pushAttrValue(entry.attrs, attr, parsed);
-    if (ref?.target_object === "people") {
-      peopleRefs.add(ref.target_record_id);
+
+  for (const record of result.records) {
+    for (const id of [
+      ...getRecordRefIds(record.attrs, "sender"),
+      ...getRecordRefIds(record.attrs, "recipients")
+    ]) {
+      peopleRefs.add(id);
     }
   }
 
   const peopleLabels = await fetchRecordLabels("people", [...peopleRefs]);
-  return [...map.values()]
+  return result.records
     .map((item) => {
       const senderId = getRecordRefIds(item.attrs, "sender")[0] ?? "";
       const recipientIds = getRecordRefIds(item.attrs, "recipients");
@@ -4647,56 +4531,14 @@ async function fetchRecordLabels(objectSlug: "people", recordIds: string[]): Pro
   const labels = new Map<string, string>();
   const unique = [...new Set(recordIds.filter(Boolean))];
   if (unique.length === 0) return labels;
-  const where = unique.map((_, index) => `record_id = $${index + 1}`).join(" OR ");
-  const result = await api.runQuery(
-    `SELECT record_id, attribute_slug, value_json
-       FROM acrm_value
-      WHERE object_slug = '${objectSlug}'
-        AND active_until IS NULL
-        AND (${where})
-        AND attribute_slug IN ('name', 'email_addresses', 'linkedin_url')`,
-    unique
-  );
-  const grouped = new Map<string, Record<string, unknown>>();
-  for (const row of result.rows) {
-    const id = row.record_id == null ? "" : String(row.record_id);
-    const attr = row.attribute_slug == null ? "" : String(row.attribute_slug);
-    if (!id || !attr) continue;
-    const attrs = grouped.get(id) ?? {};
-    pushAttrValue(attrs, attr, parseValueJson(row.value_json));
-    grouped.set(id, attrs);
+  const result = await api.getRecordLabels(objectSlug, unique);
+  for (const label of result.labels) {
+    labels.set(label.record_id, label.label);
   }
   for (const id of unique) {
-    const attrs = grouped.get(id) ?? {};
-    labels.set(
-      id,
-      getScalar(attrs, "name") ||
-        getScalar(attrs, "email_addresses") ||
-        stripUrl(getScalar(attrs, "linkedin_url")) ||
-        id.slice(0, 8)
-    );
+    if (!labels.has(id)) labels.set(id, id.slice(0, 8));
   }
   return labels;
-}
-
-function pushAttrValue(attrs: Record<string, unknown>, key: string, value: unknown) {
-  const existing = attrs[key];
-  if (existing === undefined) {
-    attrs[key] = value;
-  } else if (Array.isArray(existing)) {
-    existing.push(value);
-  } else {
-    attrs[key] = [existing, value];
-  }
-}
-
-function parseValueJson(raw: unknown): unknown {
-  if (typeof raw !== "string") return raw;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
 }
 
 function getScalar(attrs: Record<string, unknown>, key: string): string {
@@ -4930,8 +4772,8 @@ function PersonDetail({
       });
 
     Promise.all([
-      fetchAssociated(record.record_id, "transcripts", "associated_transcripts"),
-      fetchAssociated(record.record_id, "posts", "associated_posts")
+      fetchAssociated(record.record_id, "transcripts"),
+      fetchAssociated(record.record_id, "posts")
     ])
       .then(([t, p]) => {
         if (cancelled) return;

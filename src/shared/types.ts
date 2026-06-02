@@ -195,9 +195,39 @@ export type RecordListResult = {
   totalMatches?: number;
 };
 
-export type QueryResult = {
-  rows: Record<string, unknown>[];
-  rowsAffected: number;
+export type RelatedRecord = {
+  id: string;
+  attrs: Record<string, unknown>;
+};
+
+export type PersonRelatedObject = "transcripts" | "posts" | "communication_threads";
+
+export type PersonRelatedResult = {
+  object: PersonRelatedObject;
+  records: RelatedRecord[];
+};
+
+export type CompanyTeamResult = {
+  records: RelatedRecord[];
+};
+
+export type CommunicationThreadMessagesResult = {
+  records: RelatedRecord[];
+};
+
+export type RecordLabel = {
+  object_slug: string;
+  record_id: string;
+  label: string;
+};
+
+export type RecordLabelsResult = {
+  labels: RecordLabel[];
+};
+
+export type PersonCompanyResult = {
+  company_record_id: string | null;
+  name: string | null;
 };
 
 export type ImportCsvPayload = {
@@ -431,7 +461,11 @@ export type AppBridge = {
   createRecord: (payload: CreateRecordPayload) => Promise<CreateRecordResult>;
   updateRecord: (payload: UpdateRecordPayload) => Promise<UpdateRecordResult>;
   updateDeal: (payload: UpdateDealPayload) => Promise<UpdateDealResult>;
-  runQuery: (sql: string, params?: unknown[]) => Promise<QueryResult>;
+  getPersonRelated: (personRecordId: string, object: PersonRelatedObject) => Promise<PersonRelatedResult>;
+  getCompanyTeam: (companyRecordId: string) => Promise<CompanyTeamResult>;
+  getCommunicationThreadMessages: (threadRecordId: string) => Promise<CommunicationThreadMessagesResult>;
+  getRecordLabels: (objectSlug: string, recordIds: string[]) => Promise<RecordLabelsResult>;
+  getPersonCompany: (personRecordId: string) => Promise<PersonCompanyResult>;
   listSignals: () => Promise<SignalDefinitionSummary[]>;
   listSignalFailures: () => Promise<SignalRunFailureSummary[]>;
   listSignalRuns: () => Promise<SignalRunJob[]>;

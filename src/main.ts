@@ -17,15 +17,20 @@ import type {
   GmailSyncProgress,
   CloudSyncStatus,
   CloudSyncProvider,
+  CommunicationThreadMessagesResult,
   CompleteDesktopAuthPayload,
+  CompanyTeamResult,
   CreateRecordPayload,
   ImportCsvPayload,
   IntegrationAccountSummary,
   IntegrationProviderStatus,
   IntegrationSyncStatus,
-  QueryResult,
+  PersonCompanyResult,
+  PersonRelatedObject,
+  PersonRelatedResult,
   RecordListOptions,
   RecordListResult,
+  RecordLabelsResult,
   RecentWorkspaceSummary,
   SignalRunRequest,
   StartExternalAuthPayload,
@@ -960,7 +965,7 @@ const EMERGENCY_AGENT_WORKSPACE_INSTRUCTIONS = {
     "",
     "The Agent CRM desktop app checks and updates the installed `acrm` CLI before launching the embedded terminal.",
     "",
-    "- Run `acrm --help` and `acrm execute --help` for current workspace guidance.",
+    "- Run `acrm --help` for current workspace guidance.",
     "<!-- agent-crm-app:end -->",
     "",
   ].join("\n")
@@ -2579,24 +2584,54 @@ handle("import:transcript", async (payload: TranscriptPayload) => {
   sendToMainWindow("workspace:changed");
   return result;
 });
-handle("query:run", async (sql: string, params: unknown[] = []): Promise<QueryResult> => {
+handle("people:related", async (personRecordId: string, object: PersonRelatedObject) => {
   const session = await readStoredDesktopSession();
   if (session) {
-    const result = await fetchAppJson<QueryResult & { ok?: true }>("/app/workspace/query", session, {
+    const path = `/v1/people/${encodeURIComponent(personRecordId)}/related?object=${encodeURIComponent(object)}`;
+    return fetchAppJson<PersonRelatedResult & { ok?: true }>(path, session);
+  }
+  return getSdkClient().request<PersonRelatedResult>("getPersonRelated", personRecordId, object);
+});
+handle("companies:team", async (companyRecordId: string) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    return fetchAppJson<CompanyTeamResult & { ok?: true }>(
+      `/v1/companies/${encodeURIComponent(companyRecordId)}/team`,
+      session
+    );
+  }
+  return getSdkClient().request<CompanyTeamResult>("getCompanyTeam", companyRecordId);
+});
+handle("communication-threads:messages", async (threadRecordId: string) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    return fetchAppJson<CommunicationThreadMessagesResult & { ok?: true }>(
+      `/v1/communication-threads/${encodeURIComponent(threadRecordId)}/messages`,
+      session
+    );
+  }
+  return getSdkClient().request<CommunicationThreadMessagesResult>("getCommunicationThreadMessages", threadRecordId);
+});
+handle("records:labels", async (objectSlug: string, recordIds: string[]) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    return fetchAppJson<RecordLabelsResult & { ok?: true }>("/v1/records/labels", session, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sql, params })
+      body: JSON.stringify({ object_slug: objectSlug, record_ids: recordIds })
     });
-    return {
-      rows: result.rows,
-      rowsAffected: result.rowsAffected
-    };
   }
-  const result = await getSdkClient().request<QueryResult>("runQuery", sql, params);
-  if (result.rowsAffected > 0) {
-    sendToMainWindow("workspace:changed");
+  return getSdkClient().request<RecordLabelsResult>("getRecordLabels", objectSlug, recordIds);
+});
+handle("people:company", async (personRecordId: string) => {
+  const session = await readStoredDesktopSession();
+  if (session) {
+    return fetchAppJson<PersonCompanyResult & { ok?: true }>(
+      `/v1/people/${encodeURIComponent(personRecordId)}/company`,
+      session
+    );
   }
-  return result;
+  return getSdkClient().request<PersonCompanyResult>("getPersonCompany", personRecordId);
 });
 handle("signals:list", async () => {
   if (await readStoredDesktopSession()) return [];
