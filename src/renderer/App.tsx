@@ -541,17 +541,6 @@ export function App() {
             <button
               className="icon-btn toolbar-tooltip"
               type="button"
-              aria-label="Sign out"
-              onClick={handleSignOut}
-            >
-              <X size={14} className="lucide" />
-              <span className="toolbar-tooltip__bubble" role="tooltip">
-                <span>Sign out</span>
-              </span>
-            </button>
-            <button
-              className="icon-btn toolbar-tooltip"
-              type="button"
               aria-label="Terminal"
               aria-pressed={terminalOpen}
               onClick={() => setTerminalOpen((open) => !open)}
@@ -1864,6 +1853,7 @@ function requestedRecordAttributes(
       "value",
       "close_date",
       "next_step",
+      "associated_company",
       "company",
       "account",
       "owner",
@@ -2800,7 +2790,7 @@ function DealsKanbanSkeleton() {
 
 function toDealRecord(record: RecordPreview, stageOverride?: string): DealRecord {
   const stage = (stageOverride ?? recordValue(record, "stage")?.display.trim()) || "Unstaged";
-  const companyValue = recordValue(record, "company", "account");
+  const companyValue = recordValue(record, "associated_company", "company", "account");
   const domainValue = recordValue(record, "domain", "domains", "website");
   const value = recordValue(record, "value", "amount", "deal_value");
   const owner = recordValue(record, "owner", "assignee")?.display.trim() ?? "";
