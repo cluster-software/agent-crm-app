@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.6-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.5-295b305...v1.2.6-295b305) (2026-06-02)
+
+
+### Bug Fixes
+
+* poll workspace summary after CLI activity ([a144978](https://github.com/cluster-software/agent-crm-app/commit/a144978b8d772450ca9c3b0e7f9bbdb6fff427ee))
+
 ## [1.2.5-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.4-295b305...v1.2.5-295b305) (2026-06-02)
 
 
