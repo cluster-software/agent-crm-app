@@ -72,6 +72,7 @@ const AGENT_CLI_INSTALL_TIMEOUT_MS = 120 * 1000;
 const GMAIL_PARTIAL_IMPORT_MIN_INTERVAL_MS = 15_000;
 const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
+const RECORD_LABEL_BATCH_SIZE = 100;
 const DESKTOP_SESSION_FILENAME = "desktop-session.bin";
 const DESKTOP_AUTH_PROTOCOL = "agent-crm";
 const DESKTOP_AUTH_CALLBACK_HOST = "auth";
@@ -2615,11 +2616,18 @@ handle("communication-threads:messages", async (threadRecordId: string) => {
 handle("records:labels", async (objectSlug: string, recordIds: string[]) => {
   const session = await readStoredDesktopSession();
   if (session) {
-    return fetchAppJson<RecordLabelsResult & { ok?: true }>("/v1/records/labels", session, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ object_slug: objectSlug, record_ids: recordIds })
-    });
+    const labels: RecordLabelsResult["labels"] = [];
+    for (let index = 0; index < recordIds.length; index += RECORD_LABEL_BATCH_SIZE) {
+      const batch = recordIds.slice(index, index + RECORD_LABEL_BATCH_SIZE);
+      if (batch.length === 0) continue;
+      const result = await fetchAppJson<RecordLabelsResult & { ok?: true }>("/v1/records/labels", session, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ object_slug: objectSlug, record_ids: batch })
+      });
+      labels.push(...result.labels);
+    }
+    return { labels };
   }
   return getSdkClient().request<RecordLabelsResult>("getRecordLabels", objectSlug, recordIds);
 });

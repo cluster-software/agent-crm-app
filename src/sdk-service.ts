@@ -145,8 +145,8 @@ async function executeWorkspaceRead(
   sql: string,
   params: unknown[] = []
 ): Promise<{ rows: Record<string, unknown>[]; rowsAffected: number }> {
-  const lix = (current as unknown as {
-    lix?: {
+  const db = (current as unknown as {
+    db?: {
       execute: (
         sql: string,
         params?: ReadonlyArray<unknown>
@@ -155,11 +155,11 @@ async function executeWorkspaceRead(
         rowsAffected: number;
       }>;
     };
-  }).lix;
-  if (!lix) {
+  }).db;
+  if (!db) {
     throw new Error("The active Agent CRM workspace does not expose a queryable local store.");
   }
-  const result = await lix.execute(sql, params);
+  const result = await db.execute(sql, params);
   return {
     rows: result.rows.map((row) => typeof (row as { toObject?: unknown }).toObject === "function"
       ? (row as { toObject: () => Record<string, unknown> }).toObject()
@@ -1141,7 +1141,10 @@ async function getCompanyTeam(companyRecordId: string): Promise<CompanyTeamResul
         )`,
     recordIds
   );
-  return { records: relatedRowsToRecords(result.rows) };
+  const byId = new Map(relatedRowsToRecords(result.rows).map((record) => [record.id, record]));
+  return {
+    records: recordIds.map((id) => byId.get(id) ?? { id, attrs: {} })
+  };
 }
 
 async function getCommunicationThreadMessages(
