@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.4-295b305...v1.2.5-295b305) (2026-06-02)
+
+
+### Bug Fixes
+
+* refresh cloud workspace after CLI changes ([9555955](https://github.com/cluster-software/agent-crm-app/commit/955595595ac8c983add70ce9a37d9613af8894e4))
+
 ## [1.2.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.3-295b305...v1.2.4-295b305) (2026-06-02)
 
 
