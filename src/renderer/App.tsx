@@ -52,6 +52,7 @@ import type {
   CloudSyncStatus,
   IntegrationAccountSummary,
   IntegrationProviderStatus,
+  RelatedRecord,
   RecordPreview,
   RecordValue,
   SchemaObject,
@@ -4353,11 +4354,6 @@ function TerminalPane({
   );
 }
 
-type RelatedRecord = {
-  id: string;
-  attrs: Record<string, unknown>;
-};
-
 type CommunicationChannel = "email" | "linkedin" | "other";
 type CommunicationDirection = "inbound" | "outbound" | "unknown";
 
@@ -4404,12 +4400,13 @@ async function fetchAssociated(
 
 async function fetchCompanyTeam(companyRecordId: string): Promise<RecordPreview[]> {
   const result = await api.getCompanyTeam(companyRecordId);
+  const labels = await fetchRecordLabels("people", result.records.map((record) => record.id));
   return result.records
-    .map(teamRelatedRecordToPreview)
+    .map((record) => teamRelatedRecordToPreview(record, labels.get(record.id)))
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
+function teamRelatedRecordToPreview(item: RelatedRecord, recordLabel?: string): RecordPreview {
   const attrs = { ...item.attrs };
   if (attrs.email_addresses === undefined && attrs.email !== undefined) {
     attrs.email_addresses = attrs.email;
@@ -4422,6 +4419,7 @@ function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
     .filter((value) => value.display);
   const label =
     getScalar(attrs, "name") ||
+    resolvedRecordLabel(item.id, recordLabel) ||
     getScalar(attrs, "email_addresses") ||
     stripUrl(getScalar(attrs, "linkedin_url")) ||
     item.id.slice(0, 8);
@@ -4436,6 +4434,11 @@ function teamRelatedRecordToPreview(item: RelatedRecord): RecordPreview {
     subtitle: subtitle || "Person",
     values
   };
+}
+
+function resolvedRecordLabel(recordId: string, label: string | undefined): string {
+  const trimmed = label?.trim() ?? "";
+  return trimmed && trimmed !== recordId.slice(0, 8) ? trimmed : "";
 }
 
 function relatedAttrToRecordValue(attributeSlug: string, value: unknown): RecordValue {
@@ -4895,7 +4898,7 @@ function PersonDetail({
           aria-current={tab === "messages"}
           onClick={() => onTabChange("messages")}
         >
-          Messages <span className="tab__count">{communicationThreads.length}</span>
+          Threads <span className="tab__count">{communicationThreads.length}</span>
         </button>
         <button
           type="button"
@@ -5138,7 +5141,7 @@ function MessageThreadView({
       <header className="message-thread__header">
         <button type="button" className="message-thread__back" onClick={onBack}>
           <ChevronLeft size={13} className="lucide" />
-          Messages
+          Threads
         </button>
         <div className="message-thread__eyebrow">
           <ChannelMark channel={channel} size={18} />

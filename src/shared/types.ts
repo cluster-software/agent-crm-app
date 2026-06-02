@@ -195,9 +195,24 @@ export type RecordListResult = {
   totalMatches?: number;
 };
 
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type RecordReferenceValue = {
+  target_object: string;
+  target_record_id: string;
+};
+
+export type RelatedRecordValue = JsonValue | RecordReferenceValue;
+
 export type RelatedRecord = {
   id: string;
-  attrs: Record<string, unknown>;
+  attrs: Record<string, RelatedRecordValue | RelatedRecordValue[]>;
 };
 
 export type PersonRelatedObject = "transcripts" | "posts" | "communication_threads";

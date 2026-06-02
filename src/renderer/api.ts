@@ -1,6 +1,8 @@
 import type {
   AppBridge,
   CloudIntegrationsStatus,
+  CommunicationThreadMessagesResult,
+  CompanyTeamResult,
   CreateRecordPayload,
   ImportCsvPayload,
   RecordListOptions,
@@ -666,7 +668,7 @@ const browserPreview: AppBridge = {
         }]
       : []
   }),
-  getCompanyTeam: async (_companyRecordId) => ({
+  getCompanyTeam: async (_companyRecordId): Promise<CompanyTeamResult> => ({
     records: [
       {
         id: "preview-person",
@@ -687,7 +689,7 @@ const browserPreview: AppBridge = {
       }
     ]
   }),
-  getCommunicationThreadMessages: async (_threadRecordId) => ({
+  getCommunicationThreadMessages: async (_threadRecordId): Promise<CommunicationThreadMessagesResult> => ({
     records: [
       {
         id: "preview-message-1",
