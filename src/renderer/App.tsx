@@ -13,6 +13,7 @@ import {
   Handshake,
   Info,
   Loader2,
+  LogOut,
   Mail,
   Newspaper,
   Paperclip,
@@ -376,6 +377,13 @@ export function App() {
     }
   }, [refreshWorkspace]);
 
+  const handleSignOut = useCallback(() => {
+    void api.signOut().then(() => {
+      setWorkspace(null);
+      setDetailRecord(null);
+    }).catch((err) => setError(statusFromError(err)));
+  }, []);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const mod = event.metaKey || event.ctrlKey;
@@ -533,12 +541,7 @@ export function App() {
               className="icon-btn toolbar-tooltip"
               type="button"
               aria-label="Sign out"
-              onClick={() => {
-                void api.signOut().then(() => {
-                  setWorkspace(null);
-                  setDetailRecord(null);
-                }).catch((err) => setError(statusFromError(err)));
-              }}
+              onClick={handleSignOut}
             >
               <X size={14} className="lucide" />
               <span className="toolbar-tooltip__bubble" role="tooltip">
@@ -580,7 +583,7 @@ export function App() {
         <div className="main__body">
           <div className="main__content">
             {mainView === "settings" ? (
-              <SettingsView dataVersion={dataVersion} setError={setError} />
+              <SettingsView dataVersion={dataVersion} setError={setError} onSignOut={handleSignOut} />
             ) : detailRecord && selectedObject?.object_slug === "people" ? (
               <PersonDetail
                 record={detailRecord}
@@ -731,10 +734,12 @@ function formatCompactRelativeTime(iso: string): string {
 
 function SettingsView({
   dataVersion,
-  setError
+  setError,
+  onSignOut
 }: {
   dataVersion: number;
   setError: (error: string | null) => void;
+  onSignOut: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("integrations");
   const [signals, setSignals] = useState<SignalDefinitionSummary[] | null>(null);
@@ -848,6 +853,13 @@ function SettingsView({
       ) : (
         <IntegrationsSettingsPanel integrations={integrations} />
       )}
+
+      <footer className="settings-footer">
+        <button type="button" className="btn settings-footer__logout" onClick={onSignOut}>
+          <LogOut size={14} className="lucide" />
+          <span>Log out</span>
+        </button>
+      </footer>
     </div>
   );
 }
