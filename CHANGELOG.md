@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.9-295b305...v1.2.0-295b305) (2026-06-02)
+
+
+### Features
+
+* add settings logout button ([691349e](https://github.com/cluster-software/agent-crm-app/commit/691349e399c769e6bde12341a01c75a1ecf743c9))
+* wire deals tab to cloud API ([106ca45](https://github.com/cluster-software/agent-crm-app/commit/106ca45191d5b0d403a667452ce8c5373d7a8227))
+
 ## [1.1.9-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.1.8-295b305...v1.1.9-295b305) (2026-06-01)
 
 
