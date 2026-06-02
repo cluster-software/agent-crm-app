@@ -258,6 +258,15 @@ function DesktopAuthFlow({
     resolveWorkspaceError
   ]);
 
+  const retryWorkspaceResolution = useCallback(() => {
+    setResolveWorkspaceError(undefined);
+    if (loginState === LoginState.USER_MUST_BE_IN_AT_LEAST_ONE_ORG && !authInfo.isLoggedIn) {
+      void resolveOrglessWorkspace();
+      return;
+    }
+    void resolveWorkspace();
+  }, [authInfo.isLoggedIn, loginState, resolveOrglessWorkspace, resolveWorkspace]);
+
   if (!loginState && !loginStateError) {
     return (
       <AuthShell>
@@ -294,7 +303,7 @@ function DesktopAuthFlow({
   if (resolvingWorkspace) return <WorkspaceResolutionPage />;
 
   if (resolveWorkspaceError) {
-    return <WorkspaceResolutionPage error={resolveWorkspaceError} onRetry={() => void resolveWorkspace()} />;
+    return <WorkspaceResolutionPage error={resolveWorkspaceError} onRetry={retryWorkspaceResolution} />;
   }
 
   if (route === "sign-up") {
@@ -908,9 +917,15 @@ function safeSetSessionStorage(key: string, value: string): void {
 }
 
 function errorMessage(error: ApiErrorResponse): string {
-  const fieldMessage = error.field_errors ? Object.values(error.field_errors)[0] : undefined;
-  const userFieldMessage = error.user_facing_errors ? Object.values(error.user_facing_errors)[0] : undefined;
+  const fieldMessage = error.field_errors ? firstErrorMessage(Object.values(error.field_errors)[0]) : undefined;
+  const userFieldMessage = error.user_facing_errors ? firstErrorMessage(Object.values(error.user_facing_errors)[0]) : undefined;
   return fieldMessage ?? userFieldMessage ?? error.user_facing_error ?? "The request could not be completed.";
+}
+
+function firstErrorMessage(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.find((item): item is string => typeof item === "string");
+  return undefined;
 }
 
 function statusFromError(err: unknown): string {
