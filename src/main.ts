@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage, session as electronSession, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -74,6 +74,7 @@ const GMAIL_PARTIAL_IMPORT_MIN_DELTA = 50;
 const DEFAULT_EMPTY_RECORD_OBJECTS = ["companies", "people", "deals"] as const;
 const RECORD_LABEL_BATCH_SIZE = 100;
 const DESKTOP_SESSION_FILENAME = "desktop-session.bin";
+const DESKTOP_SIGNED_OUT_FILENAME = "desktop-signed-out.json";
 const DESKTOP_AUTH_PROTOCOL = "agent-crm";
 const DESKTOP_AUTH_CALLBACK_HOST = "auth";
 const DESKTOP_AUTH_CALLBACK_PATH = "/callback";
@@ -281,6 +282,10 @@ function desktopSessionPath(): string {
   return path.join(app.getPath("userData"), DESKTOP_SESSION_FILENAME);
 }
 
+function desktopSignedOutPath(): string {
+  return path.join(app.getPath("userData"), DESKTOP_SIGNED_OUT_FILENAME);
+}
+
 function devDesktopSessionPath(): string {
   return path.join(app.getPath("userData"), "desktop-session.dev.json");
 }
@@ -351,6 +356,7 @@ async function writeStoredDesktopSession(session: StoredDesktopSession): Promise
     ? JSON.stringify(session)
     : safeStorage.encryptString(JSON.stringify(session)));
   currentDesktopSession = session;
+  await clearDesktopSignedOut();
 }
 
 async function revokeStoredDesktopSession(session: StoredDesktopSession): Promise<void> {
@@ -381,6 +387,38 @@ async function clearStoredDesktopSession(): Promise<void> {
   const session = await readStoredDesktopSession();
   if (session) await revokeStoredDesktopSession(session);
   await discardStoredDesktopSession();
+}
+
+async function hasDesktopSignedOut(): Promise<boolean> {
+  try {
+    await fs.access(desktopSignedOutPath());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function markDesktopSignedOut(): Promise<void> {
+  const filePath = desktopSignedOutPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify({ signedOutAt: new Date().toISOString() }));
+}
+
+async function clearDesktopSignedOut(): Promise<void> {
+  await fs.rm(desktopSignedOutPath(), { force: true });
+}
+
+async function clearElectronAuthStorage(): Promise<void> {
+  try {
+    const config = await fetchAuthRuntimeConfig();
+    await electronSession.defaultSession.clearStorageData({
+      origin: config.authUrl,
+      storages: ["cookies", "localstorage", "indexdb"]
+    });
+    await electronSession.defaultSession.clearAuthCache();
+  } catch (error) {
+    console.warn(`[auth] failed to clear Electron auth storage: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function authSessionSummary(session: StoredDesktopSession): AuthSessionSummary {
@@ -525,11 +563,13 @@ function desktopAuthCallbackUrl(): string {
   return `${DESKTOP_AUTH_PROTOCOL}://${DESKTOP_AUTH_CALLBACK_HOST}${DESKTOP_AUTH_CALLBACK_PATH}`;
 }
 
-function buildExternalGoogleAuthUrl(config: AuthRuntimeConfig, route: "sign-in" | "sign-up"): string {
+async function buildExternalGoogleAuthUrl(config: AuthRuntimeConfig, route: "sign-in" | "sign-up"): Promise<string> {
   const authUrl = new URL(`/auth/${route}`, config.baseApiUrl);
   authUrl.searchParams.set("mode", "desktop");
   authUrl.searchParams.set("desktop_callback", desktopAuthCallbackUrl());
-  authUrl.searchParams.set("auto_google", "1");
+  if (!(await hasDesktopSignedOut())) {
+    authUrl.searchParams.set("auto_google", "1");
+  }
   return authUrl.toString();
 }
 
@@ -537,7 +577,7 @@ async function startExternalAuth(payload: StartExternalAuthPayload): Promise<voi
   if (payload?.provider !== "google" || (payload.route !== "sign-in" && payload.route !== "sign-up")) {
     throw new Error("External auth request is invalid.");
   }
-  await shell.openExternal(buildExternalGoogleAuthUrl(await fetchAuthRuntimeConfig(), payload.route));
+  await shell.openExternal(await buildExternalGoogleAuthUrl(await fetchAuthRuntimeConfig(), payload.route));
 }
 
 function registerDesktopAuthProtocol(): void {
@@ -2676,6 +2716,8 @@ handle("auth:get-session", async () => {
 });
 handle("auth:sign-out", async () => {
   await clearStoredDesktopSession();
+  await markDesktopSignedOut();
+  await clearElectronAuthStorage();
 });
 handle("cloud-sync:get-status", async () => cloudSyncStatus);
 handle("cloud-sync:trigger", async () => runCloudSync());
