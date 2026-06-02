@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.4-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.3-295b305...v1.2.4-295b305) (2026-06-02)
+
+
+### Bug Fixes
+
+* clean up deals display ([125072c](https://github.com/cluster-software/agent-crm-app/commit/125072ce9f612d7360a546cbfbe39b64e4d0c65f))
+* clean up deals display ([5126c91](https://github.com/cluster-software/agent-crm-app/commit/5126c918f3edf40f6b94f2f0a9dcc7024ec3aa8f))
+
 ## [1.2.3-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.2-295b305...v1.2.3-295b305) (2026-06-02)
 
 
