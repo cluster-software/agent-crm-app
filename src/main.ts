@@ -45,6 +45,8 @@ import type {
   WorkspaceSummary
 } from "./shared/types.js";
 import {
+  TERMINAL_WORKSPACE_REFRESH_BURST_DURATION_MS,
+  TERMINAL_WORKSPACE_REFRESH_BURST_INTERVAL_MS,
   TERMINAL_WORKSPACE_REFRESH_DELAY_MS,
   terminalOutputMayChangeWorkspace
 } from "./workspace-refresh-heuristic.js";
@@ -66,6 +68,7 @@ const syncEngineUrl = process.env.AGENT_CRM_SYNC_ENGINE_URL ?? "https://agent-cr
 let cloudSyncStatus: CloudSyncStatus = { state: "idle" };
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let terminalWorkspaceRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let terminalWorkspaceRefreshBurstUntil = 0;
 let cloudSyncWorkspace: WorkspaceSummary | null = null;
 let cloudSyncInFlight: { generation: number; promise: Promise<CloudSyncStatus> } | null = null;
 let cloudSyncGeneration = 0;
@@ -1346,6 +1349,7 @@ function stopCloudSync() {
     clearTimeout(terminalWorkspaceRefreshTimer);
     terminalWorkspaceRefreshTimer = null;
   }
+  terminalWorkspaceRefreshBurstUntil = 0;
   cloudSyncWorkspace = null;
   cloudSyncShowInEmptyState = false;
   gmailPartialImportsByWorkspace.clear();
@@ -2236,13 +2240,30 @@ function scheduleWorkspaceRefreshFromPty(session: PtySession): void {
   const recentOutput = session.buffer.slice(-4096);
   if (!terminalOutputMayChangeWorkspace(recentOutput)) return;
 
-  if (terminalWorkspaceRefreshTimer) clearTimeout(terminalWorkspaceRefreshTimer);
+  terminalWorkspaceRefreshBurstUntil = Math.max(
+    terminalWorkspaceRefreshBurstUntil,
+    Date.now() + TERMINAL_WORKSPACE_REFRESH_BURST_DURATION_MS
+  );
+  if (!terminalWorkspaceRefreshTimer) {
+    scheduleTerminalWorkspaceRefreshPoll(TERMINAL_WORKSPACE_REFRESH_DELAY_MS);
+  }
+}
+
+function scheduleTerminalWorkspaceRefreshPoll(delayMs: number): void {
   terminalWorkspaceRefreshTimer = setTimeout(() => {
     terminalWorkspaceRefreshTimer = null;
-    void runCloudSync().catch((error) => {
-      console.warn(`[cloud-sync] terminal-triggered refresh failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
-  }, TERMINAL_WORKSPACE_REFRESH_DELAY_MS);
+    void runCloudSync()
+      .catch((error) => {
+        console.warn(`[cloud-sync] terminal-triggered refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        if (Date.now() < terminalWorkspaceRefreshBurstUntil) {
+          scheduleTerminalWorkspaceRefreshPoll(TERMINAL_WORKSPACE_REFRESH_BURST_INTERVAL_MS);
+        } else {
+          terminalWorkspaceRefreshBurstUntil = 0;
+        }
+      });
+  }, delayMs);
 }
 
 function spawnPtySession(id: string, cols: number, rows: number, cwd: string): PtySession {
