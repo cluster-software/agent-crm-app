@@ -603,11 +603,7 @@ async function handleDesktopAuthCallbackUrl(value: string): Promise<void> {
   } catch {
     return;
   }
-  if (
-    url.protocol !== `${DESKTOP_AUTH_PROTOCOL}:` ||
-    url.hostname !== DESKTOP_AUTH_CALLBACK_HOST ||
-    url.pathname !== DESKTOP_AUTH_CALLBACK_PATH
-  ) {
+  if (!isDesktopAuthCallbackUrl(url)) {
     return;
   }
 
@@ -619,12 +615,36 @@ async function handleDesktopAuthCallbackUrl(value: string): Promise<void> {
 
   try {
     await redeemDesktopAuthCode(code);
-    mainWindow?.show();
-    mainWindow?.focus();
+    focusMainWindow();
   } catch (error) {
     console.error("[auth] desktop callback redemption failed", error);
     sendToMainWindow("workspace:changed");
   }
+}
+
+function desktopAuthCallbackUrlFromArgv(argv: string[]): string | undefined {
+  return argv.find((arg) => {
+    try {
+      return isDesktopAuthCallbackUrl(new URL(arg));
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDesktopAuthCallbackUrl(url: URL): boolean {
+  return (
+    url.protocol === `${DESKTOP_AUTH_PROTOCOL}:` &&
+    url.hostname === DESKTOP_AUTH_CALLBACK_HOST &&
+    url.pathname === DESKTOP_AUTH_CALLBACK_PATH
+  );
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 async function completeDesktopAuth(payload: CompleteDesktopAuthPayload): Promise<AuthSessionSummary> {
@@ -656,7 +676,9 @@ async function completeDesktopAuth(payload: CompleteDesktopAuthPayload): Promise
   if (!response.ok || body?.ok !== true || typeof body.code !== "string") {
     throw new Error(cloudSyncErrorMessage(body, `Desktop session setup failed (${response.status})`));
   }
-  return authSessionSummary(await redeemDesktopAuthCode(body.code));
+  const summary = authSessionSummary(await redeemDesktopAuthCode(body.code));
+  focusMainWindow();
+  return summary;
 }
 
 async function ensureCloudWorkspaceDir(session: StoredDesktopSession): Promise<string> {
@@ -2943,18 +2965,36 @@ app.on("open-url", (event, url) => {
   void handleDesktopAuthCallbackUrl(url);
 });
 
-app
-  .whenReady()
-  .then(async () => {
-    if (isDev && process.platform === "darwin") app.dock?.setIcon(devIconPath);
-    registerDesktopAuthProtocol();
-    createWindow();
-    setupAutoUpdater();
-  })
-  .catch((error) => {
-    console.error(error);
-    app.quit();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const callbackUrl = desktopAuthCallbackUrlFromArgv(argv);
+    if (callbackUrl) {
+      void handleDesktopAuthCallbackUrl(callbackUrl);
+    }
+    focusMainWindow();
   });
+
+  app
+    .whenReady()
+    .then(async () => {
+      if (isDev && process.platform === "darwin") app.dock?.setIcon(devIconPath);
+      registerDesktopAuthProtocol();
+      createWindow();
+      setupAutoUpdater();
+      const callbackUrl = desktopAuthCallbackUrlFromArgv(process.argv);
+      if (callbackUrl) {
+        void handleDesktopAuthCallbackUrl(callbackUrl);
+      }
+    })
+    .catch((error) => {
+      console.error(error);
+      app.quit();
+    });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
