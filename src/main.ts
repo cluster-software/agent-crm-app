@@ -50,6 +50,7 @@ import {
   TERMINAL_WORKSPACE_REFRESH_DELAY_MS,
   terminalOutputMayChangeWorkspace
 } from "./workspace-refresh-heuristic.js";
+import { syncEngineEndpoints } from "./sync-engine-endpoints.js";
 
 const { autoUpdater } = electronUpdater;
 
@@ -728,7 +729,10 @@ async function getCloudWorkspaceFromSession(): Promise<WorkspaceSummary | null> 
 }
 
 async function fetchCloudWorkspaceSummaryFromSession(session: StoredDesktopSession): Promise<WorkspaceSummary> {
-  const payload = await fetchAppJson<{ ok: true; workspace: WorkspaceSummary }>("/app/workspace", session);
+  const payload = await fetchAppJson<{ ok: true; workspace: WorkspaceSummary }>(
+    syncEngineEndpoints.sessionWorkspace(),
+    session
+  );
   const dir = await ensureCloudWorkspaceDir(session);
   const summary: WorkspaceSummary = {
     ...payload.workspace,
@@ -1572,7 +1576,7 @@ async function runCloudSyncOnce(generation: number): Promise<CloudSyncStatus> {
           };
         };
       };
-    }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
+    }>(syncEngineEndpoints.workspaceIntegrationsStatus(summary.cloudWorkspaceId), clientToken);
     if (!isCurrentCloudSyncRun(run)) return cloudSyncStatus;
 
     const gmailStatus = status.integrations.gmail;
@@ -1924,7 +1928,9 @@ async function importCloudCommunicationExport(
   options: { ignoreMissingEndpoint?: boolean; expectedWorkspacePath?: string; partial?: boolean } = {}
 ): Promise<CommunicationImportStats | undefined> {
   try {
-    const exportPath = `/workspaces/${encodeURIComponent(workspaceId)}/integrations/${provider}/export${options.partial ? "?mode=partial" : ""}`;
+    const exportPath = syncEngineEndpoints.workspaceIntegrationExport(workspaceId, provider, {
+      partial: options.partial
+    });
     const exported = await fetchJson<{
       ok: true;
       data: unknown;
@@ -2109,7 +2115,10 @@ async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
       const status = await fetchAppJson<{
         ok: true;
         integrations?: Record<string, unknown>;
-      }>(`/workspaces/${encodeURIComponent(desktopSession.workspace.workspaceId)}/integrations/status`, desktopSession);
+      }>(
+        syncEngineEndpoints.workspaceIntegrationsStatus(desktopSession.workspace.workspaceId),
+        desktopSession
+      );
       const integrations = isRecord(status.integrations) ? status.integrations : {};
       return {
         state: "ready",
@@ -2151,7 +2160,7 @@ async function getCloudIntegrationsStatus(): Promise<CloudIntegrationsStatus> {
     const status = await fetchJson<{
       ok: true;
       integrations?: Record<string, unknown>;
-    }>(`/workspaces/${encodeURIComponent(summary.cloudWorkspaceId)}/integrations/status`, clientToken);
+    }>(syncEngineEndpoints.workspaceIntegrationsStatus(summary.cloudWorkspaceId), clientToken);
     const integrations = isRecord(status.integrations) ? status.integrations : {};
     return {
       state: "ready",
@@ -2645,16 +2654,17 @@ handle("workspace:list-recent", async () => {
 handle("records:list", async (objectSlug: string, options?: RecordListOptions) => {
   const session = await readStoredDesktopSession();
   if (session) {
-    const url = new URL("/app/workspace/records", syncEngineUrl);
-    url.searchParams.set("object_slug", objectSlug);
-    if (options?.limit) url.searchParams.set("limit", String(options.limit));
-    if (options?.cursor) url.searchParams.set("cursor", options.cursor);
-    if (options?.valueAttributes?.length) url.searchParams.set("value_attributes", options.valueAttributes.join(","));
-    if (options?.includeSecondaryLabels != null) {
-      url.searchParams.set("include_secondary_labels", String(options.includeSecondaryLabels));
-    }
-    if (options?.searchQuery) url.searchParams.set("search_query", options.searchQuery);
-    const payload = await fetchAppJson<{ ok: true } & RecordListResult>(url.pathname + url.search, session);
+    const payload = await fetchAppJson<{ ok: true } & RecordListResult>(
+      syncEngineEndpoints.sessionWorkspaceRecords({
+        objectSlug,
+        limit: options?.limit,
+        cursor: options?.cursor,
+        valueAttributes: options?.valueAttributes,
+        includeSecondaryLabels: options?.includeSecondaryLabels,
+        searchQuery: options?.searchQuery
+      }),
+      session
+    );
     return {
       objectSlug: payload.objectSlug,
       records: payload.records,
@@ -2679,7 +2689,7 @@ handle("records:update", async (payload: UpdateRecordPayload) => {
   const session = await readStoredDesktopSession();
   if (session) {
     const result = await fetchAppJson<UpdateRecordResult & { ok?: true }>(
-      `/app/workspace/records/${encodeURIComponent(payload.object_slug)}/${encodeURIComponent(payload.record_id)}`,
+      syncEngineEndpoints.sessionWorkspaceRecord(payload.object_slug, payload.record_id),
       session,
       {
         method: "PATCH",
@@ -2701,7 +2711,7 @@ handle("deals:update", async (payload: UpdateDealPayload) => {
   const session = await readStoredDesktopSession();
   if (session) {
     const result = await fetchAppJson<UpdateDealResult & { ok?: true }>(
-      `/app/workspace/deals/${encodeURIComponent(payload.record_id)}`,
+      syncEngineEndpoints.sessionWorkspaceDeal(payload.record_id),
       session,
       {
         method: "PATCH",
@@ -2746,8 +2756,10 @@ handle("import:transcript", async (payload: TranscriptPayload) => {
 handle("people:related", async (personRecordId: string, object: PersonRelatedObject) => {
   const session = await readStoredDesktopSession();
   if (session) {
-    const path = `/v1/people/${encodeURIComponent(personRecordId)}/related?object=${encodeURIComponent(object)}`;
-    return fetchAppJson<PersonRelatedResult & { ok?: true }>(path, session);
+    return fetchAppJson<PersonRelatedResult & { ok?: true }>(
+      syncEngineEndpoints.personRelated(personRecordId, object),
+      session
+    );
   }
   return getSdkClient().request<PersonRelatedResult>("getPersonRelated", personRecordId, object);
 });
@@ -2755,7 +2767,7 @@ handle("companies:team", async (companyRecordId: string) => {
   const session = await readStoredDesktopSession();
   if (session) {
     return fetchAppJson<CompanyTeamResult & { ok?: true }>(
-      `/v1/companies/${encodeURIComponent(companyRecordId)}/team`,
+      syncEngineEndpoints.companyTeam(companyRecordId),
       session
     );
   }
@@ -2765,7 +2777,7 @@ handle("communication-threads:messages", async (threadRecordId: string) => {
   const session = await readStoredDesktopSession();
   if (session) {
     return fetchAppJson<CommunicationThreadMessagesResult & { ok?: true }>(
-      `/v1/communication-threads/${encodeURIComponent(threadRecordId)}/messages`,
+      syncEngineEndpoints.communicationThreadMessages(threadRecordId),
       session
     );
   }
@@ -2778,10 +2790,15 @@ handle("records:labels", async (objectSlug: string, recordIds: string[]) => {
     for (let index = 0; index < recordIds.length; index += RECORD_LABEL_BATCH_SIZE) {
       const batch = recordIds.slice(index, index + RECORD_LABEL_BATCH_SIZE);
       if (batch.length === 0) continue;
-      const result = await fetchAppJson<RecordLabelsResult & { ok?: true }>("/v1/records/labels", session, {
+      const result = await fetchAppJson<RecordLabelsResult & { ok?: true }>(syncEngineEndpoints.recordLabels(), session, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ object_slug: objectSlug, record_ids: batch })
+        body: JSON.stringify({
+          records: batch.map((recordId) => ({
+            object_slug: objectSlug,
+            record_id: recordId
+          }))
+        })
       });
       labels.push(...result.labels);
     }
@@ -2793,7 +2810,7 @@ handle("people:company", async (personRecordId: string) => {
   const session = await readStoredDesktopSession();
   if (session) {
     return fetchAppJson<PersonCompanyResult & { ok?: true }>(
-      `/v1/people/${encodeURIComponent(personRecordId)}/company`,
+      syncEngineEndpoints.personCompany(personRecordId),
       session
     );
   }
