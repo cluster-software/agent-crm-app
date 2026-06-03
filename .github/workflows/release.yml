@@ -125,11 +125,14 @@ jobs:
           );
           NODE
 
-      - name: Build and sign app (${{ matrix.arch }})
+      - name: Build, notarize, and package app (${{ matrix.arch }})
         env:
           CSC_LINK: ${{ runner.temp }}/apple/cert.p12
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-        run: npx electron-builder --config electron-builder.release.json --mac --${{ matrix.arch }} --publish never -c.mac.notarize=false
+          APPLE_API_KEY: ${{ runner.temp }}/apple/AuthKey.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: npx electron-builder --config electron-builder.release.json --mac --${{ matrix.arch }} --publish never
 
       - name: Notarize DMG container (${{ matrix.arch }})
         env:
@@ -174,6 +177,8 @@ jobs:
           trap 'hdiutil detach "$mount_dir" >/dev/null || true' EXIT
           app="$mount_dir/Agent CRM.app"
           codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          syspolicy_check distribution "$app"
           spctl -a -vv -t exec "$app"
           hdiutil detach "$mount_dir"
           trap - EXIT
@@ -327,6 +332,8 @@ jobs:
             trap 'hdiutil detach "$mount_dir" >/dev/null || true' EXIT
             app="$mount_dir/Agent CRM.app"
             codesign --verify --deep --strict --verbose=2 "$app"
+            xcrun stapler validate "$app"
+            syspolicy_check distribution "$app"
             spctl -a -vv -t exec "$app"
             hdiutil detach "$mount_dir"
             trap - EXIT
