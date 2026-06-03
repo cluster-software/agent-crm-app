@@ -8,7 +8,7 @@
     "dev": "concurrently -k \"vite --host localhost\" \"wait-on tcp:5173 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "dev:web": "vite --host localhost",
     "test": "npm run test:sdk-service",
-    "test:sdk-service": "npm run build:electron && node --test scripts/sdk-service.test.mjs",
+    "test:sdk-service": "npm run build:electron && node --test scripts/sdk-service.test.mjs scripts/sync-engine-endpoints.test.mjs",
     "build": "npm run check:agent-instructions && npm run typecheck && npm run build:electron && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "check:agent-instructions": "node scripts/check-agent-instructions.mjs",
