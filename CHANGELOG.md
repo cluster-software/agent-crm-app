@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.9-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.8-295b305...v1.2.9-295b305) (2026-06-03)
+
+
+### Bug Fixes
+
+* notarize mac app before packaging ([#192](https://github.com/cluster-software/agent-crm-app/issues/192)) ([60df5b7](https://github.com/cluster-software/agent-crm-app/commit/60df5b7a102e2724cab3c4856b6e933abea72be1))
+
 ## [1.2.8-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.7-295b305...v1.2.8-295b305) (2026-06-03)
 
 
