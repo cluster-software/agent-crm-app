@@ -22,7 +22,7 @@ function withSearch(pathname: string, params: URLSearchParams): string {
 
 export const syncEngineEndpoints = {
   sessionWorkspace(): string {
-    return "/app/workspace";
+    return "/v1/session-workspace";
   },
 
   sessionWorkspaceRecords(options: SessionWorkspaceRecordListEndpointOptions): string {
@@ -37,15 +37,15 @@ export const syncEngineEndpoints = {
       params.set("include_secondary_labels", String(options.includeSecondaryLabels));
     }
     if (options.searchQuery) params.set("search_query", options.searchQuery);
-    return withSearch("/app/workspace/records", params);
+    return withSearch("/v1/session-workspace/records", params);
   },
 
   sessionWorkspaceRecord(objectSlug: string, recordId: string): string {
-    return `/app/workspace/records/${encodePathSegment(objectSlug)}/${encodePathSegment(recordId)}`;
+    return `/v1/session-workspace/records/${encodePathSegment(objectSlug)}/${encodePathSegment(recordId)}`;
   },
 
   sessionWorkspaceDeal(recordId: string): string {
-    return `/app/workspace/deals/${encodePathSegment(recordId)}`;
+    return `/v1/session-workspace/deals/${encodePathSegment(recordId)}`;
   },
 
   workspaceIntegrationsStatus(workspaceId: string): string {

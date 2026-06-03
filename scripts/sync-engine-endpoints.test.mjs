@@ -3,7 +3,7 @@ import test from "node:test";
 import { syncEngineEndpoints } from "../dist/electron/sync-engine-endpoints.js";
 
 test("sync engine endpoint builders target session workspace and v1 API routes", () => {
-  assert.equal(syncEngineEndpoints.sessionWorkspace(), "/app/workspace");
+  assert.equal(syncEngineEndpoints.sessionWorkspace(), "/v1/session-workspace");
   assert.equal(
     syncEngineEndpoints.sessionWorkspaceRecords({
       objectSlug: "people",
@@ -13,15 +13,15 @@ test("sync engine endpoint builders target session workspace and v1 API routes",
       includeSecondaryLabels: false,
       searchQuery: "maya chen"
     }),
-    "/app/workspace/records?object_slug=people&limit=50&cursor=cursor-1&value_attributes=email_addresses%2Clinkedin_url&include_secondary_labels=false&search_query=maya+chen"
+    "/v1/session-workspace/records?object_slug=people&limit=50&cursor=cursor-1&value_attributes=email_addresses%2Clinkedin_url&include_secondary_labels=false&search_query=maya+chen"
   );
   assert.equal(
     syncEngineEndpoints.sessionWorkspaceRecord("communication/messages", "record id/1"),
-    "/app/workspace/records/communication%2Fmessages/record%20id%2F1"
+    "/v1/session-workspace/records/communication%2Fmessages/record%20id%2F1"
   );
   assert.equal(
     syncEngineEndpoints.sessionWorkspaceDeal("deal id/1"),
-    "/app/workspace/deals/deal%20id%2F1"
+    "/v1/session-workspace/deals/deal%20id%2F1"
   );
   assert.equal(
     syncEngineEndpoints.workspaceIntegrationsStatus("workspace/1"),
