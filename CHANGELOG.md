@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.8-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.7-295b305...v1.2.8-295b305) (2026-06-03)
+
+
+### Bug Fixes
+
+* consume sync engine v1 endpoints from app ([#190](https://github.com/cluster-software/agent-crm-app/issues/190)) ([24bc634](https://github.com/cluster-software/agent-crm-app/commit/24bc634e1f329874b4f43279983b3ed1f5156794))
+
 ## [1.2.7-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.6-295b305...v1.2.7-295b305) (2026-06-03)
 
 
