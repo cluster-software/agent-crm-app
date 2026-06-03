@@ -180,6 +180,16 @@ jobs:
           xcrun stapler validate "$app"
           syspolicy_check distribution "$app"
           spctl -a -vv -t exec "$app"
+          entitlements="$RUNNER_TEMP/agent-crm-entitlements-${{ matrix.arch }}.plist"
+          codesign -d --entitlements :- "$app" > "$entitlements" 2>/dev/null
+          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$entitlements" >/dev/null 2>&1; then
+            echo "Main app must not be signed with com.apple.security.inherit." >&2
+            exit 1
+          fi
+          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-dyld-environment-variables' "$entitlements" >/dev/null 2>&1; then
+            echo "Main app must not allow DYLD environment variables." >&2
+            exit 1
+          fi
           hdiutil detach "$mount_dir"
           trap - EXIT
 
@@ -335,6 +345,16 @@ jobs:
             xcrun stapler validate "$app"
             syspolicy_check distribution "$app"
             spctl -a -vv -t exec "$app"
+            entitlements="$RUNNER_TEMP/agent-crm-entitlements-$(basename "$dmg").plist"
+            codesign -d --entitlements :- "$app" > "$entitlements" 2>/dev/null
+            if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$entitlements" >/dev/null 2>&1; then
+              echo "Main app must not be signed with com.apple.security.inherit." >&2
+              exit 1
+            fi
+            if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-dyld-environment-variables' "$entitlements" >/dev/null 2>&1; then
+              echo "Main app must not allow DYLD environment variables." >&2
+              exit 1
+            fi
             hdiutil detach "$mount_dir"
             trap - EXIT
           done
