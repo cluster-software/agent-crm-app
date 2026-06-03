@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.7-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.6-295b305...v1.2.7-295b305) (2026-06-03)
+
+
+### Bug Fixes
+
+* handle desktop auth protocol callbacks ([#188](https://github.com/cluster-software/agent-crm-app/issues/188)) ([3bba0cc](https://github.com/cluster-software/agent-crm-app/commit/3bba0cc6de038d26408354f1761d5fcfdb835aa6))
+
 ## [1.2.6-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.5-295b305...v1.2.6-295b305) (2026-06-02)
 
 
