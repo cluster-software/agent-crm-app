@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.10-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.9-295b305...v1.2.10-295b305) (2026-06-03)
+
+
+### Bug Fixes
+
+* narrow mac app entitlements ([#194](https://github.com/cluster-software/agent-crm-app/issues/194)) ([1c8d352](https://github.com/cluster-software/agent-crm-app/commit/1c8d3529759b22886e804b09fe9ad092d336794a))
+
 ## [1.2.9-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.8-295b305...v1.2.9-295b305) (2026-06-03)
 
 
