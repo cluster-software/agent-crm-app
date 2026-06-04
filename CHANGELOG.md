@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.11-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.10-295b305...v1.2.11-295b305) (2026-06-04)
+
+
+### Bug Fixes
+
+* restore known-good mac release packaging ([#197](https://github.com/cluster-software/agent-crm-app/issues/197)) ([a842541](https://github.com/cluster-software/agent-crm-app/commit/a84254125694f122191dd610be72e4864206253d))
+
 ## [1.2.10-295b305](https://github.com/cluster-software/agent-crm-app/compare/v1.2.9-295b305...v1.2.10-295b305) (2026-06-03)
 
 
