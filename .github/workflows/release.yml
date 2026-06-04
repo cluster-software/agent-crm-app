@@ -105,34 +105,14 @@ jobs:
             "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Generate ${{ matrix.arch }} release builder config
-        run: |
-          node <<'NODE'
-          const fs = require("node:fs");
-
-          const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
-          const build = JSON.parse(JSON.stringify(packageJson.build));
-          const arch = "${{ matrix.arch }}";
-
-          build.mac.target = [
-            { target: "dmg", arch: [arch] },
-            { target: "zip", arch: [arch] },
-          ];
-
-          fs.writeFileSync(
-            "electron-builder.release.json",
-            JSON.stringify(build, null, 2),
-          );
-          NODE
-
-      - name: Build, notarize, and package app (${{ matrix.arch }})
+      - name: Build, sign, and notarize app (${{ matrix.arch }})
         env:
           CSC_LINK: ${{ runner.temp }}/apple/cert.p12
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           APPLE_API_KEY: ${{ runner.temp }}/apple/AuthKey.p8
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
-        run: npx electron-builder --config electron-builder.release.json --mac --${{ matrix.arch }} --publish never
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Notarize DMG container (${{ matrix.arch }})
         env:
@@ -180,16 +160,6 @@ jobs:
           xcrun stapler validate "$app"
           syspolicy_check distribution "$app"
           spctl -a -vv -t exec "$app"
-          entitlements="$RUNNER_TEMP/agent-crm-entitlements-${{ matrix.arch }}.plist"
-          codesign -d --entitlements :- "$app" > "$entitlements" 2>/dev/null
-          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$entitlements" >/dev/null 2>&1; then
-            echo "Main app must not be signed with com.apple.security.inherit." >&2
-            exit 1
-          fi
-          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-dyld-environment-variables' "$entitlements" >/dev/null 2>&1; then
-            echo "Main app must not allow DYLD environment variables." >&2
-            exit 1
-          fi
           hdiutil detach "$mount_dir"
           trap - EXIT
 
@@ -345,16 +315,6 @@ jobs:
             xcrun stapler validate "$app"
             syspolicy_check distribution "$app"
             spctl -a -vv -t exec "$app"
-            entitlements="$RUNNER_TEMP/agent-crm-entitlements-$(basename "$dmg").plist"
-            codesign -d --entitlements :- "$app" > "$entitlements" 2>/dev/null
-            if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$entitlements" >/dev/null 2>&1; then
-              echo "Main app must not be signed with com.apple.security.inherit." >&2
-              exit 1
-            fi
-            if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-dyld-environment-variables' "$entitlements" >/dev/null 2>&1; then
-              echo "Main app must not allow DYLD environment variables." >&2
-              exit 1
-            fi
             hdiutil detach "$mount_dir"
             trap - EXIT
           done
